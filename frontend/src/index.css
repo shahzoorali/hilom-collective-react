@@ -1,23 +1,31 @@
-/* Palette and type sampled from the existing hilomcollective.com so the new
-   storefront reads as the same brand rather than a separate product. */
+/* Exact values from the official Hilom Collective Brand Guide (July 2026):
+   Forest Green #2F5E3E (primary), Leaf Green #7FA468 (secondary/accents),
+   Warm Ochre #F2A429 (CTAs/highlights), Warm Cream #F3E6C8 (backgrounds),
+   Clean White #FFFFFF. Typography: Libre Baskerville (headers), Montserrat
+   (subheads/body), fallback Arial / Tenor Sans. */
 @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&display=swap');
 
 :root {
-  --ink: #283b3c;
-  --teal: #008b91;
-  --teal-dark: #00676c;
-  --muted: #819596;
-  --mist: #d6eaeb;
-  --accent: #f75d25;
+  --forest: #2f5e3e;
+  --forest-dark: #244a31;
+  --leaf: #7fa468;
+  --ochre: #f2a429;
+  --ochre-dark: #d98f1a;
+  --cream: #f3e6c8;
+  --ink: #2b332c;
+  --muted: #6b7568;
   --surface: #ffffff;
-  --page: #f7fafa;
-  --line: #dfe8e8;
+  --page: #fffdf8;
+  --line: #e7e0cc;
+  --danger-bg: #fdecea;
+  --danger-fg: #8c2f1d;
+  --danger-line: #f5c6bd;
 
   --serif: 'Libre Baskerville', Georgia, serif;
-  --sans: 'Montserrat', Helvetica, Arial, sans-serif;
+  --sans: 'Montserrat', Arial, Helvetica, sans-serif;
 
   --radius: 10px;
-  --shadow: 0 1px 2px rgba(40, 59, 60, 0.06), 0 8px 24px rgba(40, 59, 60, 0.06);
+  --shadow: 0 1px 2px rgba(47, 94, 62, 0.07), 0 8px 24px rgba(47, 94, 62, 0.07);
 }
 
 * { box-sizing: border-box; }
@@ -31,12 +39,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3 { font-family: var(--serif); font-weight: 700; line-height: 1.25; margin: 0 0 0.5em; }
+h1, h2, h3 { font-family: var(--serif); font-weight: 700; line-height: 1.25; margin: 0 0 0.5em; color: var(--forest); }
 h1 { font-size: clamp(1.9rem, 4vw, 2.75rem); }
 h2 { font-size: clamp(1.4rem, 2.6vw, 1.9rem); }
 h3 { font-size: 1.1rem; }
 p { margin: 0 0 1rem; }
-a { color: var(--teal); }
+a { color: var(--forest); }
 
 .container { width: min(1120px, 92vw); margin: 0 auto; }
 
@@ -46,12 +54,13 @@ a { color: var(--teal); }
   border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 20;
 }
-.site-header .inner { display: flex; align-items: center; gap: 1.5rem; padding: 0.9rem 0; }
-.brand { font-family: var(--serif); font-weight: 700; font-size: 1.15rem; color: var(--ink); text-decoration: none; }
-.brand span { color: var(--teal); }
+.site-header .inner { display: flex; align-items: center; gap: 1.5rem; padding: 0.85rem 0; }
+.brand { display: flex; align-items: center; gap: 0.55rem; text-decoration: none; }
+.brand img { height: 34px; width: 34px; object-fit: contain; }
+.brand .wordmark { font-family: var(--serif); font-weight: 700; font-size: 1.2rem; color: var(--forest); line-height: 1; }
 .nav { display: flex; gap: 1.25rem; margin-left: auto; align-items: center; flex-wrap: wrap; }
 .nav a { color: var(--ink); text-decoration: none; font-size: 0.93rem; font-weight: 500; }
-.nav a:hover { color: var(--teal); }
+.nav a:hover { color: var(--forest); }
 .nav .who { color: var(--muted); font-size: 0.85rem; }
 
 /* buttons */
@@ -61,18 +70,20 @@ a { color: var(--teal); }
   border-radius: var(--radius); text-decoration: none; text-align: center;
   transition: background 0.15s ease, opacity 0.15s ease;
 }
-.btn-primary { background: var(--teal); color: #fff; }
-.btn-primary:hover { background: var(--teal-dark); }
-.btn-accent { background: var(--accent); color: #fff; }
-.btn-accent:hover { opacity: 0.9; }
+.btn-primary { background: var(--forest); color: #fff; }
+.btn-primary:hover { background: var(--forest-dark); }
+/* Ochre is the brand's dedicated CTA color, per the guide. */
+.btn-accent { background: var(--ochre); color: #2b1f04; }
+.btn-accent:hover { background: var(--ochre-dark); }
 .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-.btn-ghost:hover { border-color: var(--teal); color: var(--teal); }
+.btn-ghost:hover { border-color: var(--forest); color: var(--forest); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-block { display: block; width: 100%; }
 
 /* hero */
-.hero { background: linear-gradient(160deg, var(--mist), #fff 70%); padding: 4rem 0 3.25rem; }
-.hero p.lede { font-size: 1.08rem; color: #46595a; max-width: 46rem; }
+.hero { background: linear-gradient(160deg, var(--cream), #fff 72%); padding: 4rem 0 3.25rem; }
+.hero p.lede { font-size: 1.08rem; color: #46523f; max-width: 46rem; }
+.hero .tagline { font-family: var(--serif); font-style: italic; color: var(--leaf); font-size: 1.05rem; margin-bottom: 0.4rem; }
 
 /* product grid */
 .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
@@ -81,10 +92,10 @@ a { color: var(--teal); }
   padding: 1.4rem; display: flex; flex-direction: column; box-shadow: var(--shadow);
 }
 .card h3 { margin-bottom: 0.35rem; }
-.card .desc { color: #55696a; font-size: 0.92rem; flex: 1; }
-.price { font-family: var(--serif); font-size: 1.5rem; font-weight: 700; color: var(--ink); margin: 0.75rem 0 1rem; }
+.card .desc { color: #556354; font-size: 0.92rem; flex: 1; }
+.price { font-family: var(--serif); font-size: 1.5rem; font-weight: 700; color: var(--forest); margin: 0.75rem 0 1rem; }
 .badge {
-  display: inline-block; background: var(--mist); color: var(--teal-dark);
+  display: inline-block; background: var(--leaf); color: #fff;
   font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   padding: 0.25rem 0.6rem; border-radius: 999px; margin-bottom: 0.6rem;
 }
@@ -104,20 +115,20 @@ input, select {
   width: 100%; padding: 0.65rem 0.75rem; font-family: var(--sans); font-size: 0.95rem;
   border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
 }
-input:focus, select:focus { outline: 2px solid var(--teal); outline-offset: 1px; border-color: var(--teal); }
+input:focus, select:focus { outline: 2px solid var(--forest); outline-offset: 1px; border-color: var(--forest); }
 .field { margin-bottom: 1rem; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 
 .alert { padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.9rem; margin-bottom: 1rem; }
-.alert-error { background: #fdecea; color: #8c2f1d; border: 1px solid #f5c6bd; }
-.alert-info { background: var(--mist); color: var(--teal-dark); border: 1px solid #b9dcde; }
-.alert-success { background: #e7f5ec; color: #1f6b3a; border: 1px solid #bfe3cd; }
+.alert-error { background: var(--danger-bg); color: var(--danger-fg); border: 1px solid var(--danger-line); }
+.alert-info { background: var(--cream); color: var(--forest-dark); border: 1px solid #e6d7ac; }
+.alert-success { background: #eaf3e4; color: var(--forest-dark); border: 1px solid #c9dfba; }
 
 /* status pill */
 .pill { font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px; }
-.pill-ok { background: #e7f5ec; color: #1f6b3a; }
-.pill-warn { background: #fff4e2; color: #8a5a11; }
-.pill-bad { background: #fdecea; color: #8c2f1d; }
+.pill-ok { background: #eaf3e4; color: var(--forest-dark); }
+.pill-warn { background: #fdf1dc; color: #8a5a11; }
+.pill-bad { background: var(--danger-bg); color: var(--danger-fg); }
 
 /* table */
 table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
@@ -127,7 +138,7 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
 
 /* spinner */
 .spinner {
-  width: 34px; height: 34px; border: 3px solid var(--mist); border-top-color: var(--teal);
+  width: 34px; height: 34px; border: 3px solid var(--cream); border-top-color: var(--forest);
   border-radius: 50%; animation: spin 0.9s linear infinite; margin: 0 auto 1rem;
 }
 @keyframes spin { to { transform: rotate(360deg); } }

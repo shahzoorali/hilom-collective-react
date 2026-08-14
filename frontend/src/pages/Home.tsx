@@ -32,10 +32,11 @@ export default function Home() {
     <>
       <section className="hero">
         <div className="container">
-          <h1>Learn. Reflect. Grow.</h1>
+          <p className="tagline">Wellness for all. Healing for good.</p>
+          <h1>Healing doesn't have to be complicated.</h1>
           <p className="lede">
-            Courses and workshops designed to support your holistic well-being — practical
-            learning you can apply to everyday life, from the Hilom Collective.
+            Start with one small act of care today — practical courses and workshops built
+            around the way Filipinos actually rest, reflect, and grow.
           </p>
           <Link className="btn btn-accent" to="/courses">
             Browse courses
