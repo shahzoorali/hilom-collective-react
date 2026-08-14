@@ -168,6 +168,10 @@ export class HilomBackendStack extends cdk.Stack {
     const syncCourses = makeFn('SyncCoursesFn', 'handlers/admin.ts', 'syncCourses');
     const retryEnrollment = makeFn('RetryEnrollmentFn', 'handlers/admin.ts', 'retryEnrollment');
     const paymongoWebhook = makeFn('PayMongoWebhookFn', 'handlers/paymongo-webhook.ts', 'handler');
+    const checkoutIntent = makeFn('CheckoutIntentFn', 'handlers/checkout.ts', 'createIntent');
+    const orderStatus = makeFn('OrderStatusFn', 'handlers/orders.ts', 'status');
+    const orderStatusByIntent = makeFn('OrderStatusByIntentFn', 'handlers/orders.ts', 'statusByIntent');
+    const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
     const enrollmentRetryConsumer = makeFn(
       'EnrollmentRetryConsumerFn',
       'handlers/enrollment-retry-consumer.ts',
@@ -184,13 +188,16 @@ export class HilomBackendStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutIntent, orderStatus, orderStatusByIntent, adminOrders]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
     paymongoSecret.grantRead(paymongoWebhook);
+    paymongoSecret.grantRead(checkoutIntent);
+    paymongoSecret.grantRead(orderStatusByIntent);
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
+    adminKeySecret.grantRead(adminOrders);
 
     // Every path that can fulfill an order needs the full fulfillment
     // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
@@ -251,6 +258,10 @@ export class HilomBackendStack extends cdk.Stack {
     route('/admin/sync-courses', apigw.HttpMethod.POST, syncCourses, 'SyncCoursesInt');
     route('/admin/retry-enrollment/{orderId}', apigw.HttpMethod.POST, retryEnrollment, 'RetryEnrollmentInt');
     route('/webhooks/paymongo', apigw.HttpMethod.POST, paymongoWebhook, 'PayMongoWebhookInt');
+    route('/checkout/create-intent', apigw.HttpMethod.POST, checkoutIntent, 'CheckoutIntentInt');
+    route('/orders/status/{paymentId}', apigw.HttpMethod.GET, orderStatus, 'OrderStatusInt');
+    route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
+    route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
 
     // ---------------------------------------------------------------------
     // Outputs
