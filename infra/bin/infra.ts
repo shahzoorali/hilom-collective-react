@@ -10,7 +10,15 @@ const app = new cdk.App();
 // ap-southeast-1 (Singapore).
 const account = process.env.CDK_DEFAULT_ACCOUNT ?? '651706741660';
 
+// Set once the certificate finishes DNS validation. Until then the stack still
+// deploys, just without the custom domain, so a pending DNS record never blocks
+// backend work.
+//   cdk deploy -c apiCertificateArn=arn:aws:acm:ap-southeast-1:...
+const apiCertificateArn = app.node.tryGetContext('apiCertificateArn') as string | undefined;
+
 new HilomBackendStack(app, 'HilomBackendStack', {
   env: { account, region: 'ap-southeast-1' },
   description: 'Hilom Collective — API Gateway, Lambdas, secrets, enrollment queues',
+  apiCertificateArn,
+  corsOrigin: app.node.tryGetContext('corsOrigin') as string | undefined,
 });

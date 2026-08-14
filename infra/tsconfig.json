@@ -20,10 +20,10 @@
     "inlineSources": true,
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
-    "skipLibCheck": true,
-    "typeRoots": [
-      "./node_modules/@types"
-    ]
+    "skipLibCheck": true
+    // The CDK scaffold pins typeRoots to ./node_modules/@types, which breaks in
+    // an npm workspace: @types/node is hoisted to the repo root and becomes
+    // invisible. Default resolution walks up the tree, so the pin is removed.
   },
   "exclude": [
     "node_modules",

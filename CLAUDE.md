@@ -9,7 +9,7 @@ Build one phase at a time.
 ## Layout
 
 - `frontend/` — React (Vite + TS), deployed via **Amplify Hosting**
-- `backend/` — Lambda handlers (Node 20 / TS) behind API Gateway at `api.hilomcollective.com`
+- `backend/` — Lambda handlers (Node 24 / TS) behind API Gateway at `api.hilomcollective.com`
 - `infra/` — AWS CDK (TypeScript)
 - `scripts/` — local operational scripts (Moodle WS probes, migrations)
 - `docs/` — plan and runbooks
