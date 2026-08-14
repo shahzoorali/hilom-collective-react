@@ -7,8 +7,9 @@ automation.
 Full phase-by-phase build plan: [docs/hilom-development-plan.md](docs/hilom-development-plan.md).
 Project conventions and locked decisions: [CLAUDE.md](CLAUDE.md).
 
-**Status:** Phases 0–6 complete and verified against production. Phase 7 (frontend
-storefront) is next — see [Progress](#progress) below.
+**Status:** Phases 0–7 complete and verified against production. The storefront is
+live at **https://main.d2hx75l7mk7woi.amplifyapp.com** — the apex domain still serves
+the old WordPress site until the Phase 9 cutover.
 
 ---
 
@@ -92,7 +93,7 @@ full list of hard rules this build follows.
 | **SNS** | `hilom-enrollment-alerts` — emails when an order exhausts retries and needs manual attention |
 | **CloudWatch** | Logs for every Lambda; alarm on DLQ depth that triggers the SNS alert |
 | **ACM** | TLS certs for `api.hilomcollective.com` (ap-southeast-1) and the future storefront domain (us-east-1) |
-| **Amplify Hosting** | Planned for the Phase 7 React frontend — not yet deployed |
+| **Amplify Hosting** | Serves the React storefront (app `d2hx75l7mk7woi`) |
 | **EC2** | Used only transiently in Phase 1 (disposable Moodle SSO test box), already terminated |
 
 Outside AWS: **Supabase Postgres** (ap-southeast-1) for the catalog and orders,
@@ -111,7 +112,10 @@ Non-secret identifiers only — every credential lives in Secrets Manager, never
 | AWS region | `ap-southeast-1` (Singapore) |
 | API base URL | `https://api.hilomcollective.com` |
 | API execute-api URL (fallback) | `https://n5r99dri26.execute-api.ap-southeast-1.amazonaws.com` |
+| Storefront (Amplify) | `https://main.d2hx75l7mk7woi.amplifyapp.com` |
+| Amplify app id | `d2hx75l7mk7woi` |
 | Cognito user pool | `ap-southeast-1_AA9IeeZ2z` (`hilom-users`) |
+| Cognito SPA client (public, PKCE) | `29bo0gpj7j9u7ofbcii22emj8l` (`hilom-web`) |
 | Cognito Hosted UI domain | `hilom-auth.auth.ap-southeast-1.amazoncognito.com` |
 | Supabase project | `afdhnjohvsoxwzlmpddj` (ap-southeast-1) |
 | Supabase pooler host | `aws-0-ap-southeast-1.pooler.supabase.com:5432` |
@@ -139,7 +143,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 
 ## Layout
 
-- `frontend/` — React (Vite + TS), deployed via **Amplify Hosting** *(Phase 7, not yet built)*
+- `frontend/` — React (Vite + TS), deployed via **Amplify Hosting**
 - `backend/` — Lambda handlers (Node 24 / TS) behind API Gateway
 - `infra/` — AWS CDK (TypeScript) — `HilomBackendStack`
 - `db/` — Supabase SQL migrations, RLS policies, seed data
@@ -157,7 +161,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 | 4 — API Gateway + Lambda skeleton | ✅ done |
 | 5 — Manual course sync | ✅ done (`POST /admin/sync-courses`) |
 | 6 — Payment + enrollment | ✅ done, verified end-to-end (single course, bundle, forced-failure recovery) against production |
-| 7 — Frontend storefront | ⏳ next |
+| 7 — Frontend storefront | ✅ done — storefront, on-site checkout, Cognito login, admin panel; live on Amplify |
 | 8 — Manual refunds | not started |
 | 9 — Launch cutover | not started |
 
@@ -171,4 +175,5 @@ cd infra && npx cdk synth   # requires -c apiCertificateArn=... for the custom d
 
 Runbooks with exact deploy/test commands:
 [docs/backend-runbook.md](docs/backend-runbook.md),
+[docs/frontend-runbook.md](docs/frontend-runbook.md),
 [docs/sso-runbook.md](docs/sso-runbook.md).

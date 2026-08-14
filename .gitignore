@@ -19,3 +19,6 @@ infra/cdk.context.json
 # Amplify
 .amplify-hosting/
 amplify_outputs*.json
+
+# Amplify manual-deploy artifact
+frontend/dist.zip
