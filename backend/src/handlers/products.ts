@@ -29,23 +29,41 @@ export async function detail(event: APIGatewayProxyEventV2): Promise<APIGatewayP
   try {
     const supabase = await getSupabase();
 
-    // The joined course rows come from the cache, which may be empty before the
-    // first Phase 5 sync. That must degrade to "no course detail" rather than a
-    // 404 on a product that genuinely exists and is purchasable.
-    const { data, error } = await supabase
+    const { data: product, error } = await supabase
       .from('products')
       .select(
         `id, name, slug, description, price_centavos, currency, thumbnail_url,
-         product_courses ( moodle_course_id, courses ( fullname, shortname, summary ) )`,
+         product_courses ( moodle_course_id )`,
       )
       .eq('slug', slug)
       .eq('is_active', true)
-      .maybeSingle<Product & { product_courses: unknown[] }>();
+      .maybeSingle<Product & { product_courses: { moodle_course_id: number }[] }>();
 
     if (error) throw error;
-    if (!data) return notFound('Product not found');
+    if (!product) return notFound('Product not found');
 
-    return ok({ product: data });
+    // Course metadata is fetched separately rather than as a nested embed:
+    // product_courses has no foreign key to courses on purpose, so that an empty
+    // or stale cache can never block a sale. PostgREST can only infer an embed
+    // from a real FK, so asking for one here fails with "could not find a
+    // relationship".
+    const courseIds = product.product_courses.map((pc) => pc.moodle_course_id);
+    const { data: courses, error: coursesError } = await supabase
+      .from('courses')
+      .select('moodle_course_id, fullname, shortname, summary, last_synced_at')
+      .in('moodle_course_id', courseIds);
+
+    // A cache miss degrades to "no course detail" rather than failing the whole
+    // product page — the product is still purchasable either way.
+    if (coursesError) console.warn('[products.detail] course cache lookup failed', coursesError);
+
+    return ok({
+      product: {
+        ...product,
+        moodle_course_ids: courseIds,
+        courses: courses ?? [],
+      },
+    });
   } catch (err) {
     return serverError('products.detail', err);
   }
