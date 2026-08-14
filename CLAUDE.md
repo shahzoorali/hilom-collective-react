@@ -43,14 +43,16 @@ Build one phase at a time.
   committed. `.env` is gitignored.
 - **Moodle host is `https://www.learn.hilomcollective.com`** — with `www`. The bare host
   301-redirects; using it breaks the OAuth2 callback and POSTed web-service calls.
-- **Supabase connections use the pooler** (`aws-0-ap-south-1.pooler.supabase.com:5432`).
+- **Supabase connections use the pooler** (`aws-0-ap-southeast-1.pooler.supabase.com:5432`).
   The direct `db.<ref>.supabase.co` host is IPv6-only and does not resolve here.
 
 ## Verified environment (as of 2026-08-14)
 
 - AWS account `651706741660`, IAM user `cursor-admin`.
-- Supabase project `fytmkmifcwdbsbmhprgl`, Postgres 17.6, region **ap-south-1 (Mumbai)** —
-  note this is a different region from the AWS stack; see docs for the latency tradeoff.
+- Supabase project `afdhnjohvsoxwzlmpddj`, Postgres 17.6, region **ap-southeast-1 (Singapore)**
+  — recreated from an earlier Mumbai project while the DB was still empty, so it's now
+  same-region as the AWS stack. Connection details (URL, publishable key, DB pooler URL,
+  secret key) live in Secrets Manager as `hilom/supabase`, not in this repo.
 - Moodle web-service token is valid and permits: `core_course_get_courses`,
   `core_course_get_courses_by_field`, `core_user_get_users_by_field`,
   `core_user_create_users`, `core_user_update_users`, `enrol_manual_enrol_users`,
@@ -70,3 +72,6 @@ Build one phase at a time.
 | 18 | burger101 | How to Cook a Burger | yes |
 
 Course 1 is the Moodle site-level pseudo-course (`format: site`) — never sell or enroll into it.
+Courses 3 and 6 are hidden/retired — not sellable. Only **10, 15, 16, 17, 18** are real
+products. Course 17 (The Breakthrough Bundle) is a bundle product whose purchase enrolls the
+buyer in courses 10, 15, and 16 — not course 17 itself.
