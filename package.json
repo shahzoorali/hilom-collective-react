@@ -1,0 +1,12 @@
+{
+  "name": "hilom-react",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hilom Collective — React storefront, Lambda backend, and CDK infrastructure",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "infra"
+  ]
+}

@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+
+# Secrets — never commit. Real values live in AWS Secrets Manager.
+.env
+.env.*
+!.env.example
+*.pem
+.pgpass
+secrets.json
+
+# CDK
+infra/cdk.out/
+infra/cdk.context.json
+
+# Amplify
+.amplify-hosting/
+amplify_outputs*.json
