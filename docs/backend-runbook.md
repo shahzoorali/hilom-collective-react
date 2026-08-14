@@ -69,6 +69,28 @@ Lambdas run **Node 24**, not Node 20 as the original plan specified. Node 20 was
 deprecated on 2026-04-30 and new-function creation stops on 2027-02-01, so
 starting on it would have meant inheriting a migration deadline.
 
+## Moodle enrollment idempotency — confirmed
+
+Calling `enrol_manual_enrol_users` twice for the same user + course neither
+errors nor duplicates the enrollment. Verified against production with a
+throwaway user and course 18 (`burger101`):
+
+```bash
+cd backend && MOODLE_WS_TOKEN=... npx tsx ../scripts/probe-moodle.ts --enrol-test <email> <courseId>
+```
+
+This is why the Phase 6 webhook can safely retry enrollment on a failure
+without needing its own dedupe logic for the Moodle side — only the order
+row's `paymongo_payment_id` uniqueness needs to guard against a duplicated
+*payment* event; a duplicated *enrollment call* is already safe.
+
+One transient finding along the way: production Moodle's DB connection
+dropped mid-request once (`MySQL server has gone away`) during user creation.
+The user was actually created despite the WS call reporting an error — worth
+remembering that a `dmlreadexception` from Moodle doesn't guarantee the write
+didn't happen, so a retry after such an error should check for an existing
+record before creating another.
+
 ## GoDaddy DNS
 
 Two records are needed for the API:
