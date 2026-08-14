@@ -21,4 +21,10 @@ new HilomBackendStack(app, 'HilomBackendStack', {
   description: 'Hilom Collective — API Gateway, Lambdas, secrets, enrollment queues',
   apiCertificateArn,
   corsOrigin: app.node.tryGetContext('corsOrigin') as string | undefined,
+  // Not a secret — the pool ID is just an identifier, unlike the app client
+  // secret, which stays in hilom/cognito. Overridable via context in case the
+  // pool is ever recreated.
+  cognitoUserPoolId: (app.node.tryGetContext('cognitoUserPoolId') as string | undefined) ?? 'ap-southeast-1_AA9IeeZ2z',
+  // Where DLQ alerts go. Override with: cdk deploy -c alertEmail=someone@else.com
+  alertEmail: (app.node.tryGetContext('alertEmail') as string | undefined) ?? 'don.poky@gmail.com',
 });

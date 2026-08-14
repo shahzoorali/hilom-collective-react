@@ -31,6 +31,15 @@ export interface PayMongoSecret {
   webhookSecret: string;
 }
 
+export interface CognitoSecret {
+  userPoolId: string;
+  clientId: string;
+  clientSecret: string;
+  domain: string;
+  issuer: string;
+  region: string;
+}
+
 export async function getSecret<T>(secretId: string): Promise<T> {
   const cached = cache.get(secretId);
   if (cached) return cached as T;
@@ -53,6 +62,8 @@ export const getMoodleSecret = () => getSecret<MoodleSecret>('hilom/moodle');
  */
 export const getPayMongoSecret = () =>
   getSecret<PayMongoSecret>(process.env.PAYMONGO_SECRET_ID ?? 'hilom/paymongo/test');
+
+export const getCognitoSecret = () => getSecret<CognitoSecret>('hilom/cognito');
 
 export function clearSecretCache(): void {
   cache.clear();

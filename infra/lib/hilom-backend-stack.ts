@@ -6,6 +6,13 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 
@@ -26,7 +33,20 @@ export interface HilomBackendStackProps extends cdk.StackProps {
 
   /** Allowed browser origin for CORS. */
   readonly corsOrigin?: string;
+
+  /**
+   * Cognito user pool ID that checkout fulfillment admin-creates buyers in.
+   * Not secret (unlike the app client secret, which lives in hilom/cognito) —
+   * only used here to scope the Lambdas' IAM policy to this one pool.
+   */
+  readonly cognitoUserPoolId?: string;
+
+  /** Where the DLQ CloudWatch alarm sends its SNS notification. */
+  readonly alertEmail?: string;
 }
+
+const DEFAULT_COGNITO_USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
+const DEFAULT_ALERT_EMAIL = 'don.poky@gmail.com';
 
 export class HilomBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: HilomBackendStackProps = {}) {
@@ -39,6 +59,10 @@ export class HilomBackendStack extends cdk.Stack {
     const supabaseSecret = secretsmanager.Secret.fromSecretNameV2(this, 'SupabaseSecret', 'hilom/supabase');
     const moodleSecret = secretsmanager.Secret.fromSecretNameV2(this, 'MoodleSecret', 'hilom/moodle');
     const paymongoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'PayMongoSecret', 'hilom/paymongo/test');
+    const cognitoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'CognitoSecret', 'hilom/cognito');
+
+    const cognitoUserPoolId = props.cognitoUserPoolId ?? DEFAULT_COGNITO_USER_POOL_ID;
+    const cognitoUserPoolArn = `arn:aws:cognito-idp:${this.region}:${this.account}:userpool/${cognitoUserPoolId}`;
 
     // The admin key has no external source of truth, so CDK generates it. It is
     // never rendered into the template — only the generated secret's ARN is.
@@ -99,12 +123,65 @@ export class HilomBackendStack extends cdk.Stack {
       });
     };
 
+    // ---------------------------------------------------------------------
+    // Enrollment retry queue + DLQ + alert
+    //
+    // A failed fulfillment (Moodle down, transient DB error, etc.) must never
+    // just vanish: the order stays `paid_pending_enrollment` and a message
+    // goes here. SQS retries it up to maxReceiveCount times with the
+    // Lambda's own backoff (throwing re-queues); once exhausted, the message
+    // moves to the DLQ, which is what actually pages a human via SNS — a
+    // failed *delivery* is expected and self-heals, a message reaching the
+    // DLQ means it did not.
+    // ---------------------------------------------------------------------
+    const enrollmentRetryDlq = new sqs.Queue(this, 'EnrollmentRetryDlq', {
+      queueName: 'hilom-enrollment-retry-dlq',
+      retentionPeriod: cdk.Duration.days(14),
+    });
+
+    const enrollmentRetryQueue = new sqs.Queue(this, 'EnrollmentRetryQueue', {
+      queueName: 'hilom-enrollment-retry',
+      // >= 6x the consumer Lambda's timeout, per AWS's own guidance, so a
+      // message can't become visible again mid-processing and be picked up
+      // by a second concurrent invocation.
+      visibilityTimeout: cdk.Duration.seconds(180),
+      deadLetterQueue: { queue: enrollmentRetryDlq, maxReceiveCount: 5 },
+    });
+
+    const alertTopic = new sns.Topic(this, 'EnrollmentAlertTopic', {
+      topicName: 'hilom-enrollment-alerts',
+    });
+    alertTopic.addSubscription(new subscriptions.EmailSubscription(props.alertEmail ?? DEFAULT_ALERT_EMAIL));
+
+    new cloudwatch.Alarm(this, 'EnrollmentDlqAlarm', {
+      alarmDescription: 'An order exhausted enrollment retries and needs manual admin retry.',
+      metric: enrollmentRetryDlq.metricApproximateNumberOfMessagesVisible({ period: cdk.Duration.minutes(5) }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }).addAlarmAction(new cloudwatchActions.SnsAction(alertTopic));
+
     const productsList = makeFn('ProductsListFn', 'handlers/products.ts', 'list');
     const productsDetail = makeFn('ProductsDetailFn', 'handlers/products.ts', 'detail');
     const coursesList = makeFn('CoursesListFn', 'handlers/courses.ts', 'list');
     const syncCourses = makeFn('SyncCoursesFn', 'handlers/admin.ts', 'syncCourses');
     const retryEnrollment = makeFn('RetryEnrollmentFn', 'handlers/admin.ts', 'retryEnrollment');
     const paymongoWebhook = makeFn('PayMongoWebhookFn', 'handlers/paymongo-webhook.ts', 'handler');
+    const enrollmentRetryConsumer = makeFn(
+      'EnrollmentRetryConsumerFn',
+      'handlers/enrollment-retry-consumer.ts',
+      'handler',
+    );
+
+    paymongoWebhook.addEnvironment('ENROLLMENT_RETRY_QUEUE_URL', enrollmentRetryQueue.queueUrl);
+    enrollmentRetryQueue.grantSendMessages(paymongoWebhook);
+    enrollmentRetryConsumer.addEventSource(
+      new SqsEventSource(enrollmentRetryQueue, {
+        batchSize: 5,
+        reportBatchItemFailures: true, // only failed messages re-queue, not the whole batch
+      }),
+    );
 
     // Least privilege: only the functions that read a given secret can read it.
     for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment]) {
@@ -112,9 +189,23 @@ export class HilomBackendStack extends cdk.Stack {
     }
     moodleSecret.grantRead(syncCourses);
     paymongoSecret.grantRead(paymongoWebhook);
-    supabaseSecret.grantRead(paymongoWebhook);
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
+
+    // Every path that can fulfill an order needs the full fulfillment
+    // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
+    // identity).
+    for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
+      supabaseSecret.grantRead(fn);
+      moodleSecret.grantRead(fn);
+      cognitoSecret.grantRead(fn);
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['cognito-idp:AdminGetUser', 'cognito-idp:AdminCreateUser'],
+          resources: [cognitoUserPoolArn],
+        }),
+      );
+    }
 
     // ---------------------------------------------------------------------
     // HTTP API
@@ -181,5 +272,8 @@ export class HilomBackendStack extends cdk.Stack {
       value: adminKeySecret.secretArn,
       description: 'Read the generated admin key from here; it is never printed',
     });
+
+    new cdk.CfnOutput(this, 'EnrollmentRetryQueueUrl', { value: enrollmentRetryQueue.queueUrl });
+    new cdk.CfnOutput(this, 'EnrollmentRetryDlqUrl', { value: enrollmentRetryDlq.queueUrl });
   }
 }

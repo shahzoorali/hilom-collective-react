@@ -6,7 +6,8 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { getSupabase } from '../lib/supabase.js';
 import { getMoodleSecret } from '../lib/secrets.js';
 import { MoodleClient } from '../lib/moodle.js';
-import { ok, json, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
+import { fulfillOrder } from '../lib/fulfillment.js';
+import { ok, json, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 
 /**
  * POST /admin/sync-courses
@@ -54,17 +55,26 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
 /**
  * POST /admin/retry-enrollment/{orderId}
  *
- * Placeholder — Phase 6 implements the actual re-run of fulfillment for a stuck
- * order. Wired up now so the route, auth and shape exist ahead of the logic.
+ * Admin-triggered re-run of fulfillment for a stuck order — the same
+ * fulfillOrder() the webhook and the SQS retry consumer use, so behavior is
+ * identical across all three trigger paths. Safe to click repeatedly: an
+ * already-fulfilled order returns early without re-enrolling.
  */
 export async function retryEnrollment(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyResultV2> {
   if (!(await isAuthorizedAdmin(event.headers))) return unauthorized();
 
-  return json(501, {
-    error: 'Not implemented',
-    detail: 'Enrollment retry lands in Phase 6.',
-    orderId: event.pathParameters?.orderId ?? null,
-  });
+  const orderId = event.pathParameters?.orderId;
+  if (!orderId) return badRequest('Missing orderId');
+
+  try {
+    const result = await fulfillOrder(orderId);
+    return ok(result);
+  } catch (err) {
+    if (err instanceof Error && err.message === `Order ${orderId} not found`) {
+      return notFound(`Order ${orderId} not found`);
+    }
+    return serverError('admin.retryEnrollment', err);
+  }
 }
