@@ -28,9 +28,10 @@ function ProductCard({ p }: { p: Product }) {
   );
 }
 
-/** The live site's number counters animate on scroll and their target values
- * live in client-side JS state this session couldn't extract — these three
- * are placeholders. Swap in the real percentages from the WordPress admin. */
+/** Real figures from hilomcollective.com — extracted from the Divi module's
+ * `diviModuleNumberCounterData` inline script, since the target values never
+ * appear in the rendered HTML or CSS, only in JS state Divi's scroll-triggered
+ * counter reads at runtime. */
 function StatCounter({ value, caption }: { value: string; caption: string }) {
   return (
     <div className="panel" style={{ textAlign: 'left' }}>
@@ -88,13 +89,10 @@ export default function Home() {
           </p>
           <h2>Most Filipinos need support. But often, they don't know where to find it.</h2>
           <div className="grid" style={{ marginTop: '1.5rem' }}>
-            <StatCounter value="70%" caption="of Filipinos avoid mental health support due to stigma or shame" />
-            <StatCounter value="65%" caption="cite high cost as the #1 reason they don't seek wellness services" />
-            <StatCounter value="50%" caption="of Filipinos with mental health challenges never seek formal help" />
+            <StatCounter value="35.9%" caption="of Filipinos avoid mental health support due to stigma or shame" />
+            <StatCounter value="40%" caption="cite high cost as the #1 reason they don't seek wellness services" />
+            <StatCounter value="80%" caption="of Filipinos with mental health challenges never seek formal help" />
           </div>
-          <p className="small muted" style={{ marginTop: '0.75rem' }}>
-            Figures shown are placeholders — replace with the real statistics from the current site.
-          </p>
         </div>
       </section>
 

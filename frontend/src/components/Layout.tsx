@@ -1,4 +1,4 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { currentUser, login, logout } from '../lib/auth';
 import { MOODLE_URL } from '../config';
@@ -10,7 +10,6 @@ export function money(centavos: number, currency = 'PHP'): string {
 
 export default function Layout({ children }: { children: ReactNode }) {
   const user = currentUser();
-  const navigate = useNavigate();
 
   return (
     <>
@@ -52,15 +51,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             © {new Date().getFullYear()} Hilom Collective ·{' '}
             <a href={MOODLE_URL} target="_blank" rel="noreferrer">
               Learning platform
-            </a>{' '}
-            ·{' '}
-            <button
-              className="btn-ghost"
-              style={{ border: 0, background: 'none', padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit' }}
-              onClick={() => navigate('/admin')}
-            >
-              Admin
-            </button>
+            </a>
           </p>
         </div>
       </footer>
