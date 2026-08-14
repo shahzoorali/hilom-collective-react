@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  adminListOrders, adminRetryEnrollment, adminSyncCourses, listCourses,
+  adminListOrders, adminRetryEnrollment, adminRevokeAccess, adminSyncCourses, listCourses,
   type AdminOrder, type CourseSummary,
 } from '../lib/api';
 import { money } from '../components/Layout';
@@ -20,6 +20,7 @@ function StatusPill({ status }: { status: string }) {
   const cls =
     status === 'fulfilled' ? 'pill pill-ok'
     : status === 'failed' ? 'pill pill-bad'
+    : status === 'refunded' ? 'pill pill-bad'
     : 'pill pill-warn';
   return <span className={cls}>{status.replace(/_/g, ' ')}</span>;
 }
@@ -89,6 +90,34 @@ export default function Admin() {
       await load(adminKey, onlyStuck);
     } catch (e) {
       setError(`Retry failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRevoke(order: AdminOrder) {
+    // Revoking takes a paying customer's access away, so it asks first —
+    // unlike Retry, which is harmless to click twice.
+    const confirmed = window.confirm(
+      `Revoke course access for ${order.buyer_email} and mark this order refunded?\n\n` +
+        `Process the refund in the PayMongo dashboard first — this does not move any money.`,
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    setNotice(null);
+    try {
+      const r = await adminRevokeAccess(adminKey, order.id);
+      const kept = r.retainedCourseIds.length
+        ? ` Kept ${r.retainedCourseIds.join(', ')} — still covered by another order.`
+        : '';
+      setNotice(
+        `Order ${order.id.slice(0, 8)}… → ${r.status}. ` +
+          `Unenrolled from ${r.revokedCourseIds.length} course(s).${kept}`,
+      );
+      await load(adminKey, onlyStuck);
+    } catch (e) {
+      setError(`Revoke failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -183,10 +212,20 @@ export default function Admin() {
                       <td className="small mono" style={{ maxWidth: 320 }}>
                         {o.error_detail ? o.error_detail.slice(0, 160) : '—'}
                       </td>
-                      <td>
-                        {o.status !== 'fulfilled' && (
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {o.status !== 'fulfilled' && o.status !== 'refunded' && (
                           <button className="btn btn-ghost small" onClick={() => onRetry(o.id)} disabled={busy}>
                             Retry
+                          </button>
+                        )}
+                        {o.status !== 'refunded' && (
+                          <button
+                            className="btn btn-ghost small"
+                            style={{ marginLeft: '0.35rem', color: '#8c2f1d', borderColor: '#f5c6bd' }}
+                            onClick={() => onRevoke(o)}
+                            disabled={busy}
+                          >
+                            Revoke
                           </button>
                         )}
                       </td>

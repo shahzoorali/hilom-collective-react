@@ -7,7 +7,7 @@ automation.
 Full phase-by-phase build plan: [docs/hilom-development-plan.md](docs/hilom-development-plan.md).
 Project conventions and locked decisions: [CLAUDE.md](CLAUDE.md).
 
-**Status:** Phases 0–7 complete and verified against production. The storefront is
+**Status:** Phases 0–8 complete and verified against production. The storefront is
 live at **https://main.d2hx75l7mk7woi.amplifyapp.com** — the apex domain still serves
 the old WordPress site until the Phase 9 cutover.
 
@@ -162,7 +162,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 | 5 — Manual course sync | ✅ done (`POST /admin/sync-courses`) |
 | 6 — Payment + enrollment | ✅ done, verified end-to-end (single course, bundle, forced-failure recovery) against production |
 | 7 — Frontend storefront | ✅ done — storefront, on-site checkout, Cognito login, admin panel; live on Amplify |
-| 8 — Manual refunds | not started |
+| 8 — Manual refunds | ✅ done — admin revoke-access, verified incl. the overlapping-products case |
 | 9 — Launch cutover | not started |
 
 ## Local development
@@ -176,4 +176,5 @@ cd infra && npx cdk synth   # requires -c apiCertificateArn=... for the custom d
 Runbooks with exact deploy/test commands:
 [docs/backend-runbook.md](docs/backend-runbook.md),
 [docs/frontend-runbook.md](docs/frontend-runbook.md),
-[docs/sso-runbook.md](docs/sso-runbook.md).
+[docs/sso-runbook.md](docs/sso-runbook.md),
+[docs/refund-runbook.md](docs/refund-runbook.md).

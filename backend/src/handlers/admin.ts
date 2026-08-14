@@ -7,6 +7,7 @@ import { getSupabase } from '../lib/supabase.js';
 import { getMoodleSecret } from '../lib/secrets.js';
 import { MoodleClient } from '../lib/moodle.js';
 import { fulfillOrder } from '../lib/fulfillment.js';
+import { revokeOrderAccess } from '../lib/revocation.js';
 import { ok, json, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 
 /**
@@ -76,5 +77,33 @@ export async function retryEnrollment(
       return notFound(`Order ${orderId} not found`);
     }
     return serverError('admin.retryEnrollment', err);
+  }
+}
+
+/**
+ * POST /admin/revoke-access/{orderId}
+ *
+ * Phase 8 refund handling. The refund itself is processed manually in the
+ * PayMongo dashboard (a locked decision — no refund automation); this removes
+ * the course access that order granted and marks the order `refunded`.
+ *
+ * Does not delete the buyer's Moodle or Cognito account: they may hold other
+ * purchases, and destroying an identity over one refund would be an
+ * unrecoverable action taken on the customer's behalf.
+ */
+export async function revokeAccess(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  if (!(await isAuthorizedAdmin(event.headers))) return unauthorized();
+
+  const orderId = event.pathParameters?.orderId;
+  if (!orderId) return badRequest('Missing orderId');
+
+  try {
+    const result = await revokeOrderAccess(orderId);
+    return ok(result);
+  } catch (err) {
+    if (err instanceof Error && err.message === `Order ${orderId} not found`) {
+      return notFound(`Order ${orderId} not found`);
+    }
+    return serverError('admin.revokeAccess', err);
   }
 }

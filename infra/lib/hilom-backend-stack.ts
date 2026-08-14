@@ -167,6 +167,7 @@ export class HilomBackendStack extends cdk.Stack {
     const coursesList = makeFn('CoursesListFn', 'handlers/courses.ts', 'list');
     const syncCourses = makeFn('SyncCoursesFn', 'handlers/admin.ts', 'syncCourses');
     const retryEnrollment = makeFn('RetryEnrollmentFn', 'handlers/admin.ts', 'retryEnrollment');
+    const revokeAccess = makeFn('RevokeAccessFn', 'handlers/admin.ts', 'revokeAccess');
     const paymongoWebhook = makeFn('PayMongoWebhookFn', 'handlers/paymongo-webhook.ts', 'handler');
     const checkoutIntent = makeFn('CheckoutIntentFn', 'handlers/checkout.ts', 'createIntent');
     const orderStatus = makeFn('OrderStatusFn', 'handlers/orders.ts', 'status');
@@ -188,10 +189,14 @@ export class HilomBackendStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutIntent, orderStatus, orderStatusByIntent, adminOrders]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutIntent, orderStatus, orderStatusByIntent, adminOrders, revokeAccess]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
+    // Revoke unenrols via the Moodle web service, but needs no Cognito access:
+    // the buyer's identity is deliberately left intact on refund.
+    moodleSecret.grantRead(revokeAccess);
+    adminKeySecret.grantRead(revokeAccess);
     paymongoSecret.grantRead(paymongoWebhook);
     paymongoSecret.grantRead(checkoutIntent);
     paymongoSecret.grantRead(orderStatusByIntent);
@@ -257,6 +262,7 @@ export class HilomBackendStack extends cdk.Stack {
     route('/courses', apigw.HttpMethod.GET, coursesList, 'CoursesListInt');
     route('/admin/sync-courses', apigw.HttpMethod.POST, syncCourses, 'SyncCoursesInt');
     route('/admin/retry-enrollment/{orderId}', apigw.HttpMethod.POST, retryEnrollment, 'RetryEnrollmentInt');
+    route('/admin/revoke-access/{orderId}', apigw.HttpMethod.POST, revokeAccess, 'RevokeAccessInt');
     route('/webhooks/paymongo', apigw.HttpMethod.POST, paymongoWebhook, 'PayMongoWebhookInt');
     route('/checkout/create-intent', apigw.HttpMethod.POST, checkoutIntent, 'CheckoutIntentInt');
     route('/orders/status/{paymentId}', apigw.HttpMethod.GET, orderStatus, 'OrderStatusInt');

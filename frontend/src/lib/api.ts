@@ -100,5 +100,19 @@ export const adminRetryEnrollment = (adminKey: string, orderId: string) =>
     headers: { 'x-admin-key': adminKey },
   });
 
+export interface RevokeResult {
+  orderId: string;
+  status: string;
+  revokedCourseIds: number[];
+  /** Courses kept because another live order for this buyer still grants them. */
+  retainedCourseIds: number[];
+}
+
+export const adminRevokeAccess = (adminKey: string, orderId: string) =>
+  get<RevokeResult>(`/admin/revoke-access/${orderId}`, {
+    method: 'POST',
+    headers: { 'x-admin-key': adminKey },
+  });
+
 export const listCourses = () =>
   get<{ courses: CourseSummary[]; last_synced_at: string | null }>('/courses');
