@@ -74,19 +74,56 @@ login page copy in Phase 7 if it comes up in user feedback.
 - Test Cognito user and test Moodle account were both deleted after
   verification — nothing test-related was left behind.
 
-## Applying to production — 🔧 manual, by design
+## Applied to production — done
 
-Per the hard rule (never test auth config on production) and the plan marking
-this step manual, I have not touched `www.learn.hilomcollective.com`. To apply:
+Production did not grant SSH, so the config was applied through Moodle's
+admin UI instead (Site administration → Server → OAuth 2 services →
+"Create new custom service"), following the click-by-click guide in
+[`docs/prod-moodle-request-email.md`](prod-moodle-request-email.md). The
+issuer, its three endpoints, and the three user field mappings were entered
+manually there, mirroring exactly what `moodle-configure-cognito.php` sets.
 
-1. SSH or admin-UI access to production Moodle is needed to run the same
-   script (`scripts/moodle-configure-cognito.php`) against it — I only hold the
-   web admin login given for this project, not server SSH.
-2. Run the identical command above against production.
-3. Verify one login on `www.learn.hilomcollective.com` with a throwaway
-   Cognito user, expecting the same first-attempt/second-attempt pattern.
-4. Register the production callback in Cognito if not already present — it
-   already is, added proactively during test-box setup.
+**One thing the admin-UI path gets wrong by default that the CLI script
+doesn't:** the "Create new custom service" form has no field for
+`requireconfirmation` at all — it only appears on the issuer's separate
+**Settings** page, defaults to **on**, and there's no reason an admin
+clicking through the creation form would think to look for it there. Left at
+the default, the very first SSO signup landed on a Moodle "Confirm your
+account" waiting-for-email page instead of logging the user in — a different
+failure mode than the sesskey retry bug, easy to mistake for the same "first
+login is flaky" issue, but with a different fix: turn off **Require email
+verification** on the issuer's Settings page, tick the "I understand this is
+a security tradeoff" acknowledgement Moodle requires alongside it, and save.
+Once fixed, verified end-to-end on production:
+
+- Fresh SSO signup (throwaway Cognito user `prod-sso-test@hilomcollective.com`)
+  created the Moodle account correctly — `firstname`/`lastname`/`email` all
+  matched the Cognito claims — and logged straight in with **no** confirmation
+  bounce and **no** sesskey retry needed on this attempt.
+- Verified via the account's public profile page and via `admin/user.php`,
+  not just by trusting the redirect.
+- Test user deleted from both Cognito and production Moodle afterward; no
+  test data left in either system.
+
+Given the admin-UI path already requires production-only settings the CLI
+script doesn't need to touch (Manage authentication's built-in `manual`/
+`oauth2` handling turned out to differ from the test box too — see below),
+**anyone repeating this on another Moodle install should check the issuer's
+Settings page for `requireconfirmation`/"Require email verification"
+explicitly, even if the create-service form looked complete.**
+
+### Manage authentication — turned out simpler than expected
+
+On the disposable test box, a fresh Moodle install did not have `manual` in
+its enabled-auth list, and the script was changed to force-enable it
+alongside `oauth2` so the CLI installer's own admin account wouldn't be
+locked out. Production's **Manage authentication** page never offers an
+enable/disable toggle for "Manual accounts" or "No login" at all — Moodle
+hardcodes both as always available regardless of that list. So on an
+established install like production, this particular test-box finding
+doesn't apply and needed no action; it's left here because it's the kind of
+thing worth checking, not assuming, on any *other* Moodle install this
+config gets applied to.
 
 ## Cleanup — 🔧 manual, after cutover is confirmed
 

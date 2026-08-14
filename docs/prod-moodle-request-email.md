@@ -92,6 +92,19 @@ Site administration → Server → OAuth 2 services → **Create new custom serv
 
 Save.
 
+### 2b. Turn off email re-verification — easy to miss, breaks first login
+
+This is **not** on the creation form — it only appears on the issuer's
+separate **Settings** page after saving, labeled "Require email verification"
+in this Moodle version (older versions call it "Require confirmation"). It
+defaults to **on**, and if left on, every new signup lands on Moodle's
+"Confirm your account, check your email" page instead of logging in — Cognito
+already verified the email, so this is redundant and actively breaks login.
+
+Open the issuer → **Settings** → find **Require email verification** →
+uncheck it → an "I understand disabling email verification can be a security
+issue" checkbox will appear → check that too → **Save changes**.
+
 ### 3. Map the user fields
 On the same issuer's **User field mappings** tab, add:
 
