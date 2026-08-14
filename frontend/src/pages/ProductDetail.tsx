@@ -41,7 +41,7 @@ export default function ProductDetail() {
 
   return (
     <section className="section">
-      <div className="container" style={{ display: 'grid', gap: '2rem', gridTemplateColumns: 'minmax(0,1fr) 320px' }}>
+      <div className="container split split-narrow" style={{ alignItems: 'start' }}>
         <div>
           {isBundle && <span className="badge">Bundle · {product.moodle_course_ids.length} courses</span>}
           <h1>{product.name}</h1>

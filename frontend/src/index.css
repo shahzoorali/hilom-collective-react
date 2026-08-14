@@ -55,12 +55,36 @@ a { color: var(--forest); }
   position: sticky; top: 0; z-index: 20;
 }
 .site-header .inner { display: flex; align-items: center; gap: 1.5rem; padding: 0.85rem 0; }
-.brand { display: flex; align-items: center; text-decoration: none; }
+.brand { display: flex; align-items: center; text-decoration: none; flex-shrink: 0; }
 .brand-logo { height: 44px; width: auto; object-fit: contain; display: block; }
 .nav { display: flex; gap: 1.25rem; margin-left: auto; align-items: center; flex-wrap: wrap; }
 .nav a { color: var(--ink); text-decoration: none; font-size: 0.93rem; font-weight: 500; }
 .nav a:hover { color: var(--forest); }
 .nav .who { color: var(--muted); font-size: 0.85rem; }
+
+/* Hamburger — hidden on desktop, revealed at the breakpoint below. */
+.nav-toggle {
+  display: none; margin-left: auto; background: none; border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.45rem 0.6rem; cursor: pointer; color: var(--forest);
+  line-height: 1; font-size: 1.25rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive layout primitives.
+   Fixed-pixel grid tracks (e.g. `1fr 420px`) do not survive a 360px viewport,
+   so page layouts use these classes rather than inline grid definitions.
+   --------------------------------------------------------------------------- */
+.split {
+  display: grid; gap: 2rem; align-items: center;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+}
+.split-narrow { grid-template-columns: minmax(0, 1fr) minmax(0, 340px); }
+/* Image-first on desktop; source order still puts the image first, which is
+   also the sensible reading order once stacked. */
+.split-reverse { grid-template-columns: minmax(0, 420px) minmax(0, 1fr); }
+.two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+img { max-width: 100%; }
 
 /* buttons */
 .btn {
@@ -148,7 +172,61 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   padding: 2rem 0; margin-top: 3rem; color: var(--muted); font-size: 0.87rem;
 }
 
-@media (max-width: 620px) {
+/* ---------------------------------------------------------------------------
+   Breakpoints
+   --------------------------------------------------------------------------- */
+
+/* Tablet — two-up layouts still work, but the fixed sidebar tracks get tight. */
+@media (max-width: 960px) {
+  .split, .split-narrow, .split-reverse { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
+  /* Once stacked, the image should follow the text it illustrates rather than
+     leading the section with an unexplained photo. */
+  .split-reverse > img { order: 2; }
+  .section { padding: 2.25rem 0; }
+}
+
+/* Mobile — collapse the nav behind a toggle and go single-column throughout. */
+@media (max-width: 780px) {
+  .nav-toggle { display: block; }
+
+  .nav {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    margin: 0.75rem 0 0.25rem;
+  }
+  .nav.open { display: flex; }
+  .nav a {
+    padding: 0.7rem 0.25rem;
+    border-bottom: 1px solid var(--line);
+    font-size: 1rem;
+  }
+  /* Buttons in the nav shouldn't stretch edge-to-edge awkwardly. */
+  .nav .btn { margin-top: 0.5rem; }
+  .nav .who { padding: 0.5rem 0.25rem; }
+
+  .site-header .inner { flex-wrap: wrap; gap: 0.5rem; }
+  .brand-logo { height: 38px; }
+
+  .two-col { grid-template-columns: minmax(0, 1fr); }
   .row { grid-template-columns: 1fr; }
-  .nav { gap: 0.9rem; }
+  .grid { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+
+  .hero { padding: 2.5rem 0 2rem; }
+  .panel { padding: 1.25rem; }
+  .container { width: min(1120px, 92vw); }
+
+  /* Sticky sidebars have nothing to stick to once stacked. */
+  .panel[style*="sticky"] { position: static !important; }
+}
+
+/* Small phones */
+@media (max-width: 420px) {
+  .btn { width: 100%; padding: 0.75rem 1rem; }
+  /* Except inside table rows, where full-width buttons destroy the layout. */
+  td .btn { width: auto; }
+  .card { padding: 1.1rem; }
+  .price { font-size: 1.35rem; }
 }

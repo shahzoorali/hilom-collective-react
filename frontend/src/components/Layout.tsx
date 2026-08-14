@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useState, type ReactNode } from 'react';
 import { currentUser, login, logout } from '../lib/auth';
 import { MOODLE_URL } from '../config';
 import hilomLogo from '../assets/hilom-logo.png';
@@ -10,6 +10,11 @@ export function money(centavos: number, currency = 'PHP'): string {
 
 export default function Layout({ children }: { children: ReactNode }) {
   const user = currentUser();
+  const [navOpen, setNavOpen] = useState(false);
+  const { pathname } = useLocation();
+
+  // Navigating with the menu open would otherwise leave it covering the new page.
+  useEffect(() => setNavOpen(false), [pathname]);
 
   return (
     <>
@@ -18,7 +23,15 @@ export default function Layout({ children }: { children: ReactNode }) {
           <Link className="brand" to="/">
             <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" />
           </Link>
-          <nav className="nav">
+          <button
+            className="nav-toggle"
+            aria-expanded={navOpen}
+            aria-label={navOpen ? 'Close menu' : 'Open menu'}
+            onClick={() => setNavOpen((o) => !o)}
+          >
+            {navOpen ? '✕' : '☰'}
+          </button>
+          <nav className={navOpen ? 'nav open' : 'nav'}>
             <Link to="/about">About Hilom</Link>
             <Link to="/services">Services</Link>
             <Link to="/events">Events</Link>

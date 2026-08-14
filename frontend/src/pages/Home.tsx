@@ -98,7 +98,7 @@ export default function Home() {
 
       {/* What We Do */}
       <section className="section" style={{ background: 'var(--cream)' }}>
-        <div className="container" style={{ display: 'grid', gap: '2rem', gridTemplateColumns: 'minmax(0,1fr) 420px', alignItems: 'center' }}>
+        <div className="container split">
           <div>
             <p className="badge">What We Do</p>
             <h2>We meet you where you are.</h2>
@@ -140,7 +140,7 @@ export default function Home() {
 
       {/* Who Hilom is for */}
       <section className="section">
-        <div className="container" style={{ display: 'grid', gap: '2rem', gridTemplateColumns: '420px minmax(0,1fr)', alignItems: 'center' }}>
+        <div className="container split split-reverse">
           <img src={whoIsHilomForImg} alt="" style={{ width: '100%', borderRadius: 'var(--radius)' }} />
           <div>
             <p className="badge">What We Do</p>

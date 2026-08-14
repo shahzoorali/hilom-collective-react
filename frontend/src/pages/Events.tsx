@@ -50,7 +50,7 @@ export default function Events() {
       </section>
 
       <section className="section" style={{ paddingTop: 0 }}>
-        <div className="container grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+        <div className="container grid">
           <EventCard
             img={event1}
             title="The Overloaded Mom Reset"

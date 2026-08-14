@@ -6,7 +6,7 @@ export default function About() {
   return (
     <>
       <section className="section">
-        <div className="container" style={{ display: 'grid', gap: '2rem', gridTemplateColumns: 'minmax(0,1fr) 380px', alignItems: 'center' }}>
+        <div className="container split split-narrow">
           <div>
             <h1>A wellness platform for everyday Filipinos</h1>
             <p>
@@ -27,7 +27,7 @@ export default function About() {
       </section>
 
       <section className="section" style={{ background: 'var(--cream)' }}>
-        <div className="container grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <div className="container grid two-col">
           <div className="panel">
             <p className="badge">Our Mission</p>
             <p style={{ marginBottom: 0 }}>
