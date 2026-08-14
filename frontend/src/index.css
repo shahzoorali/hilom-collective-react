@@ -55,9 +55,8 @@ a { color: var(--forest); }
   position: sticky; top: 0; z-index: 20;
 }
 .site-header .inner { display: flex; align-items: center; gap: 1.5rem; padding: 0.85rem 0; }
-.brand { display: flex; align-items: center; gap: 0.55rem; text-decoration: none; }
-.brand img { height: 34px; width: 34px; object-fit: contain; }
-.brand .wordmark { font-family: var(--serif); font-weight: 700; font-size: 1.2rem; color: var(--forest); line-height: 1; }
+.brand { display: flex; align-items: center; text-decoration: none; }
+.brand-logo { height: 44px; width: auto; object-fit: contain; display: block; }
 .nav { display: flex; gap: 1.25rem; margin-left: auto; align-items: center; flex-wrap: wrap; }
 .nav a { color: var(--ink); text-decoration: none; font-size: 0.93rem; font-weight: 500; }
 .nav a:hover { color: var(--forest); }

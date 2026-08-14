@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { currentUser, login, logout } from '../lib/auth';
 import { MOODLE_URL } from '../config';
-import logoLeaf from '../assets/logo-leaf.png';
+import hilomLogo from '../assets/hilom-logo.png';
 
 export function money(centavos: number, currency = 'PHP'): string {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(centavos / 100);
@@ -17,8 +17,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <header className="site-header">
         <div className="container inner">
           <Link className="brand" to="/">
-            <img src={logoLeaf} alt="" />
-            <span className="wordmark">hilom collective</span>
+            <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" />
           </Link>
           <nav className="nav">
             <Link to="/courses">Courses</Link>
@@ -48,9 +47,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
       <footer className="site-footer">
         <div className="container">
-          <p className="small" style={{ fontStyle: 'italic', color: 'var(--forest)', marginBottom: '0.6rem' }}>
-            Wellness for all. Healing for good.
-          </p>
+          <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" style={{ marginBottom: '0.9rem' }} />
           <p style={{ margin: 0 }}>
             © {new Date().getFullYear()} Hilom Collective ·{' '}
             <a href={MOODLE_URL} target="_blank" rel="noreferrer">
