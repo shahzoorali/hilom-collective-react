@@ -15,7 +15,9 @@
 
 define('CLI_SCRIPT', true);
 
-require(__DIR__ . '/../config.php');
+// Intended to be copied into <moodledir>/admin/cli/ alongside Moodle's own CLI
+// scripts, which is why config.php is two levels up from here.
+require(__DIR__ . '/../../config.php');
 require_once($CFG->libdir . '/clilib.php');
 
 [$options, $unrecognised] = cli_get_params([
@@ -100,6 +102,13 @@ if ($existing) {
 } else {
     cli_writeln('Creating new issuer');
     $issuer = new \core\oauth2\issuer(0, (object) $fields);
+    if (!$issuer->is_valid()) {
+        foreach ($issuer->get_errors() as $field => $error) {
+            $msg = is_object($error) && method_exists($error, 'out') ? $error->out() : (string) $error;
+            cli_writeln("  validation error on {$field}: {$msg}");
+        }
+        cli_error('Issuer failed validation, see above');
+    }
     $issuer->create();
 }
 
@@ -158,14 +167,23 @@ foreach ($mappings as $external => $internal) {
 // decision keeps native login available for admins, so that a broken Cognito
 // config can never lock everyone out of Moodle.
 // ---------------------------------------------------------------------------
+// A fresh Moodle 4.5 install enables `email` (self-registration) by default but
+// NOT `manual`, even though the CLI installer's own admin account is created
+// with auth=manual. Left alone, that account would be unable to log in with a
+// username/password at all — silently breaking the very fallback this locked
+// decision exists to guarantee. So `manual` is force-enabled here rather than
+// only warned about.
 $enabled = array_filter(explode(',', (string) get_config('core', 'auth')));
-if (!in_array('oauth2', $enabled, true)) {
-    $enabled[] = 'oauth2';
-    set_config('auth', implode(',', $enabled));
-    cli_writeln('Enabled auth_oauth2');
+$changed = false;
+foreach (['oauth2', 'manual'] as $required) {
+    if (!in_array($required, $enabled, true)) {
+        $enabled[] = $required;
+        $changed = true;
+    }
 }
-if (!in_array('manual', $enabled, true)) {
-    cli_writeln('WARNING: manual auth is not enabled — admins would have no fallback login.');
+if ($changed) {
+    set_config('auth', implode(',', $enabled));
+    cli_writeln('Enabled: ' . implode(', ', array_intersect(['oauth2', 'manual'], $enabled)));
 }
 
 // Users authenticate through Cognito, so Moodle must be allowed to create the
