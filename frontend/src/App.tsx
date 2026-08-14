@@ -7,6 +7,10 @@ import Checkout from './pages/Checkout';
 import Processing from './pages/Processing';
 import AuthCallback from './pages/AuthCallback';
 import Admin from './pages/Admin';
+import About from './pages/About';
+import Services from './pages/Services';
+import Events from './pages/Events';
+import Community from './pages/Community';
 
 export default function App() {
   return (
@@ -14,6 +18,10 @@ export default function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/services" element={<Services />} />
+          <Route path="/events" element={<Events />} />
+          <Route path="/community" element={<Community />} />
           <Route path="/courses" element={<Courses />} />
           <Route path="/courses/:slug" element={<ProductDetail />} />
           <Route path="/checkout/processing" element={<Processing />} />

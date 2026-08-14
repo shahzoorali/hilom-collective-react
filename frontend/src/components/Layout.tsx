@@ -19,9 +19,13 @@ export default function Layout({ children }: { children: ReactNode }) {
             <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" />
           </Link>
           <nav className="nav">
+            <Link to="/about">About Hilom</Link>
+            <Link to="/services">Services</Link>
+            <Link to="/events">Events</Link>
+            <Link to="/community">Join Our Community</Link>
             <Link to="/courses">Courses</Link>
             <a href={MOODLE_URL} target="_blank" rel="noreferrer">
-              My learning
+              Login to Hilom Learning Hub ➞
             </a>
             {user ? (
               <>

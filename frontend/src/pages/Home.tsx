@@ -67,7 +67,7 @@ export default function Home() {
             Hilom Collective is a holistic wellness platform that makes healing simple,
             accessible, and rooted in everyday Filipino life.
           </p>
-          <Link className="btn btn-accent" to="/courses">
+          <Link className="btn btn-accent" to="/community">
             Join Our Community
           </Link>
         </div>
@@ -106,7 +106,7 @@ export default function Home() {
               Through content, courses, and community, Hilom gives everyday Filipinos the tools to
               rest, reflect, and reconnect. On your phone, in your neighborhood, at your own pace.
             </p>
-            <Link className="btn btn-primary" to="/courses">
+            <Link className="btn btn-primary" to="/about">
               Learn More About Us
             </Link>
           </div>
@@ -145,7 +145,7 @@ export default function Home() {
           <div>
             <p className="badge">What We Do</p>
             <h2>Everyone deserves care.</h2>
-            <Link className="btn btn-primary" to="/courses">
+            <Link className="btn btn-primary" to="/services">
               Our Services
             </Link>
           </div>
@@ -178,7 +178,7 @@ export default function Home() {
             Whether you're seeking support, want to bring Hilom to your community, or believe in
             this work, we'd love to hear from you.
           </p>
-          <Link className="btn btn-accent" to="/courses">
+          <Link className="btn btn-accent" to="/community">
             Join Our Community
           </Link>
         </div>
