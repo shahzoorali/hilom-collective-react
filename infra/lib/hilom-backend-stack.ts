@@ -51,6 +51,13 @@ export interface HilomBackendStackProps extends cdk.StackProps {
    * must be activated in PayMongo or session creation fails with a 400.
    */
   readonly checkoutPaymentMethods?: string;
+
+  /**
+   * Where PayMongo's hosted checkout redirects back to. Must be the `www`
+   * host: the bare apex only 301s the root path to www, and 404s every other
+   * path via a separate redirect microservice rather than reaching the app.
+   */
+  readonly frontendUrl?: string;
 }
 
 const DEFAULT_COGNITO_USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
@@ -202,6 +209,10 @@ export class HilomBackendStack extends cdk.Stack {
     checkoutSession.addEnvironment(
       'CHECKOUT_PAYMENT_METHODS',
       props.checkoutPaymentMethods ?? 'qrph',
+    );
+    checkoutSession.addEnvironment(
+      'FRONTEND_URL',
+      props.frontendUrl ?? 'https://www.hilomcollective.com',
     );
     const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
     const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');

@@ -61,9 +61,11 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
   if (!slug) return badRequest('Missing slug');
   if (!email || !EMAIL_RE.test(email)) return badRequest('A valid email is required');
 
-  const origin = process.env.CORS_ORIGIN && process.env.CORS_ORIGIN !== '*'
-    ? process.env.CORS_ORIGIN
-    : 'https://hilomcollective.com';
+  // Deliberately not derived from CORS_ORIGIN (which is '*' in this env): the
+  // bare apex domain only 301s "/" to www — every other path, including this
+  // one, hits Amplify's apex-redirect microservice directly and 404s without
+  // ever reaching the app. Same pitfall as the Moodle host; www is required.
+  const origin = process.env.FRONTEND_URL ?? 'https://www.hilomcollective.com';
 
   try {
     const supabase = await getSupabase();
