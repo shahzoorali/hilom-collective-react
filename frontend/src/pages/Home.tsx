@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
 import { money } from '../components/Layout';
@@ -31,12 +31,57 @@ function ProductCard({ p }: { p: Product }) {
 /** Real figures from hilomcollective.com — extracted from the Divi module's
  * `diviModuleNumberCounterData` inline script, since the target values never
  * appear in the rendered HTML or CSS, only in JS state Divi's scroll-triggered
- * counter reads at runtime. */
+ * counter reads at runtime. Animates with a count-up effect when scrolled into view. */
 function StatCounter({ value, caption }: { value: string; caption: string }) {
+  const [displayValue, setDisplayValue] = useState(value);
+  const [hasAnimated, setHasAnimated] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !hasAnimated) {
+          setHasAnimated(true);
+
+          const numMatch = value.match(/[\d.]+/);
+          if (!numMatch) return;
+
+          const targetNum = parseFloat(numMatch[0]);
+          const suffix = value.replace(numMatch[0], '');
+          const duration = 1000;
+          const startTime = Date.now();
+
+          const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const easeOutQuad = 1 - Math.pow(1 - progress, 2);
+            const current = targetNum * easeOutQuad;
+
+            setDisplayValue(
+              current.toFixed(numMatch[0].includes('.') ? 1 : 0) + suffix
+            );
+
+            if (progress < 1) {
+              requestAnimationFrame(animate);
+            }
+          };
+
+          requestAnimationFrame(animate);
+        }
+      },
+      { threshold: 0.3 }
+    );
+
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [value, hasAnimated]);
+
   return (
-    <div className="panel" style={{ textAlign: 'left' }}>
+    <div ref={ref} className="panel" style={{ textAlign: 'left' }}>
       <p style={{ fontFamily: 'var(--serif)', fontSize: '2.4rem', fontWeight: 700, color: 'var(--ochre)', margin: '0 0 0.4rem' }}>
-        {value}
+        {displayValue}
       </p>
       <p className="small" style={{ margin: 0 }}>
         {caption}

@@ -43,13 +43,6 @@ export default function ProductDetail() {
     <section className="section">
       <div className="container split split-narrow" style={{ alignItems: 'start' }}>
         <div>
-          {product.courses[0]?.image_url && (
-            <img
-              src={product.courses[0].image_url}
-              alt=""
-              style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', borderRadius: '0.75rem', marginBottom: '1rem' }}
-            />
-          )}
           {isBundle && <span className="badge">Bundle · {product.moodle_course_ids.length} courses</span>}
           <h1>{product.name}</h1>
           {product.description && <p>{product.description}</p>}
