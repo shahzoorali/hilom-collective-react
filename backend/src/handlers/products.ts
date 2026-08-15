@@ -16,7 +16,37 @@ export async function list(): Promise<APIGatewayProxyResultV2> {
       .order('price_centavos', { ascending: true });
 
     if (error) throw error;
-    return ok({ products: data ?? [] });
+    const products = data ?? [];
+
+    // Card image = the lowest-numbered linked course's image (deterministic
+    // for bundles, which link multiple courses). product_courses has no FK to
+    // courses on purpose (see detail() below), so this is two queries, not an
+    // embed.
+    const productIds = products.map((p) => p.id);
+    const { data: links, error: linksError } = await supabase
+      .from('product_courses')
+      .select('product_id, moodle_course_id')
+      .in('product_id', productIds)
+      .order('moodle_course_id', { ascending: true });
+    if (linksError) console.warn('[products.list] product_courses lookup failed', linksError);
+
+    const courseIds = [...new Set((links ?? []).map((l) => l.moodle_course_id as number))];
+    const { data: courseImages, error: imagesError } = await supabase
+      .from('courses')
+      .select('moodle_course_id, image_url')
+      .in('moodle_course_id', courseIds);
+    if (imagesError) console.warn('[products.list] course image lookup failed', imagesError);
+
+    const imageByCourseId = new Map((courseImages ?? []).map((c) => [c.moodle_course_id, c.image_url]));
+    const firstImageByProductId = new Map<string, string | null>();
+    for (const link of links ?? []) {
+      if (firstImageByProductId.has(link.product_id)) continue;
+      firstImageByProductId.set(link.product_id, imageByCourseId.get(link.moodle_course_id) ?? null);
+    }
+
+    return ok({
+      products: products.map((p) => ({ ...p, image_url: firstImageByProductId.get(p.id) ?? null })),
+    });
   } catch (err) {
     return serverError('products.list', err);
   }
@@ -53,7 +83,8 @@ export async function detail(event: APIGatewayProxyEventV2): Promise<APIGatewayP
       .select(
         'moodle_course_id, fullname, shortname, summary, content_html, image_url, enrolled_count, last_synced_at',
       )
-      .in('moodle_course_id', courseIds);
+      .in('moodle_course_id', courseIds)
+      .order('moodle_course_id', { ascending: true });
 
     // A cache miss degrades to "no course detail" rather than failing the whole
     // product page — the product is still purchasable either way.

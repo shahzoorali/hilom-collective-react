@@ -3,6 +3,7 @@
  * behind a Cognito admin group.
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSupabase } from '../lib/supabase.js';
 import { getMoodleSecret } from '../lib/secrets.js';
 import { MoodleClient } from '../lib/moodle.js';
@@ -10,22 +11,28 @@ import { fulfillOrder } from '../lib/fulfillment.js';
 import { revokeOrderAccess } from '../lib/revocation.js';
 import { ok, json, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 
-const COURSE_IMAGES_BUCKET = 'course-images';
+const s3 = new S3Client({});
 
 /**
  * Moodle's overview file URL requires the WS token to load and must never
  * reach the frontend (that would leak the backend's Moodle secret to every
  * visitor). So the image is fetched here, server-side, with the token, and
- * re-hosted in a public Supabase Storage bucket — the frontend only ever sees
- * that public URL.
+ * re-hosted in a public S3 bucket (CourseImagesBucket, provisioned in the CDK
+ * stack) — the frontend only ever sees that public URL.
  */
 async function mirrorCourseImage(
-  supabase: Awaited<ReturnType<typeof getSupabase>>,
   moodle: MoodleClient,
   course: { id: number; overviewfiles?: { filename: string; fileurl: string; mimetype: string }[] },
 ): Promise<string | null> {
   const file = course.overviewfiles?.[0];
   if (!file) return null;
+
+  const bucket = process.env.COURSE_IMAGES_BUCKET;
+  const bucketUrl = process.env.COURSE_IMAGES_BUCKET_URL;
+  if (!bucket || !bucketUrl) {
+    console.warn('[admin.syncCourses] COURSE_IMAGES_BUCKET(_URL) not configured, skipping image mirror');
+    return null;
+  }
 
   const res = await fetch(moodle.authenticatedFileUrl(file.fileurl));
   // Moodle's pluginfile.php returns HTTP 200 even on failure (e.g. "file
@@ -44,16 +51,17 @@ async function mirrorCourseImage(
   const bytes = new Uint8Array(await res.arrayBuffer());
 
   const ext = file.filename.includes('.') ? file.filename.split('.').pop() : 'jpg';
-  const path = `${course.id}.${ext}`;
-  const { error } = await supabase.storage
-    .from(COURSE_IMAGES_BUCKET)
-    .upload(path, bytes, { contentType, upsert: true });
-  if (error) {
-    console.warn(`[admin.syncCourses] image upload failed for course ${course.id}:`, error.message);
+  const key = `${course.id}.${ext}`;
+  try {
+    await s3.send(
+      new PutObjectCommand({ Bucket: bucket, Key: key, Body: bytes, ContentType: contentType }),
+    );
+  } catch (err) {
+    console.warn(`[admin.syncCourses] image upload failed for course ${course.id}:`, err);
     return null;
   }
 
-  return supabase.storage.from(COURSE_IMAGES_BUCKET).getPublicUrl(path).data.publicUrl;
+  return `${bucketUrl}/${key}`;
 }
 
 /**
@@ -96,7 +104,7 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
           summary: c.summary ?? null,
           content_html: contentHtml,
           visible: Boolean(c.visible),
-          image_url: await mirrorCourseImage(supabase, moodle, c),
+          image_url: await mirrorCourseImage(moodle, c),
           enrolled_count: enrolledCount,
           last_synced_at: new Date().toISOString(),
         };

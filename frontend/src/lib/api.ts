@@ -8,6 +8,7 @@ export interface Product {
   price_centavos: number;
   currency: string;
   thumbnail_url: string | null;
+  image_url: string | null;
 }
 
 export interface CourseSummary {

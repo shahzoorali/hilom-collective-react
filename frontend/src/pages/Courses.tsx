@@ -24,6 +24,13 @@ export default function Courses() {
           <div className="grid" style={{ marginTop: '1.5rem' }}>
             {products.map((p) => (
               <article className="card" key={p.id}>
+                {p.image_url && (
+                  <img
+                    src={p.image_url}
+                    alt=""
+                    style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover', borderRadius: '0.5rem', marginBottom: '0.75rem' }}
+                  />
+                )}
                 {p.slug.includes('bundle') && <span className="badge">Bundle</span>}
                 <h3>{p.name}</h3>
                 {p.description && <p className="desc">{p.description}</p>}

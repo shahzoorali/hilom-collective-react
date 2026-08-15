@@ -12,6 +12,7 @@ import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
@@ -162,6 +163,20 @@ export class HilomBackendStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     }).addAlarmAction(new cloudwatchActions.SnsAction(alertTopic));
 
+    // Public read-only mirror of Moodle course images: pluginfile.php requires
+    // the Moodle WS token to load, which must never reach the browser, so
+    // syncCourses downloads each image server-side and re-hosts it here.
+    const courseImagesBucket = new s3.Bucket(this, 'CourseImagesBucket', {
+      publicReadAccess: true,
+      blockPublicAccess: new s3.BlockPublicAccess({
+        blockPublicAcls: true,
+        ignorePublicAcls: true,
+        blockPublicPolicy: false,
+        restrictPublicBuckets: false,
+      }),
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     const productsList = makeFn('ProductsListFn', 'handlers/products.ts', 'list');
     const productsDetail = makeFn('ProductsDetailFn', 'handlers/products.ts', 'detail');
     const coursesList = makeFn('CoursesListFn', 'handlers/courses.ts', 'list');
@@ -195,6 +210,9 @@ export class HilomBackendStack extends cdk.Stack {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
+    courseImagesBucket.grantPut(syncCourses);
+    syncCourses.addEnvironment('COURSE_IMAGES_BUCKET', courseImagesBucket.bucketName);
+    syncCourses.addEnvironment('COURSE_IMAGES_BUCKET_URL', `https://${courseImagesBucket.bucketName}.s3.${this.region}.amazonaws.com`);
     // Revoke unenrols via the Moodle web service, but needs no Cognito access:
     // the buyer's identity is deliberately left intact on refund.
     moodleSecret.grantRead(revokeAccess);
@@ -306,5 +324,6 @@ export class HilomBackendStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'EnrollmentRetryQueueUrl', { value: enrollmentRetryQueue.queueUrl });
     new cdk.CfnOutput(this, 'EnrollmentRetryDlqUrl', { value: enrollmentRetryDlq.queueUrl });
+    new cdk.CfnOutput(this, 'CourseImagesBucketName', { value: courseImagesBucket.bucketName });
   }
 }
