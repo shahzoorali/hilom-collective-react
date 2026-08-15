@@ -108,6 +108,33 @@ export interface RevokeResult {
   retainedCourseIds: number[];
 }
 
+export interface AdminProduct {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  price_centavos: number;
+  currency: string;
+  is_active: boolean;
+  product_courses: { moodle_course_id: number }[];
+}
+
+export const adminListProducts = (adminKey: string) =>
+  get<{ products: AdminProduct[] }>('/admin/products', {
+    headers: { 'x-admin-key': adminKey },
+  }).then((r) => r.products);
+
+export const adminUpdateProduct = (
+  adminKey: string,
+  productId: string,
+  patch: { price_centavos?: number; is_active?: boolean; name?: string },
+) =>
+  get<{ product: AdminProduct }>(`/admin/products/${productId}`, {
+    method: 'PATCH',
+    headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => r.product);
+
 export const adminRevokeAccess = (adminKey: string, orderId: string) =>
   get<RevokeResult>(`/admin/revoke-access/${orderId}`, {
     method: 'POST',

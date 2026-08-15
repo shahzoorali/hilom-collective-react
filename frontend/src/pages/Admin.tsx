@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  adminListOrders, adminRetryEnrollment, adminRevokeAccess, adminSyncCourses, listCourses,
-  type AdminOrder, type CourseSummary,
+  adminListOrders, adminListProducts, adminRetryEnrollment, adminRevokeAccess,
+  adminSyncCourses, adminUpdateProduct, listCourses,
+  type AdminOrder, type AdminProduct, type CourseSummary,
 } from '../lib/api';
 import { money } from '../components/Layout';
 
@@ -29,6 +30,10 @@ export default function Admin() {
   const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem(KEY_STORAGE) ?? '');
   const [authed, setAuthed] = useState(false);
   const [orders, setOrders] = useState<AdminOrder[]>([]);
+  const [products, setProducts] = useState<AdminProduct[]>([]);
+  // Price inputs are held as pesos-as-typed strings, not numbers: parsing on
+  // every keystroke fights the user mid-edit (e.g. "1499." or a cleared field).
+  const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
   const [courses, setCourses] = useState<CourseSummary[]>([]);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +51,11 @@ export default function Admin() {
       const c = await listCourses();
       setCourses(c.courses);
       setLastSynced(c.last_synced_at);
+      const prods = await adminListProducts(key);
+      setProducts(prods);
+      setPriceDrafts(
+        Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
+      );
     },
     [],
   );
@@ -90,6 +100,53 @@ export default function Admin() {
       await load(adminKey, onlyStuck);
     } catch (e) {
       setError(`Retry failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSavePrice(product: AdminProduct) {
+    const raw = (priceDrafts[product.id] ?? '').trim();
+    const pesos = Number(raw);
+    if (!raw || !Number.isFinite(pesos) || pesos < 0) {
+      setError(`"${raw}" is not a valid price.`);
+      return;
+    }
+    // Pesos -> centavos. Math.round avoids float artefacts such as
+    // 14.99 * 100 === 1498.9999999999998, which would fail the integer check
+    // server-side and reject a perfectly valid price.
+    const centavos = Math.round(pesos * 100);
+    if (centavos === product.price_centavos) {
+      setNotice('Price unchanged.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await adminUpdateProduct(adminKey, product.id, { price_centavos: centavos });
+      setNotice(
+        `${updated.name}: ${money(product.price_centavos, product.currency)} → ${money(updated.price_centavos, updated.currency)}`,
+      );
+      await load(adminKey, onlyStuck);
+    } catch (e) {
+      setError(`Price update failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onToggleActive(product: AdminProduct) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await adminUpdateProduct(adminKey, product.id, { is_active: !product.is_active });
+      setNotice(`${updated.name} is now ${updated.is_active ? 'visible' : 'hidden'} in the catalog.`);
+      await load(adminKey, onlyStuck);
+    } catch (e) {
+      setError(`Update failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -172,6 +229,74 @@ export default function Admin() {
           <button className="btn btn-primary" onClick={onSync} disabled={busy}>
             {busy ? 'Working…' : 'Sync courses from Moodle'}
           </button>
+        </div>
+
+        <div className="panel" style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.15rem' }}>Products &amp; pricing</h2>
+          <p className="small muted">
+            Prices are stored in the database, so changes take effect immediately with no deploy.
+            Existing orders keep the amount they were actually charged.
+          </p>
+
+          {products.length === 0 ? (
+            <p className="muted">No products.</p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product</th><th>Courses</th><th>Price (PHP)</th><th>Visible</th><th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((p) => {
+                    const draft = priceDrafts[p.id] ?? '';
+                    const dirty = Math.round(Number(draft) * 100) !== p.price_centavos;
+                    return (
+                      <tr key={p.id}>
+                        <td>
+                          <strong>{p.name}</strong>
+                          <div className="small muted">{p.slug}</div>
+                        </td>
+                        <td className="small">
+                          {p.product_courses.map((c) => c.moodle_course_id).join(', ') || '—'}
+                        </td>
+                        <td>
+                          <input
+                            type="number" min="0" step="0.01" value={draft}
+                            style={{ width: 120 }}
+                            onChange={(e) =>
+                              setPriceDrafts({ ...priceDrafts, [p.id]: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td>
+                          <button
+                            className={p.is_active ? 'pill pill-ok' : 'pill pill-bad'}
+                            style={{ border: 0, cursor: 'pointer' }}
+                            onClick={() => onToggleActive(p)}
+                            disabled={busy}
+                            title="Toggle whether this product appears in the public catalog"
+                          >
+                            {p.is_active ? 'visible' : 'hidden'}
+                          </button>
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button
+                            className="btn btn-primary small"
+                            onClick={() => onSavePrice(p)}
+                            disabled={busy || !dirty}
+                          >
+                            Save
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="panel">

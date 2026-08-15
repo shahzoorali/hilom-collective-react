@@ -173,6 +173,8 @@ export class HilomBackendStack extends cdk.Stack {
     const orderStatus = makeFn('OrderStatusFn', 'handlers/orders.ts', 'status');
     const orderStatusByIntent = makeFn('OrderStatusByIntentFn', 'handlers/orders.ts', 'statusByIntent');
     const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
+    const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');
+    const adminProductsUpdate = makeFn('AdminProductsUpdateFn', 'handlers/admin-products.ts', 'update');
     const enrollmentRetryConsumer = makeFn(
       'EnrollmentRetryConsumerFn',
       'handlers/enrollment-retry-consumer.ts',
@@ -189,7 +191,7 @@ export class HilomBackendStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutIntent, orderStatus, orderStatusByIntent, adminOrders, revokeAccess]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutIntent, orderStatus, orderStatusByIntent, adminOrders, revokeAccess, adminProductsList, adminProductsUpdate]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -203,6 +205,8 @@ export class HilomBackendStack extends cdk.Stack {
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
     adminKeySecret.grantRead(adminOrders);
+    adminKeySecret.grantRead(adminProductsList);
+    adminKeySecret.grantRead(adminProductsUpdate);
 
     // Every path that can fulfill an order needs the full fulfillment
     // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
@@ -235,7 +239,15 @@ export class HilomBackendStack extends cdk.Stack {
       description: 'Hilom Collective public + admin API',
       corsPreflight: {
         allowOrigins: [props.corsOrigin ?? '*'],
-        allowMethods: [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.OPTIONS],
+        // PATCH is needed by /admin/products/{id}. Without it the browser
+        // preflight succeeds but omits PATCH from allow-methods, and the real
+        // request fails as an opaque "Failed to fetch" with no server-side log.
+        allowMethods: [
+          apigw.CorsHttpMethod.GET,
+          apigw.CorsHttpMethod.POST,
+          apigw.CorsHttpMethod.PATCH,
+          apigw.CorsHttpMethod.OPTIONS,
+        ],
         allowHeaders: ['content-type', 'x-admin-key', 'authorization'],
         maxAge: cdk.Duration.hours(1),
       },
@@ -268,6 +280,8 @@ export class HilomBackendStack extends cdk.Stack {
     route('/orders/status/{paymentId}', apigw.HttpMethod.GET, orderStatus, 'OrderStatusInt');
     route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
+    route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');
+    route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');
 
     // ---------------------------------------------------------------------
     // Outputs
