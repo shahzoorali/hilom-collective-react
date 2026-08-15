@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { getOrderStatusByIntent, type OrderStatus } from '../lib/api';
+import { getOrderStatusByIntent, getOrderStatusBySession, type OrderStatus } from '../lib/api';
 import { MOODLE_URL } from '../config';
 
 /**
@@ -12,25 +12,32 @@ import { MOODLE_URL } from '../config';
  */
 export default function Processing() {
   const [params] = useSearchParams();
-  // A 3-D Secure return lands here with no query string, so fall back to the
-  // intent stashed before the bank redirect.
+  // PayMongo's hosted checkout returns to a fixed success_url with no query
+  // string of ours, so the session id comes from what Checkout stashed before
+  // redirecting. The `intent` path is the legacy card flow, kept so any order
+  // still mid-flight on the old checkout resolves rather than hanging.
+  const sessionId = params.get('session') ?? sessionStorage.getItem('hilom.pendingSession');
   const intentId = params.get('intent') ?? sessionStorage.getItem('hilom.pendingIntent');
+  const trackingId = sessionId ?? intentId;
   const [status, setStatus] = useState<OrderStatus['status'] | 'unknown'>('pending');
   const [productName, setProductName] = useState<string | null>(null);
   const [slow, setSlow] = useState(false);
   const started = useRef(Date.now());
 
   useEffect(() => {
-    if (!intentId) return;
+    if (!trackingId) return;
     let cancelled = false;
 
     const poll = async () => {
       try {
-        const s = await getOrderStatusByIntent(intentId);
+        const s = sessionId
+          ? await getOrderStatusBySession(sessionId)
+          : await getOrderStatusByIntent(trackingId);
         if (cancelled) return;
         setStatus(s.status);
         if (s.productName) setProductName(s.productName);
         if (s.status === 'fulfilled' || s.status === 'failed') {
+          sessionStorage.removeItem('hilom.pendingSession');
           sessionStorage.removeItem('hilom.pendingIntent');
           return;
         }
@@ -48,7 +55,7 @@ export default function Processing() {
     return () => {
       cancelled = true;
     };
-  }, [intentId]);
+  }, [trackingId, sessionId]);
 
   const done = status === 'fulfilled';
 
@@ -93,10 +100,10 @@ export default function Processing() {
             </>
           )}
 
-          {!intentId && (
+          {!trackingId && (
             <p className="small muted">
-              Waiting for payment confirmation… if you just completed a bank verification step this
-              can take a moment.
+              Waiting for payment confirmation… if you just completed a payment this can take a
+              moment.
             </p>
           )}
         </div>

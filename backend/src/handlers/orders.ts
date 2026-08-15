@@ -97,6 +97,49 @@ export async function statusByIntent(event: APIGatewayProxyEventV2): Promise<API
 }
 
 /**
+ * GET /orders/status-by-session/{sessionId}
+ *
+ * The hosted-checkout equivalent of statusByIntent: the browser knows only the
+ * checkout session id it was redirected with, never the payment id, so the
+ * session is resolved to its payment server-side with the secret key.
+ *
+ * Same access-control reasoning as the routes above — the session id is an
+ * unguessable capability token, and the response deliberately excludes buyer
+ * email, amount, and internal error detail.
+ */
+export async function statusBySession(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  const sessionId = event.pathParameters?.sessionId;
+  if (!sessionId) return badRequest('Missing sessionId');
+
+  try {
+    const { secretKey } = await getPayMongoSecret();
+    const res = await fetch(
+      `https://api.paymongo.com/v1/checkout_sessions/${encodeURIComponent(sessionId)}`,
+      { headers: { Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}` } },
+    );
+
+    if (!res.ok) {
+      // An unknown or invalid session id is a client mistake, not a server fault.
+      if (res.status === 404) return ok({ status: 'pending', productName: null, productSlug: null });
+      throw new Error(`PayMongo session lookup failed (${res.status})`);
+    }
+
+    const json = (await res.json()) as {
+      data?: { attributes?: { payments?: Array<{ id: string }> } };
+    };
+    const paymentId = json.data?.attributes?.payments?.[0]?.id;
+
+    // No payment recorded yet — with QRPh this is the normal state for as long
+    // as the buyer has the QR open but has not completed the scan.
+    if (!paymentId) return ok({ status: 'pending', productName: null, productSlug: null });
+
+    return ok(await statusForPaymentId(paymentId));
+  } catch (err) {
+    return serverError('orders.statusBySession', err);
+  }
+}
+
+/**
  * GET /admin/orders — the admin panel's stuck-order view.
  *
  * Admin-only, so unlike the buyer-facing endpoint above this returns the full

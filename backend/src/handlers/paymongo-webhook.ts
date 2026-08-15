@@ -26,6 +26,64 @@ import { ok, badRequest, serverError } from '../lib/http.js';
 
 const FULFILLABLE_EVENT_TYPES = new Set(['payment.paid', 'checkout_session.payment.paid']);
 
+interface NormalizedPayment {
+  paymentId: string | undefined;
+  amountCentavos: number | undefined;
+  currency: string | undefined;
+  metadata: Record<string, string | undefined>;
+  billingName: string | undefined;
+  billingEmail: string | undefined;
+}
+
+/**
+ * The two fulfillable event types carry different resources, and both are
+ * subscribed, so a single hosted-checkout purchase fires *both*:
+ *
+ *   payment.paid                  -> data is a payment      (id `pay_…`)
+ *   checkout_session.payment.paid -> data is a checkout session (id `cs_…`),
+ *                                    with the real payment inside `payments[]`
+ *
+ * A checkout session has no top-level `amount` or `currency` — those live on
+ * the payment (or, before one exists, on `line_items`). Reading them off the
+ * session directly wrote NULLs into the order row.
+ *
+ * Everything is keyed on the *payment* id rather than whichever resource the
+ * event happened to carry, so the two events for one purchase collapse onto a
+ * single order row via the existing unique constraint instead of creating two.
+ */
+function normalize(eventType: string, data: any): NormalizedPayment {
+  const attrs = data.attributes ?? {};
+
+  if (eventType === 'checkout_session.payment.paid') {
+    const payment = attrs.payments?.[0];
+    const paymentAttrs = payment?.attributes ?? {};
+    const lineItem = attrs.line_items?.[0] ?? {};
+
+    return {
+      paymentId: payment?.id,
+      // Prefer what was actually charged; fall back to the line item so an
+      // unexpectedly empty payments[] still records a plausible amount rather
+      // than NULL.
+      amountCentavos: paymentAttrs.amount ?? lineItem.amount,
+      currency: paymentAttrs.currency ?? lineItem.currency,
+      // Metadata is set on the session, not the payment.
+      metadata: attrs.metadata ?? {},
+      billingName: paymentAttrs.billing?.name ?? attrs.billing?.name,
+      billingEmail: paymentAttrs.billing?.email ?? attrs.billing?.email ?? attrs.customer_email,
+    };
+  }
+
+  // payment.paid — the resource already is the payment.
+  return {
+    paymentId: data.id,
+    amountCentavos: attrs.amount,
+    currency: attrs.currency,
+    metadata: attrs.metadata ?? {},
+    billingName: attrs.billing?.name,
+    billingEmail: attrs.billing?.email,
+  };
+}
+
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   const rawBody = event.body ?? '';
   const signatureHeader = event.headers['paymongo-signature'] ?? event.headers['Paymongo-Signature'];
@@ -63,18 +121,25 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     return ok({ received: true, handled: false, type: eventType });
   }
 
-  const paymentId = paymentData.id;
-  const metadata = paymentData.attributes.metadata ?? {};
-  const productId = metadata.product_id;
-  const buyerEmail = metadata.buyer_email ?? paymentData.attributes.billing?.email;
+  const { paymentId, amountCentavos, currency, metadata, billingName, billingEmail } = normalize(
+    eventType,
+    paymentData,
+  );
 
-  if (!productId || !buyerEmail) {
-    // A payment.paid event we can't map to a product/buyer is a bug in
-    // checkout (missing metadata), not a transient failure — retrying it
-    // via SQS would never succeed, so this is logged loudly instead of queued.
-    console.error('[paymongo-webhook] payment.paid missing product_id/buyer_email metadata', {
+  const productId = metadata.product_id;
+  const buyerEmail = metadata.buyer_email ?? billingEmail;
+
+  if (!paymentId || !productId || !buyerEmail) {
+    // Not necessarily a bug: for a hosted-checkout purchase the metadata lives
+    // on the session, so the sibling `payment.paid` event legitimately arrives
+    // without it and is expected to fall through to here — the
+    // `checkout_session.payment.paid` event is the one that fulfills. Warn
+    // rather than error so that normal case doesn't read as a failure, and
+    // don't queue a retry: missing metadata never becomes present on redelivery.
+    console.warn('[paymongo-webhook] event not mappable to a product/buyer, skipping', {
+      eventType,
       paymentId,
-      metadata,
+      metadataKeys: Object.keys(metadata),
     });
     return ok({ received: true, handled: false, error: 'missing_metadata' });
   }
@@ -88,8 +153,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       paymongo_payment_id: paymentId,
       product_id: productId,
       buyer_email: buyerEmail,
-      amount_centavos: paymentData.attributes.amount,
-      currency: paymentData.attributes.currency,
+      amount_centavos: amountCentavos,
+      currency: currency,
       status: 'paid_pending_enrollment',
     });
     // Unique violation on paymongo_payment_id is the expected redelivery
@@ -109,7 +174,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     try {
-      const result = await fulfillOrder(order.id, paymentData.attributes.billing?.name);
+      const result = await fulfillOrder(order.id, billingName);
       return ok({ received: true, handled: true, status: result.status });
     } catch (fulfillErr) {
       const message = fulfillErr instanceof Error ? fulfillErr.message : String(fulfillErr);

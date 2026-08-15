@@ -1,13 +1,22 @@
 /**
- * POST /checkout/create-intent
+ * POST /checkout/create-session
  *
- * Creates a PayMongo Payment Intent for a product and hands the browser back
- * the `client_key` it needs to attach a card.
+ * Creates a PayMongo Checkout Session and hands the browser back the hosted
+ * `checkout_url` to redirect to.
  *
- * The card itself never touches this server: the browser creates the payment
- * method directly against PayMongo with the *public* key, then attaches it
- * using the client key. That keeps raw card data entirely out of our
- * infrastructure.
+ * Why hosted checkout rather than the Payment Intent + card-attach flow this
+ * used to run: the account has no card acquiring enabled — only QRPh — so
+ * there is nothing to tokenize a card against. QRPh is a scan-to-pay method,
+ * which has no client-side equivalent of `/payment_intents/{id}/attach`; the
+ * QR has to be rendered on PayMongo's own page. That also removes raw card
+ * data from our infrastructure entirely, rather than merely routing it around
+ * us.
+ *
+ * Chosen over the Payment Links API (`/v1/payment_links`, the dashboard's
+ * "one-time transaction link") because links have no `success_url`: the buyer
+ * would be left on PayMongo's page after paying with no route back to the
+ * enrollment-progress screen. Links are built for manual invoicing, sessions
+ * for programmatic checkout.
  *
  * The price is read from the database here and never taken from the request —
  * otherwise anyone could POST their own amount and buy a bundle for ₱1.
@@ -17,39 +26,57 @@ import { getSupabase } from '../lib/supabase.js';
 import { getPayMongoSecret } from '../lib/secrets.js';
 import { ok, badRequest, notFound, serverError } from '../lib/http.js';
 
-interface CreateIntentBody {
+interface CreateSessionBody {
   slug?: string;
   email?: string;
+  name?: string;
 }
 
 // Deliberately loose: PayMongo will reject anything genuinely invalid, and an
 // over-strict regex here would reject valid addresses for no benefit.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export async function createIntent(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
-  let body: CreateIntentBody;
+/**
+ * Which methods the hosted page offers. Env-driven so that enabling GCash or
+ * card later is a config change, not a redeploy of code — the only hard
+ * requirement is that every value here is actually activated on the PayMongo
+ * account, or session creation 400s.
+ */
+const PAYMENT_METHODS = (process.env.CHECKOUT_PAYMENT_METHODS ?? 'qrph')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+export async function createSession(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  let body: CreateSessionBody;
   try {
-    body = JSON.parse(event.body ?? '{}') as CreateIntentBody;
+    body = JSON.parse(event.body ?? '{}') as CreateSessionBody;
   } catch {
     return badRequest('Malformed body');
   }
 
   const slug = body.slug?.trim();
   const email = body.email?.trim().toLowerCase();
+  const name = body.name?.trim();
   if (!slug) return badRequest('Missing slug');
   if (!email || !EMAIL_RE.test(email)) return badRequest('A valid email is required');
+
+  const origin = process.env.CORS_ORIGIN && process.env.CORS_ORIGIN !== '*'
+    ? process.env.CORS_ORIGIN
+    : 'https://hilomcollective.com';
 
   try {
     const supabase = await getSupabase();
     const { data: product, error } = await supabase
       .from('products')
-      .select('id, name, slug, price_centavos, currency, is_active')
+      .select('id, name, slug, description, price_centavos, currency, is_active')
       .eq('slug', slug)
       .eq('is_active', true)
       .maybeSingle<{
         id: string;
         name: string;
         slug: string;
+        description: string | null;
         price_centavos: number;
         currency: string;
       }>();
@@ -57,9 +84,9 @@ export async function createIntent(event: APIGatewayProxyEventV2): Promise<APIGa
     if (error) throw error;
     if (!product) return notFound('Product not found');
 
-    const { secretKey, publicKey } = await getPayMongoSecret();
+    const { secretKey } = await getPayMongoSecret();
 
-    const res = await fetch('https://api.paymongo.com/v1/payment_intents', {
+    const res = await fetch('https://api.paymongo.com/v1/checkout_sessions', {
       method: 'POST',
       headers: {
         Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}`,
@@ -68,35 +95,55 @@ export async function createIntent(event: APIGatewayProxyEventV2): Promise<APIGa
       body: JSON.stringify({
         data: {
           attributes: {
-            amount: product.price_centavos,
-            currency: product.currency,
-            payment_method_allowed: ['card'],
-            payment_method_options: { card: { request_three_d_secure: 'automatic' } },
-            capture_type: 'automatic',
+            payment_method_types: PAYMENT_METHODS,
+            line_items: [
+              {
+                name: product.name,
+                amount: product.price_centavos,
+                currency: product.currency,
+                quantity: 1,
+              },
+            ],
+            // Prefilled so the buyer does not retype what they just gave us,
+            // and so the receipt goes to the same address we enroll.
+            billing: { email, ...(name ? { name } : {}) },
             description: product.name,
+            send_email_receipt: true,
+            show_line_items: true,
             // The webhook reads these back to know what to fulfill and for
-            // whom — without them a paid payment cannot be mapped to a product.
-            metadata: { product_id: product.id, buyer_email: email, product_slug: product.slug },
+            // whom — without them a paid session cannot be mapped to a product.
+            metadata: {
+              product_id: product.id,
+              buyer_email: email,
+              product_slug: product.slug,
+            },
+            // PayMongo cannot template the session id into these, so the
+            // browser stashes it before redirecting (see Checkout.tsx).
+            success_url: `${origin}/checkout/processing`,
+            cancel_url: `${origin}/courses/${product.slug}`,
           },
         },
       }),
     });
 
-    const json = (await res.json()) as { data?: { id: string; attributes: { client_key: string } }; errors?: unknown };
+    const json = (await res.json()) as {
+      data?: { id: string; attributes: { checkout_url: string } };
+      errors?: unknown;
+    };
+
     if (!res.ok || !json.data) {
-      console.error('[checkout.createIntent] PayMongo rejected intent', JSON.stringify(json.errors ?? json));
-      return serverError('checkout.createIntent', new Error('PayMongo intent creation failed'));
+      console.error('[checkout.createSession] PayMongo rejected session', JSON.stringify(json.errors ?? json));
+      return serverError('checkout.createSession', new Error('PayMongo session creation failed'));
     }
 
     return ok({
-      intentId: json.data.id,
-      clientKey: json.data.attributes.client_key,
-      publicKey, // publishable by design — the browser needs it to tokenize the card
+      sessionId: json.data.id,
+      checkoutUrl: json.data.attributes.checkout_url,
       amountCentavos: product.price_centavos,
       currency: product.currency,
       productName: product.name,
     });
   } catch (err) {
-    return serverError('checkout.createIntent', err);
+    return serverError('checkout.createSession', err);
   }
 }

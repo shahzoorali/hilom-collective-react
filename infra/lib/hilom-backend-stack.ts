@@ -44,6 +44,13 @@ export interface HilomBackendStackProps extends cdk.StackProps {
 
   /** Where the DLQ CloudWatch alarm sends its SNS notification. */
   readonly alertEmail?: string;
+
+  /**
+   * Comma-separated PayMongo payment method types the hosted checkout offers.
+   * Defaults to `qrph`, the only method activated on the account. Every value
+   * must be activated in PayMongo or session creation fails with a 400.
+   */
+  readonly checkoutPaymentMethods?: string;
 }
 
 const DEFAULT_COGNITO_USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
@@ -184,9 +191,18 @@ export class HilomBackendStack extends cdk.Stack {
     const retryEnrollment = makeFn('RetryEnrollmentFn', 'handlers/admin.ts', 'retryEnrollment');
     const revokeAccess = makeFn('RevokeAccessFn', 'handlers/admin.ts', 'revokeAccess');
     const paymongoWebhook = makeFn('PayMongoWebhookFn', 'handlers/paymongo-webhook.ts', 'handler');
-    const checkoutIntent = makeFn('CheckoutIntentFn', 'handlers/checkout.ts', 'createIntent');
+    const checkoutSession = makeFn('CheckoutSessionFn', 'handlers/checkout.ts', 'createSession');
     const orderStatus = makeFn('OrderStatusFn', 'handlers/orders.ts', 'status');
     const orderStatusByIntent = makeFn('OrderStatusByIntentFn', 'handlers/orders.ts', 'statusByIntent');
+    const orderStatusBySession = makeFn('OrderStatusBySessionFn', 'handlers/orders.ts', 'statusBySession');
+
+    // Only QRPh is activated on the PayMongo account today. Adding GCash or
+    // card later is a config change here, not a code change — but every value
+    // must actually be activated, or session creation 400s.
+    checkoutSession.addEnvironment(
+      'CHECKOUT_PAYMENT_METHODS',
+      props.checkoutPaymentMethods ?? 'qrph',
+    );
     const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
     const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');
     const adminProductsUpdate = makeFn('AdminProductsUpdateFn', 'handlers/admin-products.ts', 'update');
@@ -222,7 +238,7 @@ export class HilomBackendStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutIntent, orderStatus, orderStatusByIntent, adminOrders, revokeAccess, adminProductsList, adminProductsUpdate]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, revokeAccess, adminProductsList, adminProductsUpdate]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -234,8 +250,9 @@ export class HilomBackendStack extends cdk.Stack {
     moodleSecret.grantRead(revokeAccess);
     adminKeySecret.grantRead(revokeAccess);
     paymongoSecret.grantRead(paymongoWebhook);
-    paymongoSecret.grantRead(checkoutIntent);
+    paymongoSecret.grantRead(checkoutSession);
     paymongoSecret.grantRead(orderStatusByIntent);
+    paymongoSecret.grantRead(orderStatusBySession);
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
     adminKeySecret.grantRead(adminOrders);
@@ -310,9 +327,10 @@ export class HilomBackendStack extends cdk.Stack {
     route('/admin/retry-enrollment/{orderId}', apigw.HttpMethod.POST, retryEnrollment, 'RetryEnrollmentInt');
     route('/admin/revoke-access/{orderId}', apigw.HttpMethod.POST, revokeAccess, 'RevokeAccessInt');
     route('/webhooks/paymongo', apigw.HttpMethod.POST, paymongoWebhook, 'PayMongoWebhookInt');
-    route('/checkout/create-intent', apigw.HttpMethod.POST, checkoutIntent, 'CheckoutIntentInt');
+    route('/checkout/create-session', apigw.HttpMethod.POST, checkoutSession, 'CheckoutSessionInt');
     route('/orders/status/{paymentId}', apigw.HttpMethod.GET, orderStatus, 'OrderStatusInt');
     route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
+    route('/orders/status-by-session/{sessionId}', apigw.HttpMethod.GET, orderStatusBySession, 'OrderStatusBySessionInt');
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');
     route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');

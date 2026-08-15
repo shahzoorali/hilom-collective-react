@@ -52,20 +52,20 @@ export const listProducts = () => get<{ products: Product[] }>('/products').then
 export const getProduct = (slug: string) =>
   get<{ product: ProductDetail }>(`/products/${encodeURIComponent(slug)}`).then((r) => r.product);
 
-export interface CheckoutIntent {
-  intentId: string;
-  clientKey: string;
-  publicKey: string;
+export interface CheckoutSession {
+  sessionId: string;
+  /** PayMongo-hosted page where the buyer actually pays (QRPh QR lives here). */
+  checkoutUrl: string;
   amountCentavos: number;
   currency: string;
   productName: string;
 }
 
-export const createIntent = (slug: string, email: string) =>
-  get<CheckoutIntent>('/checkout/create-intent', {
+export const createCheckoutSession = (slug: string, email: string, name?: string) =>
+  get<CheckoutSession>('/checkout/create-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, email }),
+    body: JSON.stringify({ slug, email, name }),
   });
 
 export interface OrderStatus {
@@ -84,6 +84,13 @@ export const getOrderStatus = (paymentId: string) =>
  */
 export const getOrderStatusByIntent = (intentId: string) =>
   get<OrderStatus>(`/orders/status-by-intent/${encodeURIComponent(intentId)}`);
+
+/**
+ * Hosted-checkout equivalent: the browser is redirected back knowing only its
+ * checkout session id, so the backend resolves session -> payment id.
+ */
+export const getOrderStatusBySession = (sessionId: string) =>
+  get<OrderStatus>(`/orders/status-by-session/${encodeURIComponent(sessionId)}`);
 
 export const submitCommunityForm = (body: {
   firstName: string;

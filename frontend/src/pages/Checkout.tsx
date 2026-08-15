@@ -1,73 +1,71 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
-import { createIntent, getProduct, type ProductDetail } from '../lib/api';
-import { payWithCard } from '../lib/paymongo';
+import { useParams, Link } from 'react-router-dom';
+import { createCheckoutSession, getProduct, type ProductDetail } from '../lib/api';
 import { currentUser } from '../lib/auth';
 import { money } from '../components/Layout';
 
+/**
+ * Collects the buyer's email, then hands off to PayMongo's hosted checkout.
+ *
+ * There are no card fields here any more: the account has no card acquiring
+ * enabled, only QRPh, which is scan-to-pay and has to render its QR on
+ * PayMongo's own page. Collecting card details we cannot charge would just be
+ * a dead end for the buyer.
+ *
+ * Email is the one thing we must get right and PayMongo cannot give us:
+ * course access is permanent and keyed to this address, so a typo means a
+ * manual admin fix. Hence the explicit confirm-email field — cheap friction
+ * once, against an expensive correction later.
+ */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function Checkout() {
   const { slug = '' } = useParams();
-  const navigate = useNavigate();
   const user = currentUser();
 
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [email, setEmail] = useState(user?.email ?? '');
+  const [confirmEmail, setConfirmEmail] = useState(user?.email ?? '');
   const [name, setName] = useState([user?.givenName, user?.familyName].filter(Boolean).join(' '));
-  const [card, setCard] = useState({ number: '', exp: '', cvc: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [touched, setTouched] = useState(false);
 
   useEffect(() => {
     getProduct(slug).then(setProduct).catch((e: Error) => setError(e.message));
   }, [slug]);
 
+  const emailValid = EMAIL_RE.test(email.trim());
+  const emailsMatch = email.trim().toLowerCase() === confirmEmail.trim().toLowerCase();
+  // A signed-in buyer's address came from Cognito, so re-typing it proves
+  // nothing — only ask unauthenticated buyers to confirm.
+  const needsConfirm = !user?.email;
+  // Deliberately NOT gated on validity: a disabled button with no stated
+  // reason leaves the buyer stuck guessing, and is invisible to screen
+  // readers. Let the submit through and answer with a specific message.
+  const canSubmit = Boolean(product) && !busy;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    setTouched(true);
     setError(null);
 
-    const [mm, yy] = card.exp.split('/').map((s) => s.trim());
-    const expMonth = Number(mm);
-    const expYear = yy && yy.length === 2 ? 2000 + Number(yy) : Number(yy);
-    if (!expMonth || !expYear || expMonth < 1 || expMonth > 12) {
-      setError('Enter the card expiry as MM/YY.');
-      return;
-    }
+    if (!emailValid) return setError('Enter a valid email address.');
+    if (needsConfirm && !emailsMatch) return setError('The two email addresses do not match.');
 
     setBusy(true);
     try {
       // The amount is decided by the backend from the database — deliberately
       // not sent from here, so the price can't be tampered with.
-      const intent = await createIntent(slug, email);
+      const session = await createCheckoutSession(slug, email.trim(), name.trim() || undefined);
 
-      const result = await payWithCard(intent.publicKey, intent.intentId, intent.clientKey, {
-        number: card.number,
-        expMonth,
-        expYear,
-        cvc: card.cvc,
-        name: name || email,
-        email,
-      });
-
-      // Tracking is always by intent id, never payment id: PayMongo returns an
-      // empty `payments[]` to public-key (browser) clients, so the payment id
-      // simply is not knowable here. The backend resolves it.
-      if (result.redirectUrl) {
-        // 3-D Secure challenge: the bank takes over and we return on a fresh
-        // page load, so the intent has to survive the round trip.
-        sessionStorage.setItem('hilom.pendingIntent', intent.intentId);
-        window.location.href = result.redirectUrl;
-        return;
-      }
-
-      if (result.status === 'succeeded' || result.status === 'processing') {
-        navigate(`/checkout/processing?intent=${encodeURIComponent(intent.intentId)}`);
-        return;
-      }
-
-      setError(result.lastError ?? `Payment did not complete (status: ${result.status}).`);
+      // PayMongo can't template the session id into its success_url, so the
+      // id has to survive the round trip through the hosted page for the
+      // processing screen to know what to poll.
+      sessionStorage.setItem('hilom.pendingSession', session.sessionId);
+      window.location.href = session.checkoutUrl;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Payment failed.');
-    } finally {
+      setError(err instanceof Error ? err.message : 'Could not start checkout.');
       setBusy(false);
     }
   }
@@ -96,7 +94,7 @@ export default function Checkout() {
             </div>
             <p className="small muted" style={{ margin: '0.4rem 0 0' }}>
               Permanent access · {product.moodle_course_ids.length}{' '}
-              {product.moodle_course_ids.length === 1 ? 'course' : 'courses'}
+              {product.moodle_course_ids.length === 1 ? 'course' : 'courses'} · no subscription
             </p>
           </div>
         )}
@@ -109,50 +107,62 @@ export default function Checkout() {
             <input
               id="email" type="email" required value={email} autoComplete="email"
               onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => setTouched(true)}
               placeholder="you@example.com"
             />
             <p className="small muted" style={{ margin: '0.35rem 0 0' }}>
-              Your course access and login are tied to this address.
+              Your course access and login are tied to this address — double-check it.
+            </p>
+            {touched && !emailValid && (
+              <p className="small" style={{ margin: '0.35rem 0 0', color: 'var(--danger-fg)' }}>
+                That doesn't look like a valid email address.
+              </p>
+            )}
+          </div>
+
+          {needsConfirm && (
+            <div className="field">
+              <label htmlFor="confirmEmail">Confirm email</label>
+              <input
+                id="confirmEmail" type="email" required value={confirmEmail} autoComplete="email"
+                onChange={(e) => setConfirmEmail(e.target.value)}
+                onBlur={() => setTouched(true)}
+                placeholder="you@example.com"
+                onPaste={(e) => e.preventDefault()}
+              />
+              {touched && !emailsMatch && (
+                <p className="small" style={{ margin: '0.35rem 0 0', color: 'var(--danger-fg)' }}>
+                  The two email addresses do not match.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="field">
+            <label htmlFor="name">
+              Full name <span className="small muted">(optional)</span>
+            </label>
+            <input id="name" value={name} autoComplete="name" onChange={(e) => setName(e.target.value)} />
+          </div>
+
+          <div className="alert alert-info" style={{ textAlign: 'left' }}>
+            <strong>Paying with QR Ph.</strong>
+            <p className="small" style={{ margin: '0.35rem 0 0' }}>
+              You'll be taken to PayMongo's secure page to scan a QR code with your
+              banking or e-wallet app. Come back here automatically once it's paid.
             </p>
           </div>
 
-          <div className="field">
-            <label htmlFor="name">Name on card</label>
-            <input id="name" required value={name} autoComplete="cc-name" onChange={(e) => setName(e.target.value)} />
-          </div>
-
-          <div className="field">
-            <label htmlFor="cardnum">Card number</label>
-            <input
-              id="cardnum" required inputMode="numeric" autoComplete="cc-number"
-              value={card.number} placeholder="4343 4343 4343 4345"
-              onChange={(e) => setCard({ ...card, number: e.target.value })}
-            />
-          </div>
-
-          <div className="row">
-            <div className="field">
-              <label htmlFor="exp">Expiry (MM/YY)</label>
-              <input
-                id="exp" required placeholder="12/30" autoComplete="cc-exp"
-                value={card.exp} onChange={(e) => setCard({ ...card, exp: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="cvc">CVC</label>
-              <input
-                id="cvc" required inputMode="numeric" placeholder="123" autoComplete="cc-csc"
-                value={card.cvc} onChange={(e) => setCard({ ...card, cvc: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <button className="btn btn-accent btn-block" type="submit" disabled={busy || !product}>
-            {busy ? 'Processing…' : product ? `Pay ${money(product.price_centavos, product.currency)}` : 'Loading…'}
+          <button className="btn btn-accent btn-block" type="submit" disabled={!canSubmit}>
+            {busy
+              ? 'Starting checkout…'
+              : product
+                ? `Continue to payment · ${money(product.price_centavos, product.currency)}`
+                : 'Loading…'}
           </button>
 
           <p className="small muted" style={{ marginTop: '0.9rem', marginBottom: 0 }}>
-            Card details are sent directly to PayMongo and never touch our servers.
+            Payment is handled entirely by PayMongo. We never see or store your payment details.
           </p>
         </form>
       </div>
