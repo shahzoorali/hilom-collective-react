@@ -55,6 +55,13 @@ export default function ProductDetail() {
               <div className="grid" style={{ gridTemplateColumns: '1fr' }}>
                 {product.courses.map((c) => (
                   <div className="panel" key={c.moodle_course_id}>
+                    {c.image_url && (
+                      <img
+                        src={c.image_url}
+                        alt=""
+                        style={{ width: '100%', borderRadius: '0.5rem', marginBottom: '0.75rem' }}
+                      />
+                    )}
                     <h3 style={{ marginBottom: '0.25rem' }}>{c.fullname}</h3>
                     {c.summary && (
                       <div

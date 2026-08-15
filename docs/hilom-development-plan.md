@@ -177,6 +177,27 @@ A phase-by-phase build guide for rebuilding hilomcollective.com as a custom Reac
 - Hitting sync updates the `courses` table from live Moodle.
 - `last_synced_at` is visible in the admin view.
 
+### Note: "Enrolled Students" count on course pages
+Moodle's public course page (e.g. `/course/view.php?id=16`) shows live enrollment
+stats (Enrolled / Completed / In Progress / Yet to Start). We want "Enrolled
+Students" mirrored on our React course/product pages, but **not** the other three:
+
+- The Moodle WS token's permitted functions (see CLAUDE.md) do not include
+  anything that returns per-course enrolled/completed/in-progress counts.
+  `core_enrol_get_users_courses` only goes user → courses, and
+  `core_enrol_get_enrolled_users` is explicitly not permitted. Getting
+  Completed / In Progress / Yet to Start would require a Moodle-admin change
+  (enabling `core_enrol_get_enrolled_users` and/or a completion-status
+  function) — deliberately out of scope for now.
+- **Enrolled Students** doesn't need Moodle at all: once Phase 6 is live, it's
+  derivable from our own `orders` + `product_courses` tables —
+  `count(distinct buyer_email)` from `orders` joined to `product_courses` on
+  `moodle_course_id`, filtered to `status = 'fulfilled'`. Compute this at
+  request time (or cache it) in the `GET /products/{slug}` (and/or `GET
+  /courses`) endpoint and render it on `ProductDetail.tsx`. No new schema or
+  Moodle permission needed — blocked only on Phase 6 (payment + enrollment)
+  existing so `orders` actually has fulfilled rows.
+
 ---
 
 ## Phase 6 — Payment + enrollment (the core flow)

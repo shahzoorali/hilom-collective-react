@@ -23,6 +23,16 @@ export interface MoodleCourse {
   visible: number;
 }
 
+interface MoodleOverviewFile {
+  filename: string;
+  fileurl: string;
+  mimetype: string;
+}
+
+interface MoodleCourseWithFiles extends MoodleCourse {
+  overviewfiles?: MoodleOverviewFile[];
+}
+
 export interface MoodleUser {
   id: number;
   username: string;
@@ -106,6 +116,28 @@ export class MoodleClient {
   async getCourses(): Promise<MoodleCourse[]> {
     const courses = await this.call<MoodleCourse[]>('core_course_get_courses');
     return courses.filter((c) => c.format !== 'site');
+  }
+
+  /**
+   * Like getCourses(), but via core_course_get_courses_by_field (empty field =
+   * all courses), which is the only permitted call that also returns
+   * `overviewfiles` — the course image set on the course edit form.
+   *
+   * `fileurl` on each overview file requires the WS token appended as a query
+   * param to load; the caller must fetch it server-side and never forward that
+   * URL to the frontend, since it would leak the token.
+   */
+  async getCoursesWithImages(): Promise<MoodleCourseWithFiles[]> {
+    const { courses } = await this.call<{ courses: MoodleCourseWithFiles[] }>(
+      'core_course_get_courses_by_field',
+      { field: '', value: '' },
+    );
+    return courses.filter((c) => c.format !== 'site');
+  }
+
+  /** Appends the WS token so a protected pluginfile.php URL becomes fetchable. */
+  authenticatedFileUrl(fileurl: string): string {
+    return `${fileurl}${fileurl.includes('?') ? '&' : '?'}token=${this.token}`;
   }
 
   async getUserByEmail(email: string): Promise<MoodleUser | undefined> {

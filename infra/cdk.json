@@ -17,6 +17,7 @@
     ]
   },
   "context": {
+    "apiCertificateArn": "arn:aws:acm:ap-southeast-1:651706741660:certificate/d38a7b18-6f23-4eee-a851-49a396581a00",
     "@aws-cdk/aws-signer:signingProfileNamePassedToCfn": true,
     "@aws-cdk/aws-ecs-patterns:secGroupsDisablesImplicitOpenListener": true,
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
