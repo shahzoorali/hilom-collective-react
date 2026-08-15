@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   adminListOrders, adminListProducts, adminRetryEnrollment, adminRevokeAccess,
   adminSyncCourses, adminUpdateProduct, listCourses,
@@ -34,6 +34,7 @@ export default function Admin() {
   // Price inputs are held as pesos-as-typed strings, not numbers: parsing on
   // every keystroke fights the user mid-edit (e.g. "1499." or a cleared field).
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
   const [courses, setCourses] = useState<CourseSummary[]>([]);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +57,7 @@ export default function Admin() {
       setPriceDrafts(
         Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
       );
+      setDescriptionDrafts(Object.fromEntries(prods.map((p) => [p.id, p.description ?? ''])));
     },
     [],
   );
@@ -132,6 +134,28 @@ export default function Admin() {
       await load(adminKey, onlyStuck);
     } catch (e) {
       setError(`Price update failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveDescription(product: AdminProduct) {
+    const draft = descriptionDrafts[product.id] ?? '';
+    const trimmed = draft.trim();
+    if (trimmed === (product.description ?? '')) {
+      setNotice('Description unchanged.');
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await adminUpdateProduct(adminKey, product.id, { description: trimmed });
+      setNotice(`${updated.name}: description ${trimmed ? 'updated' : 'cleared'}.`);
+      await load(adminKey, onlyStuck);
+    } catch (e) {
+      setError(`Description update failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -252,8 +276,11 @@ export default function Admin() {
                   {products.map((p) => {
                     const draft = priceDrafts[p.id] ?? '';
                     const dirty = Math.round(Number(draft) * 100) !== p.price_centavos;
+                    const descDraft = descriptionDrafts[p.id] ?? '';
+                    const descDirty = descDraft.trim() !== (p.description ?? '');
                     return (
-                      <tr key={p.id}>
+                      <Fragment key={p.id}>
+                      <tr>
                         <td>
                           <strong>{p.name}</strong>
                           <div className="small muted">{p.slug}</div>
@@ -291,6 +318,33 @@ export default function Admin() {
                           </button>
                         </td>
                       </tr>
+                      <tr>
+                        <td colSpan={5} style={{ paddingTop: 0 }}>
+                          <label className="small muted" style={{ display: 'block', marginBottom: '0.25rem' }}>
+                            Description shown on the public site — left blank shows nothing
+                            (no placeholder text).
+                          </label>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                            <textarea
+                              rows={2}
+                              style={{ flex: 1 }}
+                              value={descDraft}
+                              placeholder="(blank)"
+                              onChange={(e) =>
+                                setDescriptionDrafts({ ...descriptionDrafts, [p.id]: e.target.value })
+                              }
+                            />
+                            <button
+                              className="btn btn-primary small"
+                              onClick={() => onSaveDescription(p)}
+                              disabled={busy || !descDirty}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      </Fragment>
                     );
                   })}
                 </tbody>

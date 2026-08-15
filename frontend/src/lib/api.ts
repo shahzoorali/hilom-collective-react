@@ -130,7 +130,7 @@ export const adminListProducts = (adminKey: string) =>
 export const adminUpdateProduct = (
   adminKey: string,
   productId: string,
-  patch: { price_centavos?: number; is_active?: boolean; name?: string },
+  patch: { price_centavos?: number; is_active?: boolean; name?: string; description?: string },
 ) =>
   get<{ product: AdminProduct }>(`/admin/products/${productId}`, {
     method: 'PATCH',

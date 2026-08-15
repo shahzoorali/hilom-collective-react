@@ -26,7 +26,7 @@ export default function Courses() {
               <article className="card" key={p.id}>
                 {p.slug.includes('bundle') && <span className="badge">Bundle</span>}
                 <h3>{p.name}</h3>
-                <p className="desc">{p.description}</p>
+                {p.description && <p className="desc">{p.description}</p>}
                 <div className="price">{money(p.price_centavos, p.currency)}</div>
                 <Link className="btn btn-primary" to={`/courses/${p.slug}`}>
                   View details

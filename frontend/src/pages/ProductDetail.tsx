@@ -45,7 +45,7 @@ export default function ProductDetail() {
         <div>
           {isBundle && <span className="badge">Bundle · {product.moodle_course_ids.length} courses</span>}
           <h1>{product.name}</h1>
-          <p>{product.description}</p>
+          {product.description && <p>{product.description}</p>}
 
           {/* The course cache can legitimately be empty before the first sync —
               the product is still purchasable, so this degrades quietly. */}

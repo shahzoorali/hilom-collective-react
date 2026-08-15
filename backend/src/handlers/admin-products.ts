@@ -17,7 +17,9 @@ export async function list(event: APIGatewayProxyEventV2): Promise<APIGatewayPro
     const supabase = await getSupabase();
     const { data, error } = await supabase
       .from('products')
-      .select('id, name, slug, description, price_centavos, currency, is_active, product_courses(moodle_course_id)')
+      .select(
+        'id, name, slug, description, price_centavos, currency, is_active, product_courses(moodle_course_id)',
+      )
       .order('price_centavos', { ascending: true });
 
     if (error) throw error;
@@ -79,7 +81,7 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
       .from('products')
       .update(patch)
       .eq('id', productId)
-      .select('id, name, slug, price_centavos, currency, is_active')
+      .select('id, name, slug, description, price_centavos, currency, is_active')
       .maybeSingle();
 
     if (error) throw error;
