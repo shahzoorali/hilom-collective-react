@@ -85,6 +85,19 @@ export const getOrderStatus = (paymentId: string) =>
 export const getOrderStatusByIntent = (intentId: string) =>
   get<OrderStatus>(`/orders/status-by-intent/${encodeURIComponent(intentId)}`);
 
+export const submitCommunityForm = (body: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  interests: string[];
+  message: string;
+}) =>
+  get<{ sent: boolean }>('/community/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
 // --- admin ---
 
 export const adminListOrders = (adminKey: string, status?: string) =>

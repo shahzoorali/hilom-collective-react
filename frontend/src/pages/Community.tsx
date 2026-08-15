@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { submitCommunityForm } from '../lib/api';
 
 const INTERESTS = [
   'Courses & Learning Programs',
@@ -13,23 +14,33 @@ const INTERESTS = [
  * Mirrors hilomcollective.com/community/ — same fields and interest options
  * as the live Divi contact form, verified against the rendered page.
  *
- * NOT wired to a real backend: there is no mailing-list/CRM service in this
- * build yet (that's separate scope — an SES-backed Lambda or a signup-form
- * provider). Submitting here only shows a local confirmation; nothing is
- * actually sent or stored anywhere.
+ * Submits to /community/submit, which relays the signup to
+ * kumusta@hilomcollective.com via SES — there is no mailing-list/CRM service
+ * behind this yet, just a direct email to the team.
  */
 export default function Community() {
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', message: '' });
   const [interests, setInterests] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function toggleInterest(name: string) {
     setInterests((prev) => (prev.includes(name) ? prev.filter((i) => i !== name) : [...prev, name]));
   }
 
-  function onSubmit(e: FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitted(true);
+    setSubmitting(true);
+    setError(null);
+    try {
+      await submitCommunityForm({ ...form, interests });
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -114,8 +125,14 @@ export default function Community() {
                 may unsubscribe at any time.
               </p>
 
-              <button className="btn btn-accent btn-block" type="submit">
-                Submit
+              {error && (
+                <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+                  {error}
+                </div>
+              )}
+
+              <button className="btn btn-accent btn-block" type="submit" disabled={submitting}>
+                {submitting ? 'Sending…' : 'Submit'}
               </button>
             </form>
           )}

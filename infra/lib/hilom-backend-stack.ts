@@ -195,6 +195,22 @@ export class HilomBackendStack extends cdk.Stack {
       'handlers/enrollment-retry-consumer.ts',
       'handler',
     );
+    const communitySubmit = makeFn('CommunitySubmitFn', 'handlers/community.ts', 'submit');
+
+    // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
+    // hilomcollective.com is already a verified, DKIM-signed domain identity
+    // there with production access, so no new identity/DNS work was needed.
+    communitySubmit.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendEmail'],
+        resources: [
+          `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
+          // The domain identity has a default configuration set attached, so SES
+          // checks permission on that resource too, not just the identity.
+          `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
+        ],
+      }),
+    );
 
     paymongoWebhook.addEnvironment('ENROLLMENT_RETRY_QUEUE_URL', enrollmentRetryQueue.queueUrl);
     enrollmentRetryQueue.grantSendMessages(paymongoWebhook);
@@ -300,6 +316,7 @@ export class HilomBackendStack extends cdk.Stack {
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');
     route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');
+    route('/community/submit', apigw.HttpMethod.POST, communitySubmit, 'CommunitySubmitInt');
 
     // ---------------------------------------------------------------------
     // Outputs
