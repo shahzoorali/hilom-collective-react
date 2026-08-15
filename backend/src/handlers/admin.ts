@@ -76,15 +76,24 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
     const courses = await moodle.getCoursesWithImages();
 
     const rows = await Promise.all(
-      courses.map(async (c) => ({
-        moodle_course_id: c.id,
-        fullname: c.fullname,
-        shortname: c.shortname,
-        summary: c.summary ?? null,
-        visible: Boolean(c.visible),
-        image_url: await mirrorCourseImage(supabase, moodle, c),
-        last_synced_at: new Date().toISOString(),
-      })),
+      courses.map(async (c) => {
+        let enrolledCount: number | null = null;
+        try {
+          enrolledCount = await moodle.getEnrolledCount(c.id);
+        } catch (err) {
+          console.warn(`[admin.syncCourses] enrolled count fetch failed for course ${c.id}:`, err);
+        }
+        return {
+          moodle_course_id: c.id,
+          fullname: c.fullname,
+          shortname: c.shortname,
+          summary: c.summary ?? null,
+          visible: Boolean(c.visible),
+          image_url: await mirrorCourseImage(supabase, moodle, c),
+          enrolled_count: enrolledCount,
+          last_synced_at: new Date().toISOString(),
+        };
+      }),
     );
 
     const { error } = await supabase

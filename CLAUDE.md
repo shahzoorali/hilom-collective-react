@@ -56,8 +56,9 @@ Build one phase at a time.
 - Moodle web-service token is valid and permits: `core_course_get_courses`,
   `core_course_get_courses_by_field`, `core_user_get_users_by_field`,
   `core_user_create_users`, `core_user_update_users`, `enrol_manual_enrol_users`,
-  `enrol_manual_unenrol_users`, `core_enrol_get_users_courses`.
-  It does **not** permit `core_webservice_get_site_info` or `core_enrol_get_enrolled_users`.
+  `enrol_manual_unenrol_users`, `core_enrol_get_users_courses`,
+  `core_enrol_get_enrolled_users` (added 2026-08-15, for live enrolled-student counts).
+  It does **not** permit `core_webservice_get_site_info`.
 
 ## Live Moodle course IDs
 

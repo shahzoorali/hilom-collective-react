@@ -16,6 +16,7 @@ export interface CourseSummary {
   shortname: string;
   summary: string | null;
   image_url: string | null;
+  enrolled_count: number | null;
 }
 
 export interface ProductDetail extends Product {

@@ -2,13 +2,14 @@
  * Moodle Web Services REST client.
  *
  * Only the functions the integration token is actually permitted to call are
- * exposed here. Verified permitted (2026-08-14): core_course_get_courses,
+ * exposed here. Verified permitted (2026-08-15): core_course_get_courses,
  * core_course_get_courses_by_field, core_user_get_users_by_field,
  * core_user_create_users, core_user_update_users, enrol_manual_enrol_users,
- * enrol_manual_unenrol_users, core_enrol_get_users_courses.
+ * enrol_manual_unenrol_users, core_enrol_get_users_courses,
+ * core_enrol_get_enrolled_users.
  *
- * NOT permitted: core_webservice_get_site_info, core_enrol_get_enrolled_users.
- * Don't reach for those without widening the service in Moodle admin first.
+ * NOT permitted: core_webservice_get_site_info.
+ * Don't reach for that without widening the service in Moodle admin first.
  */
 
 /** Must include `www` — the bare host 301-redirects and drops POST bodies. */
@@ -188,5 +189,15 @@ export class MoodleClient {
 
   async getUserCourses(userid: number): Promise<MoodleCourse[]> {
     return this.call<MoodleCourse[]>('core_enrol_get_users_courses', { userid });
+  }
+
+  /**
+   * Live enrolled-student count for a course, straight from Moodle rather than
+   * derived from our own `orders` (which only reflects buyers who went through
+   * our checkout — not test/manual enrollments made directly in Moodle admin).
+   */
+  async getEnrolledCount(courseid: number): Promise<number> {
+    const users = await this.call<unknown[]>('core_enrol_get_enrolled_users', { courseid });
+    return users.length;
   }
 }

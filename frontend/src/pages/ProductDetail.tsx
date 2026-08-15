@@ -63,6 +63,11 @@ export default function ProductDetail() {
                       />
                     )}
                     <h3 style={{ marginBottom: '0.25rem' }}>{c.fullname}</h3>
+                    {typeof c.enrolled_count === 'number' && (
+                      <p className="small muted" style={{ marginTop: 0 }}>
+                        {c.enrolled_count} enrolled student{c.enrolled_count === 1 ? '' : 's'}
+                      </p>
+                    )}
                     {c.summary && (
                       <div
                         className="small muted"

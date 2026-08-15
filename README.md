@@ -8,8 +8,10 @@ Full phase-by-phase build plan: [docs/hilom-development-plan.md](docs/hilom-deve
 Project conventions and locked decisions: [CLAUDE.md](CLAUDE.md).
 
 **Status:** Phases 0–8 complete and verified against production. The storefront is
-live at **https://main.d2hx75l7mk7woi.amplifyapp.com** — the apex domain still serves
-the old WordPress site until the Phase 9 cutover.
+live at **https://www.hilomcollective.com** (Amplify Hosting, connected to this repo's
+`main` branch for auto-deploy on push) and at the fallback
+`https://main.d2hx75l7mk7woi.amplifyapp.com`. The apex `hilomcollective.com` is mid-cutover
+to Amplify — DNS for it still points at the old host pending a manual GoDaddy record swap.
 
 ---
 
@@ -93,10 +95,11 @@ full list of hard rules this build follows.
 | **SNS** | `hilom-enrollment-alerts` — emails when an order exhausts retries and needs manual attention |
 | **CloudWatch** | Logs for every Lambda; alarm on DLQ depth that triggers the SNS alert |
 | **ACM** | TLS certs for `api.hilomcollective.com` (ap-southeast-1) and the future storefront domain (us-east-1) |
-| **Amplify Hosting** | Serves the React storefront (app `d2hx75l7mk7woi`) |
+| **Amplify Hosting** | Serves the React storefront (app `d2hx75l7mk7woi`), connected to this repo's `main` branch (see `amplify.yml`) for auto-deploy on push |
 | **EC2** | Used only transiently in Phase 1 (disposable Moodle SSO test box), already terminated |
 
 Outside AWS: **Supabase Postgres** (ap-southeast-1) for the catalog and orders,
+**Supabase Storage** (public `course-images` bucket) for mirrored Moodle course images,
 **PayMongo** for payment processing, and **Moodle 4.5** (self-hosted, not on AWS) for
 course delivery.
 
@@ -159,7 +162,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 | 2 — Moodle Web Services | ✅ done, enrollment idempotency confirmed on production |
 | 3 — Supabase schema + RLS | ✅ done |
 | 4 — API Gateway + Lambda skeleton | ✅ done |
-| 5 — Manual course sync | ✅ done (`POST /admin/sync-courses`) |
+| 5 — Manual course sync | ✅ done (`POST /admin/sync-courses`) — also mirrors course images to Supabase Storage and pulls live enrolled-student counts (`core_enrol_get_enrolled_users`) |
 | 6 — Payment + enrollment | ✅ done, verified end-to-end (single course, bundle, forced-failure recovery) against production |
 | 7 — Frontend storefront | ✅ done — storefront, on-site checkout, Cognito login, admin panel; live on Amplify |
 | 8 — Manual refunds | ✅ done — admin revoke-access, verified incl. the overlapping-products case |
@@ -170,7 +173,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 ```bash
 npm install                 # installs all three workspaces
 cd backend && npm run typecheck
-cd infra && npx cdk synth   # requires -c apiCertificateArn=... for the custom domain
+cd infra && npx cdk synth   # apiCertificateArn is pinned in infra/cdk.json — no -c flag needed
 ```
 
 Runbooks with exact deploy/test commands:
