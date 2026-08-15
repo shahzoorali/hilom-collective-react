@@ -83,11 +83,18 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
         } catch (err) {
           console.warn(`[admin.syncCourses] enrolled count fetch failed for course ${c.id}:`, err);
         }
+        let contentHtml: string | null = null;
+        try {
+          contentHtml = await moodle.getLabelContent(c.id);
+        } catch (err) {
+          console.warn(`[admin.syncCourses] content fetch failed for course ${c.id}:`, err);
+        }
         return {
           moodle_course_id: c.id,
           fullname: c.fullname,
           shortname: c.shortname,
           summary: c.summary ?? null,
+          content_html: contentHtml,
           visible: Boolean(c.visible),
           image_url: await mirrorCourseImage(supabase, moodle, c),
           enrolled_count: enrolledCount,

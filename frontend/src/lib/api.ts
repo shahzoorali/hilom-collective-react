@@ -15,6 +15,7 @@ export interface CourseSummary {
   fullname: string;
   shortname: string;
   summary: string | null;
+  content_html: string | null;
   image_url: string | null;
   enrolled_count: number | null;
 }

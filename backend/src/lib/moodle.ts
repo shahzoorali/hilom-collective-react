@@ -6,7 +6,7 @@
  * core_course_get_courses_by_field, core_user_get_users_by_field,
  * core_user_create_users, core_user_update_users, enrol_manual_enrol_users,
  * enrol_manual_unenrol_users, core_enrol_get_users_courses,
- * core_enrol_get_enrolled_users.
+ * core_enrol_get_enrolled_users, core_course_get_contents.
  *
  * NOT permitted: core_webservice_get_site_info.
  * Don't reach for that without widening the service in Moodle admin first.
@@ -199,5 +199,27 @@ export class MoodleClient {
   async getEnrolledCount(courseid: number): Promise<number> {
     const users = await this.call<unknown[]>('core_enrol_get_enrolled_users', { courseid });
     return users.length;
+  }
+
+  /**
+   * Concatenates the HTML of every Label activity across a course's sections —
+   * the "Learner Guide" intro/instructions block some courses author directly
+   * on the course page rather than in the Course summary setting. Deliberately
+   * skips every other activity type (SCORM, quiz, url, resource, ...): those
+   * are gated learning content or links into the platform, not marketing copy
+   * that belongs on the public product page.
+   */
+  async getLabelContent(courseid: number): Promise<string | null> {
+    const sections = await this.call<
+      { modules: { modname: string; description?: string }[] }[]
+    >('core_course_get_contents', { courseid });
+
+    const html = sections
+      .flatMap((s) => s.modules)
+      .filter((m) => m.modname === 'label' && m.description)
+      .map((m) => m.description as string)
+      .join('\n');
+
+    return html || null;
   }
 }

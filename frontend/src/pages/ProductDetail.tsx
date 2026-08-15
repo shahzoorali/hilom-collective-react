@@ -68,13 +68,15 @@ export default function ProductDetail() {
                         {c.enrolled_count} enrolled student{c.enrolled_count === 1 ? '' : 's'}
                       </p>
                     )}
-                    {c.summary && (
+                    {(c.content_html || c.summary) && (
                       <div
                         className="small muted"
-                        // Moodle stores course summaries as HTML authored by
-                        // the Hilom team in Moodle admin — a trusted, non-public
-                        // source, not user-submitted content.
-                        dangerouslySetInnerHTML={{ __html: c.summary }}
+                        // Moodle stores this as HTML authored by the Hilom team
+                        // in Moodle admin — a trusted, non-public source, not
+                        // user-submitted content. content_html (Label activities
+                        // on the course page) is preferred over summary (the
+                        // Course summary setting) when a course has both.
+                        dangerouslySetInnerHTML={{ __html: (c.content_html || c.summary) as string }}
                       />
                     )}
                   </div>

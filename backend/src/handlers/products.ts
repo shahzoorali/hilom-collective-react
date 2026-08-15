@@ -50,7 +50,9 @@ export async function detail(event: APIGatewayProxyEventV2): Promise<APIGatewayP
     const courseIds = product.product_courses.map((pc) => pc.moodle_course_id);
     const { data: courses, error: coursesError } = await supabase
       .from('courses')
-      .select('moodle_course_id, fullname, shortname, summary, image_url, enrolled_count, last_synced_at')
+      .select(
+        'moodle_course_id, fullname, shortname, summary, content_html, image_url, enrolled_count, last_synced_at',
+      )
       .in('moodle_course_id', courseIds);
 
     // A cache miss degrades to "no course detail" rather than failing the whole

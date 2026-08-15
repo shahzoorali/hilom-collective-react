@@ -13,7 +13,9 @@ export async function list(): Promise<APIGatewayProxyResultV2> {
     const supabase = await getSupabase();
     const { data, error } = await supabase
       .from('courses')
-      .select('moodle_course_id, fullname, shortname, summary, image_url, enrolled_count, visible, last_synced_at')
+      .select(
+        'moodle_course_id, fullname, shortname, summary, content_html, image_url, enrolled_count, visible, last_synced_at',
+      )
       .order('moodle_course_id', { ascending: true });
 
     if (error) throw error;
