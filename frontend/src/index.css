@@ -486,6 +486,7 @@ div[class*="_PuckCanvas-inner_"],
   width: 100% !important;
 }
 
+#puck-canvas-root,
 div[class*="_PuckCanvas-root_"],
 [class*="_PuckCanvas-root_"] {
   position: relative !important;
@@ -494,10 +495,25 @@ div[class*="_PuckCanvas-root_"],
   left: auto !important;
   right: auto !important;
   width: 100% !important;
-  min-height: 100% !important;
   height: auto !important;
+  min-height: 100% !important;
+  max-height: none !important;
   opacity: 1 !important;
   pointer-events: auto !important;
+  overflow: visible !important;
+}
+
+/* Preview and Frame wrappers: Expand to full block height */
+#puck-preview,
+[class*="_PuckPreview_"],
+#preview-frame,
+[class*="_PuckPreview-frame_"] {
+  height: auto !important;
+  min-height: 100% !important;
+  max-height: none !important;
+  position: relative !important;
+  display: block !important;
+  overflow: visible !important;
 }
 
 #frame-root {
@@ -507,9 +523,15 @@ div[class*="_PuckCanvas-root_"],
 }
 
 /* Generous bottom padding for dropzone so editors can easily add more blocks */
-[data-puck-dropzone] {
+[data-puck-dropzone],
+[class*="_DropZone_"] {
+  height: auto !important;
   min-height: 350px !important;
-  padding-bottom: 220px !important;
+  max-height: none !important;
+  position: relative !important;
+  display: block !important;
+  padding-bottom: 250px !important;
+  overflow: visible !important;
 }
 
 /* ---------------------------------------------------------------------------

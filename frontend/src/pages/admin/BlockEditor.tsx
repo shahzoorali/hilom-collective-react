@@ -261,8 +261,84 @@ export default function BlockEditor<
         </div>
       )}
 
-      {/* Full-Viewport Puck Canvas */}
+      {/* Full-Viewport Puck Canvas with Scrolling Overrides */}
       <div style={{ flex: 1, minHeight: 0, height: '100%' }}>
+        <style>{`
+          /* 1. Strictly bound Puck Layout & Grid */
+          [class*="_PuckLayout_"] {
+            height: 100% !important;
+            max-height: 100% !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+          }
+          [class*="_PuckLayout-inner_"] {
+            height: 100% !important;
+            max-height: 100% !important;
+            min-height: 0 !important;
+            grid-template-rows: min-content minmax(0, 1fr) !important;
+            overflow: hidden !important;
+          }
+
+          /* 2. Outer Canvas: Bounded height + active vertical scrollbar */
+          [class*="_PuckCanvas_"] {
+            height: 100% !important;
+            max-height: 100% !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            -webkit-overflow-scrolling: touch !important;
+          }
+
+          /* 3. Canvas Inner & Root: Override inline pixel height to allow expansion */
+          [class*="_PuckCanvas-inner_"] {
+            min-height: 100% !important;
+            height: auto !important;
+            display: block !important;
+            position: relative !important;
+            width: 100% !important;
+          }
+          #puck-canvas-root,
+          [class*="_PuckCanvas-root_"] {
+            position: relative !important;
+            top: auto !important;
+            bottom: auto !important;
+            left: auto !important;
+            right: auto !important;
+            width: 100% !important;
+            height: auto !important;
+            min-height: 100% !important;
+            max-height: none !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            overflow: visible !important;
+          }
+
+          /* 4. Preview and Frame wrappers: Expand to full block height */
+          #puck-preview,
+          [class*="_PuckPreview_"],
+          #preview-frame,
+          [class*="_PuckPreview-frame_"] {
+            height: auto !important;
+            min-height: 100% !important;
+            max-height: none !important;
+            position: relative !important;
+            display: block !important;
+            overflow: visible !important;
+          }
+
+          /* 5. Dropzone: Expand naturally and give generous bottom scrolling room */
+          [data-puck-dropzone],
+          [class*="_DropZone_"] {
+            height: auto !important;
+            min-height: 350px !important;
+            max-height: none !important;
+            position: relative !important;
+            display: block !important;
+            padding-bottom: 250px !important;
+            overflow: visible !important;
+          }
+        `}</style>
+
         <Puck
           key={`${resource.id}:${canvasVersion}`}
           config={config}
