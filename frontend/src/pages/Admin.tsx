@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { adminListPages } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
@@ -29,6 +29,12 @@ export default function Admin() {
   const [editingPage, setEditingPage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // True only while re-verifying a key already in sessionStorage, e.g. after a
+  // hard refresh. `authed` itself always starts false — component state does
+  // not survive a reload — so without this the sign-in form flashed on every
+  // refresh even though the key was sitting right there, valid, doing nothing
+  // until someone clicked "Sign in" again.
+  const [checkingSession, setCheckingSession] = useState(() => Boolean(sessionStorage.getItem(KEY_STORAGE)));
 
   /** "Signed in" means a real admin request succeeded — there is no separate
    *  login endpoint, so the cheapest admin GET is the check. */
@@ -46,10 +52,31 @@ export default function Admin() {
     }
   }
 
+  useEffect(() => {
+    const stored = sessionStorage.getItem(KEY_STORAGE);
+    if (!stored) return;
+    signIn(stored).finally(() => setCheckingSession(false));
+    // Runs once, against whatever was in storage at mount — signIn itself
+    // handles the outcome (setAuthed / setError).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function signOut() {
     sessionStorage.removeItem(KEY_STORAGE);
     setAuthed(false);
     setAdminKey('');
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="admin-shell">
+        <section className="section">
+          <div className="container" style={{ maxWidth: 420 }}>
+            <p className="muted">Signing in…</p>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   if (!authed) {
