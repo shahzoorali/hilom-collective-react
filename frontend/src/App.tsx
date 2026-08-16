@@ -31,34 +31,47 @@ import Community from './pages/Community';
  *
  * React Router ranks specific paths above the `/:slug` parameter, so the
  * catch-all cannot steal a hardcoded route.
+ *
+ * `/admin/*` sits OUTSIDE <Layout>: the admin is a separate application, not a
+ * page on the marketing site, so it gets its own chrome (Admin.tsx) rather
+ * than the public header/nav/footer. Putting the storefront's own navigation
+ * above a page editor was exactly what made the editor feel cramped and
+ * confusable with the site being edited.
  */
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<CmsOrFallback slug="home" fallback={<Home />} />} />
-          <Route path="/about" element={<CmsOrFallback slug="about" fallback={<About />} />} />
-          <Route path="/services" element={<CmsOrFallback slug="services" fallback={<Services />} />} />
-          <Route path="/events" element={<CmsOrFallback slug="events" fallback={<Events />} />} />
-          <Route path="/community" element={<CmsOrFallback slug="community" fallback={<Community />} />} />
-          <Route path="/courses" element={<Courses />} />
-          <Route path="/courses/:slug" element={<ProductDetail />} />
-          <Route path="/checkout/processing" element={<Processing />} />
-          <Route path="/checkout/:slug" element={<Checkout />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route
-            path="/admin/*"
-            element={
-              <Suspense fallback={<p className="muted" style={{ padding: '2rem' }}>Loading…</p>}>
-                <Admin />
-              </Suspense>
-            }
-          />
-          <Route path="/:slug" element={<CmsPage />} />
-          <Route path="*" element={<CmsPage />} />
-        </Routes>
-      </Layout>
+      <Routes>
+        <Route
+          path="/admin/*"
+          element={
+            <Suspense fallback={<p className="muted" style={{ padding: '2rem' }}>Loading…</p>}>
+              <Admin />
+            </Suspense>
+          }
+        />
+        <Route
+          path="*"
+          element={
+            <Layout>
+              <Routes>
+                <Route path="/" element={<CmsOrFallback slug="home" fallback={<Home />} />} />
+                <Route path="/about" element={<CmsOrFallback slug="about" fallback={<About />} />} />
+                <Route path="/services" element={<CmsOrFallback slug="services" fallback={<Services />} />} />
+                <Route path="/events" element={<CmsOrFallback slug="events" fallback={<Events />} />} />
+                <Route path="/community" element={<CmsOrFallback slug="community" fallback={<Community />} />} />
+                <Route path="/courses" element={<Courses />} />
+                <Route path="/courses/:slug" element={<ProductDetail />} />
+                <Route path="/checkout/processing" element={<Processing />} />
+                <Route path="/checkout/:slug" element={<Checkout />} />
+                <Route path="/auth/callback" element={<AuthCallback />} />
+                <Route path="/:slug" element={<CmsPage />} />
+                <Route path="*" element={<CmsPage />} />
+              </Routes>
+            </Layout>
+          }
+        />
+      </Routes>
     </BrowserRouter>
   );
 }

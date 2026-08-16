@@ -142,39 +142,50 @@ export default function PageEditor({
       setShowHistory(false);
     }, 'Revision loaded onto the canvas. Publish it to make it live.');
 
-  if (error && !page) return <div className="alert alert-error">{error}</div>;
-  if (!page || !initialData) return <p className="muted">Loading…</p>;
+  if (error && !page) return <div className="alert alert-error" style={{ margin: '1rem' }}>{error}</div>;
+  if (!page || !initialData) return <p className="muted" style={{ margin: '1rem' }}>Loading…</p>;
 
   return (
-    <>
-      {error && <div className="alert alert-error">{error}</div>}
-      {notice && <div className="alert alert-success">{notice}</div>}
+    // Flex column filling the exact space .admin-content--flush gives it (see
+    // index.css): alerts and history take only the room they need, and the
+    // Puck canvas takes the rest, edge to edge. That full-viewport layout is
+    // the point — a page editor boxed inside a padded container is what this
+    // replaced.
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {(error || notice || showHistory) && (
+        <div style={{ padding: '0.75rem 1rem 0' }}>
+          {error && <div className="alert alert-error">{error}</div>}
+          {notice && <div className="alert alert-success">{notice}</div>}
 
-      {showHistory && (
-        <div className="panel" style={{ marginBottom: '0.8rem' }}>
-          <h3 style={{ fontSize: '1rem', marginTop: 0 }}>Publish history</h3>
-          {revisions.length === 0 ? (
-            <p className="small muted" style={{ marginBottom: 0 }}>
-              Nothing published yet.
-            </p>
-          ) : (
-            revisions.map((revision) => (
-              <button
-                key={revision.id}
-                className="btn btn-ghost small"
-                style={{ marginRight: '0.4rem', marginBottom: '0.4rem' }}
-                onClick={() => restore(revision.id)}
-                disabled={busy}
-              >
-                {new Date(revision.created_at).toLocaleString()}
-              </button>
-            ))
+          {showHistory && (
+            <div className="panel" style={{ marginBottom: '0.8rem' }}>
+              <h3 style={{ fontSize: '1rem', marginTop: 0 }}>Publish history</h3>
+              {revisions.length === 0 ? (
+                <p className="small muted" style={{ marginBottom: 0 }}>
+                  Nothing published yet.
+                </p>
+              ) : (
+                revisions.map((revision) => (
+                  <button
+                    key={revision.id}
+                    className="btn btn-ghost small"
+                    style={{ marginRight: '0.4rem', marginBottom: '0.4rem' }}
+                    onClick={() => restore(revision.id)}
+                    disabled={busy}
+                  >
+                    {new Date(revision.created_at).toLocaleString()}
+                  </button>
+                ))
+              )}
+            </div>
           )}
         </div>
       )}
 
-      {/* Puck's editor wants a viewport-sized area of its own. */}
-      <div style={{ height: 'calc(100vh - 160px)', minHeight: 600, border: '1px solid var(--line)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+      {/* flex: 1 + minHeight: 0 is the standard fix for a flex child that must
+          fill remaining space but also contains its own scrolling content —
+          without minHeight: 0 the browser lets this box grow past its share. */}
+      <div style={{ flex: 1, minHeight: 0 }}>
         <Puck
           key={page.id + String(initialData.content?.length) + (page.published_at ?? '')}
           config={config}
@@ -217,6 +228,6 @@ export default function PageEditor({
           }}
         />
       </div>
-    </>
+    </div>
   );
 }

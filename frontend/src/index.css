@@ -230,3 +230,39 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   .card { padding: 1.1rem; }
   .price { font-size: 1.35rem; }
 }
+
+/* ---------------------------------------------------------------------------
+   Admin chrome. Deliberately separate from the public site's .site-header /
+   .nav / .section / .container classes above: the admin is a dashboard, not a
+   marketing page, and it must never show the storefront's own navigation
+   (About, Services, Courses, "Log in"…) above a page editor — that was
+   confusing to look at and wasted the vertical space a full-page editor needs.
+   --------------------------------------------------------------------------- */
+/* A fixed-height flex column, not min-height: the page editor needs a real
+   100%-height box to fill (Puck sizes itself to its parent), and a magic-number
+   `calc(100vh - <topbar px>)` on the editor would silently drift out of sync
+   the moment the topbar's height changes (e.g. it wraps onto two lines). */
+.admin-shell { height: 100vh; display: flex; flex-direction: column; background: #f4f5f2; }
+
+.admin-topbar {
+  flex: none;
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.6rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.admin-topbar .brand-logo { height: 32px; }
+.admin-topbar h1 { font-size: 1.05rem; margin: 0; color: var(--ink); }
+.admin-tabs { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.admin-topbar .spacer { margin-left: auto; }
+
+/* Boxed tabs (list/table views) keep readable measure, page-like padding, and
+   scroll their own content rather than the whole shell. */
+.admin-content { flex: 1; min-height: 0; overflow-y: auto; padding: 1.5rem; }
+.admin-content > * { max-width: 1400px; margin: 0 auto; }
+
+/* The page editor is flush: full width, no padding, so Puck's own canvas and
+   header own the whole space below the admin topbar — the point of this
+   change is that the editor stops looking like a widget embedded in a page. */
+.admin-content--flush { padding: 0; overflow: hidden; }
+.admin-content--flush > * { max-width: none; margin: 0; height: 100%; }

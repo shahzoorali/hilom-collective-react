@@ -3,9 +3,24 @@ import { useEffect, useState } from 'react';
 import { adminCreatePage, adminDeletePage, adminListPages, type AdminPage } from '../../lib/cms';
 import PageEditor from './PageEditor';
 
-export default function PagesTab({ adminKey }: { adminKey: string }) {
+export default function PagesTab({
+  adminKey,
+  onEditingChange,
+}: {
+  adminKey: string;
+  /** Tells the admin shell to drop its padding while the editor is open, so
+   *  Puck's canvas gets the full viewport rather than sitting in a box. */
+  onEditingChange?: (editing: boolean) => void;
+}) {
   const [pages, setPages] = useState<AdminPage[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+
+  useEffect(() => {
+    onEditingChange?.(editing !== null);
+    // Only the editing flag itself should trigger this — onEditingChange is a
+    // fresh function identity on every Admin.tsx render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
   const [title, setTitle] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
