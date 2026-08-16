@@ -38,7 +38,10 @@ export interface AdminOrder {
   created_at: string;
 }
 
-async function get<T>(path: string, init?: RequestInit): Promise<T> {
+/** Shared fetch wrapper: prefixes API_BASE and turns a non-2xx into the
+ *  backend's `error` message rather than an opaque status code. Exported so the
+ *  CMS client in cms.ts uses the same error handling. */
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, init);
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -47,10 +50,10 @@ async function get<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const listProducts = () => get<{ products: Product[] }>('/products').then((r) => r.products);
+export const listProducts = () => apiFetch<{ products: Product[] }>('/products').then((r) => r.products);
 
 export const getProduct = (slug: string) =>
-  get<{ product: ProductDetail }>(`/products/${encodeURIComponent(slug)}`).then((r) => r.product);
+  apiFetch<{ product: ProductDetail }>(`/products/${encodeURIComponent(slug)}`).then((r) => r.product);
 
 export interface CheckoutSession {
   sessionId: string;
@@ -62,7 +65,7 @@ export interface CheckoutSession {
 }
 
 export const createCheckoutSession = (slug: string, email: string, name?: string) =>
-  get<CheckoutSession>('/checkout/create-session', {
+  apiFetch<CheckoutSession>('/checkout/create-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ slug, email, name }),
@@ -75,7 +78,7 @@ export interface OrderStatus {
 }
 
 export const getOrderStatus = (paymentId: string) =>
-  get<OrderStatus>(`/orders/status/${encodeURIComponent(paymentId)}`);
+  apiFetch<OrderStatus>(`/orders/status/${encodeURIComponent(paymentId)}`);
 
 /**
  * Preferred over getOrderStatus from the browser: PayMongo hides `payments[]`
@@ -83,14 +86,14 @@ export const getOrderStatus = (paymentId: string) =>
  * payment id. The backend resolves one to the other with the secret key.
  */
 export const getOrderStatusByIntent = (intentId: string) =>
-  get<OrderStatus>(`/orders/status-by-intent/${encodeURIComponent(intentId)}`);
+  apiFetch<OrderStatus>(`/orders/status-by-intent/${encodeURIComponent(intentId)}`);
 
 /**
  * Hosted-checkout equivalent: the browser is redirected back knowing only its
  * checkout session id, so the backend resolves session -> payment id.
  */
 export const getOrderStatusBySession = (sessionId: string) =>
-  get<OrderStatus>(`/orders/status-by-session/${encodeURIComponent(sessionId)}`);
+  apiFetch<OrderStatus>(`/orders/status-by-session/${encodeURIComponent(sessionId)}`);
 
 export const submitCommunityForm = (body: {
   firstName: string;
@@ -99,7 +102,7 @@ export const submitCommunityForm = (body: {
   interests: string[];
   message: string;
 }) =>
-  get<{ sent: boolean }>('/community/submit', {
+  apiFetch<{ sent: boolean }>('/community/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -108,18 +111,18 @@ export const submitCommunityForm = (body: {
 // --- admin ---
 
 export const adminListOrders = (adminKey: string, status?: string) =>
-  get<{ orders: AdminOrder[] }>(`/admin/orders${status ? `?status=${status}` : ''}`, {
+  apiFetch<{ orders: AdminOrder[] }>(`/admin/orders${status ? `?status=${status}` : ''}`, {
     headers: { 'x-admin-key': adminKey },
   }).then((r) => r.orders);
 
 export const adminSyncCourses = (adminKey: string) =>
-  get<{ synced: number; last_synced_at: string | null }>('/admin/sync-courses', {
+  apiFetch<{ synced: number; last_synced_at: string | null }>('/admin/sync-courses', {
     method: 'POST',
     headers: { 'x-admin-key': adminKey },
   });
 
 export const adminRetryEnrollment = (adminKey: string, orderId: string) =>
-  get<{ orderId: string; status: string }>(`/admin/retry-enrollment/${orderId}`, {
+  apiFetch<{ orderId: string; status: string }>(`/admin/retry-enrollment/${orderId}`, {
     method: 'POST',
     headers: { 'x-admin-key': adminKey },
   });
@@ -144,7 +147,7 @@ export interface AdminProduct {
 }
 
 export const adminListProducts = (adminKey: string) =>
-  get<{ products: AdminProduct[] }>('/admin/products', {
+  apiFetch<{ products: AdminProduct[] }>('/admin/products', {
     headers: { 'x-admin-key': adminKey },
   }).then((r) => r.products);
 
@@ -153,17 +156,17 @@ export const adminUpdateProduct = (
   productId: string,
   patch: { price_centavos?: number; is_active?: boolean; name?: string; description?: string },
 ) =>
-  get<{ product: AdminProduct }>(`/admin/products/${productId}`, {
+  apiFetch<{ product: AdminProduct }>(`/admin/products/${productId}`, {
     method: 'PATCH',
     headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   }).then((r) => r.product);
 
 export const adminRevokeAccess = (adminKey: string, orderId: string) =>
-  get<RevokeResult>(`/admin/revoke-access/${orderId}`, {
+  apiFetch<RevokeResult>(`/admin/revoke-access/${orderId}`, {
     method: 'POST',
     headers: { 'x-admin-key': adminKey },
   });
 
 export const listCourses = () =>
-  get<{ courses: CourseSummary[]; last_synced_at: string | null }>('/courses');
+  apiFetch<{ courses: CourseSummary[]; last_synced_at: string | null }>('/courses');

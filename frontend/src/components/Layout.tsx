@@ -1,17 +1,31 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState, type ReactNode } from 'react';
 import { currentUser, login, logout } from '../lib/auth';
-import { MOODLE_URL } from '../config';
 import hilomLogo from '../assets/hilom-logo.png';
+import { useMenus } from '../cms/useMenus';
+import type { MenuLink } from '../lib/cms';
 
 export function money(centavos: number, currency = 'PHP'): string {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(centavos / 100);
+}
+
+/** Internal paths stay client-side; external ones open in a new tab. */
+function MenuLinkView({ item }: { item: MenuLink }) {
+  if (item.target === 'blank' || !item.href.startsWith('/')) {
+    return (
+      <a href={item.href} target="_blank" rel="noreferrer">
+        {item.label}
+      </a>
+    );
+  }
+  return <Link to={item.href}>{item.label}</Link>;
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
   const user = currentUser();
   const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
+  const menus = useMenus();
 
   // Navigating with the menu open would otherwise leave it covering the new page.
   useEffect(() => setNavOpen(false), [pathname]);
@@ -32,14 +46,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             {navOpen ? '✕' : '☰'}
           </button>
           <nav className={navOpen ? 'nav open' : 'nav'}>
-            <Link to="/about">About Hilom</Link>
-            <Link to="/services">Services</Link>
-            <Link to="/events">Events</Link>
-            <Link to="/community">Join Our Community</Link>
-            <Link to="/courses">Courses</Link>
-            <a href={MOODLE_URL} target="_blank" rel="noreferrer">
-              Login to Hilom Learning Hub ➞
-            </a>
+            {menus.header.map((item) => (
+              <MenuLinkView key={`${item.label}-${item.href}`} item={item} />
+            ))}
             {user ? (
               <>
                 <span className="who">{user.email}</span>
@@ -65,10 +74,13 @@ export default function Layout({ children }: { children: ReactNode }) {
         <div className="container">
           <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" style={{ marginBottom: '0.9rem' }} />
           <p style={{ margin: 0 }}>
-            © {new Date().getFullYear()} Hilom Collective ·{' '}
-            <a href={MOODLE_URL} target="_blank" rel="noreferrer">
-              Learning platform
-            </a>
+            © {new Date().getFullYear()} Hilom Collective
+            {menus.footer.map((item) => (
+              <span key={`${item.label}-${item.href}`}>
+                {' · '}
+                <MenuLinkView item={item} />
+              </span>
+            ))}
           </p>
         </div>
       </footer>
