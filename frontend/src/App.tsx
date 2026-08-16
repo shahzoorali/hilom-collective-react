@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import CmsOrFallback from './components/CmsOrFallback';
@@ -7,8 +8,14 @@ import ProductDetail from './pages/ProductDetail';
 import Checkout from './pages/Checkout';
 import Processing from './pages/Processing';
 import AuthCallback from './pages/AuthCallback';
-import Admin from './pages/Admin';
 import CmsPage from './pages/CmsPage';
+
+/**
+ * The admin is lazy-loaded because it pulls in Puck, which is far larger than
+ * the entire public site. Statically imported it more than doubled the entry
+ * bundle and made every visitor download a page editor they will never open.
+ */
+const Admin = lazy(() => import('./pages/Admin'));
 import About from './pages/About';
 import Services from './pages/Services';
 import Events from './pages/Events';
@@ -40,7 +47,14 @@ export default function App() {
           <Route path="/checkout/processing" element={<Processing />} />
           <Route path="/checkout/:slug" element={<Checkout />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route path="/admin/*" element={<Admin />} />
+          <Route
+            path="/admin/*"
+            element={
+              <Suspense fallback={<p className="muted" style={{ padding: '2rem' }}>Loading…</p>}>
+                <Admin />
+              </Suspense>
+            }
+          />
           <Route path="/:slug" element={<CmsPage />} />
           <Route path="*" element={<CmsPage />} />
         </Routes>

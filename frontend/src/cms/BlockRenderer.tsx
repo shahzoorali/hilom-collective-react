@@ -370,7 +370,11 @@ function CommunityFormBlock() {
   );
 }
 
-const REGISTRY: Record<string, (p: { props: Props }) => ReactNode> = {
+/**
+ * type -> component. Exported so the Puck editor renders the same components
+ * the live site does, rather than an editor-only approximation of them.
+ */
+export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode> = {
   hero: Hero,
   fullWidthImage: FullWidthImage,
   richText: RichTextSection,
@@ -389,7 +393,7 @@ export default function BlockRenderer({ blocks }: { blocks: Block[] }) {
   return (
     <>
       {blocks.map((block) => {
-        const Component = REGISTRY[block.type];
+        const Component = BLOCK_COMPONENTS[block.type];
         // An unknown type renders nothing rather than throwing: an older
         // frontend must not white-screen on content authored against a newer
         // block catalog.
