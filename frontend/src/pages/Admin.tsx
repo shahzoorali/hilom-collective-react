@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { adminListPages } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
 import PagesTab from './admin/PagesTab';
+import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
 import FormsTab from './admin/FormsTab';
 import { MediaGrid } from './admin/MediaLibrary';
@@ -19,14 +21,26 @@ import { MediaGrid } from './admin/MediaLibrary';
 
 const KEY_STORAGE = 'hilom.adminKey';
 
-const TABS = ['Pages', 'Media', 'Menus', 'Forms', 'Commerce'] as const;
-type Tab = (typeof TABS)[number];
+/** path segment under /admin, not just a display label — this is what makes
+ *  the URL reflect which tab (and, for Pages, which page) is open. */
+const TABS = [
+  { label: 'Pages', path: 'pages' },
+  { label: 'Media', path: 'media' },
+  { label: 'Menus', path: 'menus' },
+  { label: 'Forms', path: 'forms' },
+  { label: 'Commerce', path: 'commerce' },
+] as const;
+
+function PageEditorRoute({ adminKey }: { adminKey: string }) {
+  const { pageId } = useParams<{ pageId: string }>();
+  const navigate = useNavigate();
+  if (!pageId) return <Navigate to="/admin/pages" replace />;
+  return <PageEditor adminKey={adminKey} pageId={pageId} onBack={() => navigate('/admin/pages')} />;
+}
 
 export default function Admin() {
   const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem(KEY_STORAGE) ?? '');
   const [authed, setAuthed] = useState(false);
-  const [tab, setTab] = useState<Tab>('Pages');
-  const [editingPage, setEditingPage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // True only while re-verifying a key already in sessionStorage, e.g. after a
@@ -35,6 +49,9 @@ export default function Admin() {
   // refresh even though the key was sitting right there, valid, doing nothing
   // until someone clicked "Sign in" again.
   const [checkingSession, setCheckingSession] = useState(() => Boolean(sessionStorage.getItem(KEY_STORAGE)));
+
+  const location = useLocation();
+  const navigate = useNavigate();
 
   /** "Signed in" means a real admin request succeeded — there is no separate
    *  login endpoint, so the cheapest admin GET is the check. */
@@ -57,7 +74,9 @@ export default function Admin() {
     if (!stored) return;
     signIn(stored).finally(() => setCheckingSession(false));
     // Runs once, against whatever was in storage at mount — signIn itself
-    // handles the outcome (setAuthed / setError).
+    // handles the outcome (setAuthed / setError). Deep-linking works for free
+    // here: we never touch the URL, so a bookmarked /admin/pages/{id} is still
+    // wherever this effect resolves signed-in TO, not redirected away from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -65,6 +84,7 @@ export default function Admin() {
     sessionStorage.removeItem(KEY_STORAGE);
     setAuthed(false);
     setAdminKey('');
+    navigate('/admin/pages');
   }
 
   if (checkingSession) {
@@ -110,22 +130,26 @@ export default function Admin() {
     );
   }
 
+  // Which top-level tab is active, derived from the URL rather than tracked
+  // separately — /admin/pages/{id} still highlights "Pages". Flush chrome
+  // (no padding) only while the page editor itself is on screen, so Puck gets
+  // the full viewport the way its own demos look.
+  const activeTab = location.pathname.split('/')[2] ?? 'pages';
+  const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
+
   return (
     <div className="admin-shell">
       <div className="admin-topbar">
         <img src={hilomLogo} alt="" className="brand-logo" />
         <h1>Admin</h1>
         <div className="admin-tabs">
-          {TABS.map((name) => (
+          {TABS.map((t) => (
             <button
-              key={name}
-              className={name === tab ? 'btn btn-primary small' : 'btn btn-ghost small'}
-              onClick={() => {
-                setTab(name);
-                setEditingPage(false);
-              }}
+              key={t.path}
+              className={activeTab === t.path ? 'btn btn-primary small' : 'btn btn-ghost small'}
+              onClick={() => navigate(`/admin/${t.path}`)}
             >
-              {name}
+              {t.label}
             </button>
           ))}
         </div>
@@ -135,19 +159,25 @@ export default function Admin() {
         </button>
       </div>
 
-      {/* The page editor is flush (no padding) so Puck owns the full viewport
-          below the topbar; every other tab keeps a readable, padded measure. */}
-      <div className={tab === 'Pages' && editingPage ? 'admin-content admin-content--flush' : 'admin-content'}>
-        {tab === 'Pages' && <PagesTab adminKey={adminKey} onEditingChange={setEditingPage} />}
-        {tab === 'Media' && (
-          <div className="panel">
-            <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Media library</h2>
-            <MediaGrid adminKey={adminKey} />
-          </div>
-        )}
-        {tab === 'Menus' && <MenusTab adminKey={adminKey} />}
-        {tab === 'Forms' && <FormsTab adminKey={adminKey} />}
-        {tab === 'Commerce' && <CommerceTab adminKey={adminKey} />}
+      <div className={editingPage ? 'admin-content admin-content--flush' : 'admin-content'}>
+        <Routes>
+          <Route index element={<Navigate to="pages" replace />} />
+          <Route path="pages" element={<PagesTab adminKey={adminKey} />} />
+          <Route path="pages/:pageId" element={<PageEditorRoute adminKey={adminKey} />} />
+          <Route
+            path="media"
+            element={
+              <div className="panel">
+                <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Media library</h2>
+                <MediaGrid adminKey={adminKey} />
+              </div>
+            }
+          />
+          <Route path="menus" element={<MenusTab adminKey={adminKey} />} />
+          <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
+          <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
+          <Route path="*" element={<Navigate to="pages" replace />} />
+        </Routes>
       </div>
     </div>
   );

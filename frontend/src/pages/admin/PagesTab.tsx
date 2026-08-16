@@ -1,26 +1,11 @@
 /** Page list — create, open, publish state, delete. */
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { adminCreatePage, adminDeletePage, adminListPages, type AdminPage } from '../../lib/cms';
-import PageEditor from './PageEditor';
 
-export default function PagesTab({
-  adminKey,
-  onEditingChange,
-}: {
-  adminKey: string;
-  /** Tells the admin shell to drop its padding while the editor is open, so
-   *  Puck's canvas gets the full viewport rather than sitting in a box. */
-  onEditingChange?: (editing: boolean) => void;
-}) {
+export default function PagesTab({ adminKey }: { adminKey: string }) {
+  const navigate = useNavigate();
   const [pages, setPages] = useState<AdminPage[]>([]);
-  const [editing, setEditing] = useState<string | null>(null);
-
-  useEffect(() => {
-    onEditingChange?.(editing !== null);
-    // Only the editing flag itself should trigger this — onEditingChange is a
-    // fresh function identity on every Admin.tsx render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing]);
   const [title, setTitle] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -45,8 +30,10 @@ export default function PagesTab({
     try {
       const page = await adminCreatePage(adminKey, { title: title.trim() });
       setTitle('');
-      await reload();
-      setEditing(page.id);
+      // The editor lives at its own URL — see PagesTab's route in Admin.tsx —
+      // so opening a freshly created page is just a navigation, not a local
+      // state flip.
+      navigate(`/admin/pages/${page.id}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -62,19 +49,6 @@ export default function PagesTab({
     } catch (e) {
       setError((e as Error).message);
     }
-  }
-
-  if (editing) {
-    return (
-      <PageEditor
-        adminKey={adminKey}
-        pageId={editing}
-        onBack={() => {
-          setEditing(null);
-          void reload();
-        }}
-      />
-    );
   }
 
   return (
@@ -131,7 +105,7 @@ export default function PagesTab({
                     </td>
                     <td className="small">{new Date(page.updated_at).toLocaleString()}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-primary small" onClick={() => setEditing(page.id)}>
+                      <button className="btn btn-primary small" onClick={() => navigate(`/admin/pages/${page.id}`)}>
                         Edit
                       </button>
                       {!page.is_system && (
