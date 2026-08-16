@@ -68,6 +68,11 @@ export default function PageEditor({
   const [notice, setNotice] = useState<string | null>(null);
   const [revisions, setRevisions] = useState<PageRevision[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  // Bumped every time content is pushed onto the canvas from outside Puck
+  // (initial load, revision restore). It is the whole of the remount key —
+  // see the note on <Puck key=…> below for why nothing derived from the
+  // content itself can be used here.
+  const [canvasVersion, setCanvasVersion] = useState(0);
 
   // Puck is uncontrolled once mounted: it owns edit state and reports changes.
   // Keeping the latest in a ref (rather than state) avoids re-rendering the
@@ -82,6 +87,7 @@ export default function PageEditor({
         const blocks = p.draft_blocks ?? [];
         latest.current = blocks;
         setInitialData(toPuckData(blocks));
+        setCanvasVersion((v) => v + 1);
       })
       .catch((e: Error) => setError(e.message));
     adminListRevisions(adminKey, pageId).then(setRevisions).catch(() => setRevisions([]));
@@ -131,13 +137,14 @@ export default function PageEditor({
     }, 'Unpublished. The built-in page is being served again.');
 
   /** Restoring replaces the canvas, so Puck is remounted with the new content
-   *  by keying it on the loaded data. */
+   *  by bumping canvasVersion — see the remount key below. */
   const restore = (revisionId: string) =>
     run(async () => {
       const restored = await adminRestoreRevision(adminKey, pageId, revisionId);
       const blocks = restored.draft_blocks ?? [];
       latest.current = blocks;
       setInitialData(toPuckData(blocks));
+      setCanvasVersion((v) => v + 1);
       setDirty(false);
       setShowHistory(false);
     }, 'Revision loaded onto the canvas. Publish it to make it live.');
@@ -187,7 +194,15 @@ export default function PageEditor({
           without minHeight: 0 the browser lets this box grow past its share. */}
       <div style={{ flex: 1, minHeight: 0 }}>
         <Puck
-          key={page.id + String(initialData.content?.length) + (page.published_at ?? '')}
+          // Remount ONLY when content is pushed in from outside Puck. This must
+          // not be derived from the content itself: an earlier key included the
+          // block count, so restoring a revision with the same number of blocks
+          // left the canvas showing the old content while `latest` already held
+          // the restored blocks — Publish then shipped content nobody had seen.
+          // It must also not include `published_at`, which would throw away
+          // undo history on every publish for no gain: publishing does not
+          // change what is on the canvas.
+          key={`${page.id}:${canvasVersion}`}
           config={config}
           data={initialData}
           iframe={{ enabled: false }}

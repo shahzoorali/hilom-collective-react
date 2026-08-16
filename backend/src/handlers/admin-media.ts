@@ -178,12 +178,12 @@ async function remove(mediaId: string): Promise<APIGatewayProxyResultV2> {
   if (readError) throw readError;
   if (!asset) return notFound('Image not found');
 
-  // Deleting an image that a live page renders would break that page silently,
-  // so say which pages use it and let the admin decide.
-  const users = await pagesUsingMedia(mediaId);
+  // Deleting an image that a live page or event renders would break it
+  // silently, so say what still uses it and let the admin decide.
+  const users = await contentUsingMedia(mediaId);
   if (users.length) {
     return json(409, {
-      error: `That image is still used by: ${users.join(', ')}. Remove it from those pages first.`,
+      error: `That image is still used by: ${users.join(', ')}. Remove it there first.`,
       pages: users,
     });
   }
@@ -198,15 +198,39 @@ async function remove(mediaId: string): Promise<APIGatewayProxyResultV2> {
   return ok({ deleted: true });
 }
 
-/** Substring match over the stored block JSON — media ids are UUIDs, so a false
- *  positive is not a practical concern, and erring toward "still in use" is the
- *  safe direction for a destructive action. */
-async function pagesUsingMedia(mediaId: string): Promise<string[]> {
+/**
+ * Everything that still references this image, as human-readable labels.
+ *
+ * Pages are matched by substring over the stored block JSON — media ids are
+ * UUIDs, so a false positive is not a practical concern, and erring toward
+ * "still in use" is the safe direction for a destructive action.
+ *
+ * Events are matched on `image_id` instead, because they store the MediaRef
+ * flattened into columns rather than as JSON. Matching an event by URL would
+ * not work: the UUID inside an object key is generated at presign time and is
+ * unrelated to the media row's id.
+ */
+async function contentUsingMedia(mediaId: string): Promise<string[]> {
   const supabase = await getSupabase();
-  const { data, error } = await supabase.from('pages').select('slug, draft_blocks, published_blocks');
-  if (error || !data) return [];
+  const [{ data: pages, error: pagesError }, { data: events, error: eventsError }] =
+    await Promise.all([
+      supabase.from('pages').select('slug, draft_blocks, published_blocks'),
+      supabase.from('events').select('title').eq('image_id', mediaId),
+    ]);
 
-  return data
-    .filter((page) => JSON.stringify([page.draft_blocks, page.published_blocks]).includes(mediaId))
-    .map((page) => page.slug);
+  const usedBy: string[] = [];
+
+  if (!pagesError && pages) {
+    for (const page of pages) {
+      if (JSON.stringify([page.draft_blocks, page.published_blocks]).includes(mediaId)) {
+        usedBy.push(`/${page.slug}`);
+      }
+    }
+  }
+
+  if (!eventsError && events) {
+    for (const event of events) usedBy.push(`event "${event.title}"`);
+  }
+
+  return usedBy;
 }

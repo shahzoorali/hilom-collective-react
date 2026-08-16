@@ -100,7 +100,15 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
   function exportCsv() {
     if (!open || submissions.length === 0) return;
     const columns = open.fields.map((f) => f.name);
-    const escape = (v: unknown) => `"${String(Array.isArray(v) ? v.join('; ') : v ?? '').replace(/"/g, '""')}"`;
+    const escape = (v: unknown) => {
+      const text = String(Array.isArray(v) ? v.join('; ') : v ?? '');
+      // Quoting alone does not stop a spreadsheet treating a leading =, +, -,
+      // @ or control character as a formula. Anyone on the internet can type
+      // into these fields, so a submission could otherwise run =HYPERLINK(...)
+      // the moment an admin opens the export. The apostrophe forces text.
+      const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const csv = [
       ['submitted_at', ...columns].join(','),
       ...submissions.map((s) => [s.created_at, ...columns.map((c) => s.data[c])].map(escape).join(',')),
@@ -312,8 +320,16 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
                             className="btn btn-ghost small"
                             onClick={async () => {
                               if (!window.confirm('Delete this submission?')) return;
-                              await adminDeleteSubmission(adminKey, open.id, s.id);
-                              setSubmissions((prev) => prev.filter((x) => x.id !== s.id));
+                              try {
+                                setError(null);
+                                await adminDeleteSubmission(adminKey, open.id, s.id);
+                                setSubmissions((prev) => prev.filter((x) => x.id !== s.id));
+                              } catch (e) {
+                                // Without this the rejection was swallowed: the
+                                // row stayed put with no message, which reads
+                                // exactly like a delete that worked.
+                                setError(`Delete failed: ${(e as Error).message}`);
+                              }
                             }}
                           >
                             Delete

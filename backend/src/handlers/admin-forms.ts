@@ -62,14 +62,26 @@ async function list(): Promise<APIGatewayProxyResultV2> {
   if (error) throw error;
 
   // Submission counts make the list useful at a glance ("did anyone reply?").
-  const { data: counts } = await supabase.from('form_submissions').select('form_id');
-  const tally = new Map<string, number>();
-  for (const row of counts ?? []) {
-    tally.set(row.form_id as string, (tally.get(row.form_id as string) ?? 0) + 1);
-  }
+  //
+  // Counted in Postgres, one HEAD request per form, rather than by selecting
+  // every submission row and tallying here: PostgREST caps a plain select at
+  // its max-rows limit, so the old tally silently stopped counting past the
+  // first 1000 submissions and reported numbers that were simply wrong. There
+  // are a handful of forms, so the fan-out is small and fully parallel.
+  const forms = data ?? [];
+  const counts = await Promise.all(
+    forms.map(async (form) => {
+      const { count, error: countError } = await supabase
+        .from('form_submissions')
+        .select('id', { count: 'exact', head: true })
+        .eq('form_id', form.id);
+      if (countError) throw countError;
+      return count ?? 0;
+    }),
+  );
 
   return ok({
-    forms: (data ?? []).map((form) => ({ ...form, submission_count: tally.get(form.id) ?? 0 })),
+    forms: forms.map((form, i) => ({ ...form, submission_count: counts[i] })),
   });
 }
 
