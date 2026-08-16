@@ -13,6 +13,8 @@ import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
@@ -191,6 +193,51 @@ export class HilomBackendStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
+    // CMS media. Separate from courseImagesBucket above, which is a public
+    // read-only mirror of Moodle images written only by syncCourses; this one
+    // takes browser uploads and is private, read through CloudFront only.
+    //
+    // Browser uploads go straight to S3 with a presigned PUT, so the bucket
+    // needs its own CORS block — that is a different setting from the HTTP
+    // API's corsPreflight further down, and editing the wrong one is the
+    // obvious way to spend an afternoon on a broken upload.
+    const mediaBucket = new s3.Bucket(this, 'MediaBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      // The site's images are content, not derived artifacts: tearing down the
+      // stack must not delete them.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: [props.corsOrigin ?? '*'],
+          allowedHeaders: ['*'],
+          maxAge: 3000,
+        },
+      ],
+      lifecycleRules: [
+        {
+          // An upload whose presigned PUT succeeded but whose confirm call never
+          // ran leaves an orphan object; this stops paying to store it forever.
+          id: 'abort-incomplete-uploads',
+          abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+        },
+      ],
+    });
+
+    const mediaDistribution = new cloudfront.Distribution(this, 'MediaDistribution', {
+      comment: 'Hilom CMS media',
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(mediaBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        // nosniff matters here: uploads are user-supplied files served from a
+        // domain we control.
+        responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
+      },
+    });
+
     const productsList = makeFn('ProductsListFn', 'handlers/products.ts', 'list');
     const productsDetail = makeFn('ProductsDetailFn', 'handlers/products.ts', 'detail');
     const coursesList = makeFn('CoursesListFn', 'handlers/courses.ts', 'list');
@@ -223,6 +270,17 @@ export class HilomBackendStack extends cdk.Stack {
       'handler',
     );
     const communitySubmit = makeFn('CommunitySubmitFn', 'handlers/community.ts', 'submit');
+
+    // CMS. Unlike the commerce endpoints above, each of these files exports a
+    // single `handler` that dispatches on the request path — see the note in
+    // backend/src/handlers/pages.ts.
+    const pagesPublic = makeFn('PagesPublicFn', 'handlers/pages.ts', 'handler');
+    const menusPublic = makeFn('MenusPublicFn', 'handlers/menus.ts', 'handler');
+    const formsPublic = makeFn('FormsPublicFn', 'handlers/forms.ts', 'handler');
+    const adminPages = makeFn('AdminPagesFn', 'handlers/admin-pages.ts', 'handler');
+    const adminMenus = makeFn('AdminMenusFn', 'handlers/admin-menus.ts', 'handler');
+    const adminMedia = makeFn('AdminMediaFn', 'handlers/admin-media.ts', 'handler');
+    const adminForms = makeFn('AdminFormsFn', 'handlers/admin-forms.ts', 'handler');
 
     // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
     // hilomcollective.com is already a verified, DKIM-signed domain identity
@@ -270,6 +328,25 @@ export class HilomBackendStack extends cdk.Stack {
     adminKeySecret.grantRead(adminProductsList);
     adminKeySecret.grantRead(adminProductsUpdate);
 
+    // CMS grants.
+    for (const fn of [pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms]) {
+      supabaseSecret.grantRead(fn);
+    }
+    for (const fn of [adminPages, adminMenus, adminMedia, adminForms]) {
+      adminKeySecret.grantRead(fn);
+    }
+    // The public form endpoint salts its IP hashes with the admin key, which is
+    // the one high-entropy secret this function already has a reason to reach.
+    adminKeySecret.grantRead(formsPublic);
+
+    // Presigning can only sign what the signing role is itself allowed to do,
+    // so these grants are what make the upload URL work — and what bound it.
+    mediaBucket.grantPut(adminMedia);
+    mediaBucket.grantRead(adminMedia); // HeadObject on confirm
+    mediaBucket.grantDelete(adminMedia);
+    adminMedia.addEnvironment('MEDIA_BUCKET', mediaBucket.bucketName);
+    adminMedia.addEnvironment('MEDIA_CDN_BASE', `https://${mediaDistribution.distributionDomainName}`);
+
     // Every path that can fulfill an order needs the full fulfillment
     // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
     // identity).
@@ -304,10 +381,15 @@ export class HilomBackendStack extends cdk.Stack {
         // PATCH is needed by /admin/products/{id}. Without it the browser
         // preflight succeeds but omits PATCH from allow-methods, and the real
         // request fails as an opaque "Failed to fetch" with no server-side log.
+        // PUT and DELETE were added for the CMS: draft/menu/form saves are PUT,
+        // and page/media/submission removal is DELETE. Same failure mode as
+        // PATCH if they are missing.
         allowMethods: [
           apigw.CorsHttpMethod.GET,
           apigw.CorsHttpMethod.POST,
           apigw.CorsHttpMethod.PATCH,
+          apigw.CorsHttpMethod.PUT,
+          apigw.CorsHttpMethod.DELETE,
           apigw.CorsHttpMethod.OPTIONS,
         ],
         allowHeaders: ['content-type', 'x-admin-key', 'authorization'],
@@ -347,6 +429,59 @@ export class HilomBackendStack extends cdk.Stack {
     route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');
     route('/community/submit', apigw.HttpMethod.POST, communitySubmit, 'CommunitySubmitInt');
 
+    // -----------------------------------------------------------------
+    // CMS routes. One integration per function, reused across that
+    // function's routes — `route` above creates a new integration per call,
+    // which is fine for one route each but needless when one Lambda backs a
+    // dozen.
+    // -----------------------------------------------------------------
+    const cmsRoutes = (
+      fn: nodejs.NodejsFunction,
+      id: string,
+      entries: [string, apigw.HttpMethod[]][],
+    ): void => {
+      const integration = new integrations.HttpLambdaIntegration(id, fn);
+      for (const [routePath, methods] of entries) {
+        httpApi.addRoutes({ path: routePath, methods, integration });
+      }
+    };
+
+    const { GET, POST, PUT, PATCH, DELETE } = apigw.HttpMethod;
+
+    cmsRoutes(pagesPublic, 'PagesPublicInt', [
+      ['/pages', [GET]],
+      ['/pages/{slug}', [GET]],
+    ]);
+    cmsRoutes(menusPublic, 'MenusPublicInt', [['/menus', [GET]]]);
+    cmsRoutes(formsPublic, 'FormsPublicInt', [
+      ['/forms/{slug}', [GET]],
+      ['/forms/{slug}/submissions', [POST]],
+    ]);
+    cmsRoutes(adminPages, 'AdminPagesInt', [
+      ['/admin/pages', [GET, POST]],
+      ['/admin/pages/{pageId}', [GET, PATCH, DELETE]],
+      ['/admin/pages/{pageId}/draft', [PUT]],
+      ['/admin/pages/{pageId}/publish', [POST]],
+      ['/admin/pages/{pageId}/unpublish', [POST]],
+      ['/admin/pages/{pageId}/revisions', [GET]],
+      ['/admin/pages/{pageId}/revisions/{revisionId}/restore', [POST]],
+    ]);
+    cmsRoutes(adminMenus, 'AdminMenusInt', [
+      ['/admin/menus', [GET]],
+      ['/admin/menus/{key}', [PUT]],
+    ]);
+    cmsRoutes(adminMedia, 'AdminMediaInt', [
+      ['/admin/media', [GET, POST]],
+      ['/admin/media/upload-url', [POST]],
+      ['/admin/media/{mediaId}', [PATCH, DELETE]],
+    ]);
+    cmsRoutes(adminForms, 'AdminFormsInt', [
+      ['/admin/forms', [GET, POST]],
+      ['/admin/forms/{formId}', [GET, PUT, DELETE]],
+      ['/admin/forms/{formId}/submissions', [GET]],
+      ['/admin/forms/{formId}/submissions/{submissionId}', [DELETE]],
+    ]);
+
     // ---------------------------------------------------------------------
     // Outputs
     // ---------------------------------------------------------------------
@@ -366,6 +501,12 @@ export class HilomBackendStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'AdminApiKeySecretArn', {
       value: adminKeySecret.secretArn,
       description: 'Read the generated admin key from here; it is never printed',
+    });
+
+    new cdk.CfnOutput(this, 'MediaBucketName', { value: mediaBucket.bucketName });
+    new cdk.CfnOutput(this, 'MediaCdnDomain', {
+      value: `https://${mediaDistribution.distributionDomainName}`,
+      description: 'Base URL stored on every media_assets row',
     });
 
     new cdk.CfnOutput(this, 'EnrollmentRetryQueueUrl', { value: enrollmentRetryQueue.queueUrl });
