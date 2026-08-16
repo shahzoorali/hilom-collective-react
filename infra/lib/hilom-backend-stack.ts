@@ -83,6 +83,8 @@ export class HilomBackendStack extends cdk.Stack {
 
     // The admin key has no external source of truth, so CDK generates it. It is
     // never rendered into the template — only the generated secret's ARN is.
+    const buildHookSecret = secretsmanager.Secret.fromSecretNameV2(this, 'BuildHookSecret', 'hilom/amplify-build-hook');
+
     const adminKeySecret = new secretsmanager.Secret(this, 'AdminApiKey', {
       secretName: 'hilom/admin-api-key',
       description: 'Shared key for /admin/* endpoints until Cognito admin groups land in Phase 7',
@@ -283,6 +285,8 @@ export class HilomBackendStack extends cdk.Stack {
     const adminForms = makeFn('AdminFormsFn', 'handlers/admin-forms.ts', 'handler');
     const eventsPublic = makeFn('EventsPublicFn', 'handlers/events.ts', 'handler');
     const adminEvents = makeFn('AdminEventsFn', 'handlers/admin-events.ts', 'handler');
+    const postsPublic = makeFn('PostsPublicFn', 'handlers/posts.ts', 'handler');
+    const adminPosts = makeFn('AdminPostsFn', 'handlers/admin-posts.ts', 'handler');
 
     // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
     // hilomcollective.com is already a verified, DKIM-signed domain identity
@@ -333,13 +337,16 @@ export class HilomBackendStack extends cdk.Stack {
     // CMS grants.
     for (const fn of [
       pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms,
-      eventsPublic, adminEvents,
+      eventsPublic, adminEvents, postsPublic, adminPosts,
     ]) {
       supabaseSecret.grantRead(fn);
     }
-    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents]) {
+    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
       adminKeySecret.grantRead(fn);
     }
+    // The admin-posts handler triggers Amplify rebuilds on publish/unpublish.
+    buildHookSecret.grantRead(adminPosts);
+    adminPosts.addEnvironment('BUILD_HOOK_SECRET_ID', buildHookSecret.secretName);
     // The public form endpoint salts its IP hashes with the admin key, which is
     // the one high-entropy secret this function already has a reason to reach.
     adminKeySecret.grantRead(formsPublic);
@@ -490,6 +497,22 @@ export class HilomBackendStack extends cdk.Stack {
     cmsRoutes(adminEvents, 'AdminEventsInt', [
       ['/admin/events', [GET, POST]],
       ['/admin/events/{eventId}', [GET, PUT, DELETE]],
+    ]);
+    cmsRoutes(postsPublic, 'PostsPublicInt', [
+      ['/posts', [GET]],
+      ['/posts/{slug}', [GET]],
+      ['/categories', [GET]],
+    ]);
+    cmsRoutes(adminPosts, 'AdminPostsInt', [
+      ['/admin/posts', [GET, POST]],
+      ['/admin/posts/{postId}', [GET, PATCH, DELETE]],
+      ['/admin/posts/{postId}/draft', [PUT]],
+      ['/admin/posts/{postId}/publish', [POST]],
+      ['/admin/posts/{postId}/unpublish', [POST]],
+      ['/admin/posts/{postId}/revisions', [GET]],
+      ['/admin/posts/{postId}/revisions/{revisionId}/restore', [POST]],
+      ['/admin/categories', [GET, POST]],
+      ['/admin/categories/{categoryId}', [PATCH, DELETE]],
     ]);
 
     // ---------------------------------------------------------------------

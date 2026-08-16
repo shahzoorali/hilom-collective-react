@@ -8,6 +8,8 @@ import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
 import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
+import PostsTab from './admin/PostsTab';
+import PostEditor from './admin/PostEditor';
 import { MediaGrid } from './admin/MediaLibrary';
 
 /**
@@ -26,6 +28,7 @@ const KEY_STORAGE = 'hilom.adminKey';
  *  the URL reflect which tab (and, for Pages, which page) is open. */
 const TABS = [
   { label: 'Pages', path: 'pages' },
+  { label: 'Posts', path: 'posts' },
   { label: 'Events', path: 'events' },
   { label: 'Media', path: 'media' },
   { label: 'Menus', path: 'menus' },
@@ -38,6 +41,13 @@ function PageEditorRoute({ adminKey }: { adminKey: string }) {
   const navigate = useNavigate();
   if (!pageId) return <Navigate to="/admin/pages" replace />;
   return <PageEditor adminKey={adminKey} pageId={pageId} onBack={() => navigate('/admin/pages')} />;
+}
+
+function PostEditorRoute({ adminKey }: { adminKey: string }) {
+  const { postId } = useParams<{ postId: string }>();
+  const navigate = useNavigate();
+  if (!postId) return <Navigate to="/admin/posts" replace />;
+  return <PostEditor adminKey={adminKey} postId={postId} onBack={() => navigate('/admin/posts')} />;
 }
 
 export default function Admin() {
@@ -138,6 +148,8 @@ export default function Admin() {
   // the full viewport the way its own demos look.
   const activeTab = location.pathname.split('/')[2] ?? 'pages';
   const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
+  const editingPost = /^\/admin\/posts\/[^/]+/.test(location.pathname);
+  const flushChrome = editingPage || editingPost;
 
   return (
     <div className="admin-shell">
@@ -161,11 +173,13 @@ export default function Admin() {
         </button>
       </div>
 
-      <div className={editingPage ? 'admin-content admin-content--flush' : 'admin-content'}>
+      <div className={flushChrome ? 'admin-content admin-content--flush' : 'admin-content'}>
         <Routes>
           <Route index element={<Navigate to="pages" replace />} />
           <Route path="pages" element={<PagesTab adminKey={adminKey} />} />
           <Route path="pages/:pageId" element={<PageEditorRoute adminKey={adminKey} />} />
+          <Route path="posts" element={<PostsTab adminKey={adminKey} />} />
+          <Route path="posts/:postId" element={<PostEditorRoute adminKey={adminKey} />} />
           <Route path="events" element={<EventsTab adminKey={adminKey} />} />
           <Route
             path="media"

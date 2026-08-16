@@ -9,6 +9,8 @@ import Checkout from './pages/Checkout';
 import Processing from './pages/Processing';
 import AuthCallback from './pages/AuthCallback';
 import CmsPage from './pages/CmsPage';
+import Blog from './pages/Blog';
+import BlogPost from './pages/BlogPost';
 
 /**
  * The admin is lazy-loaded because it pulls in Puck, which is far larger than
@@ -65,6 +67,9 @@ export default function App() {
                 <Route path="/checkout/processing" element={<Processing />} />
                 <Route path="/checkout/:slug" element={<Checkout />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
+                <Route path="/blog" element={<Blog />} />
+                <Route path="/blog/category/:categorySlug" element={<Blog />} />
+                <Route path="/blog/:slug" element={<BlogPost />} />
                 <Route path="/:slug" element={<CmsPage />} />
                 <Route path="*" element={<CmsPage />} />
               </Routes>
