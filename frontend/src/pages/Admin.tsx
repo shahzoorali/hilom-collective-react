@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams, Link } from 'react-router-dom';
 import { adminListPages } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
@@ -12,28 +12,16 @@ import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
 import { MediaGrid } from './admin/MediaLibrary';
 
-/**
- * Admin shell: its own topbar and tabs, deliberately not the public site's
- * <Layout> — see the note in App.tsx on why /admin/* is routed outside it.
- *
- * Auth is the shared admin key, entered here and kept in sessionStorage only —
- * it is never written to localStorage or a cookie, so it dies with the tab.
- * This is a deliberate stopgap: the plan moves /admin/* behind a Cognito admin
- * group, at which point this key input goes away entirely.
- */
-
 const KEY_STORAGE = 'hilom.adminKey';
 
-/** path segment under /admin, not just a display label — this is what makes
- *  the URL reflect which tab (and, for Pages, which page) is open. */
 const TABS = [
-  { label: 'Pages', path: 'pages' },
-  { label: 'Posts', path: 'posts' },
-  { label: 'Events', path: 'events' },
-  { label: 'Media', path: 'media' },
-  { label: 'Menus', path: 'menus' },
-  { label: 'Forms', path: 'forms' },
-  { label: 'Commerce', path: 'commerce' },
+  { label: 'Pages', path: 'pages', icon: '📄' },
+  { label: 'Posts', path: 'posts', icon: '✍️' },
+  { label: 'Events', path: 'events', icon: '📅' },
+  { label: 'Media', path: 'media', icon: '🖼️' },
+  { label: 'Menus', path: 'menus', icon: '🧭' },
+  { label: 'Forms', path: 'forms', icon: '📋' },
+  { label: 'Commerce', path: 'commerce', icon: '💳' },
 ] as const;
 
 function PageEditorRoute({ adminKey }: { adminKey: string }) {
@@ -52,21 +40,15 @@ function PostEditorRoute({ adminKey }: { adminKey: string }) {
 
 export default function Admin() {
   const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem(KEY_STORAGE) ?? '');
+  const [showPassword, setShowPassword] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // True only while re-verifying a key already in sessionStorage, e.g. after a
-  // hard refresh. `authed` itself always starts false — component state does
-  // not survive a reload — so without this the sign-in form flashed on every
-  // refresh even though the key was sitting right there, valid, doing nothing
-  // until someone clicked "Sign in" again.
   const [checkingSession, setCheckingSession] = useState(() => Boolean(sessionStorage.getItem(KEY_STORAGE)));
 
   const location = useLocation();
   const navigate = useNavigate();
 
-  /** "Signed in" means a real admin request succeeded — there is no separate
-   *  login endpoint, so the cheapest admin GET is the check. */
   async function signIn(key: string) {
     setBusy(true);
     setError(null);
@@ -85,10 +67,6 @@ export default function Admin() {
     const stored = sessionStorage.getItem(KEY_STORAGE);
     if (!stored) return;
     signIn(stored).finally(() => setCheckingSession(false));
-    // Runs once, against whatever was in storage at mount — signIn itself
-    // handles the outcome (setAuthed / setError). Deep-linking works for free
-    // here: we never touch the URL, so a bookmarked /admin/pages/{id} is still
-    // wherever this effect resolves signed-in TO, not redirected away from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -101,51 +79,78 @@ export default function Admin() {
 
   if (checkingSession) {
     return (
-      <div className="admin-shell">
-        <section className="section">
-          <div className="container" style={{ maxWidth: 420 }}>
-            <p className="muted">Signing in…</p>
-          </div>
-        </section>
+      <div className="admin-auth-page">
+        <div style={{ textAlign: 'center' }}>
+          <img src={hilomLogo} alt="Hilom Collective" className="admin-auth-logo" />
+          <p className="muted">Verifying admin session…</p>
+        </div>
       </div>
     );
   }
 
   if (!authed) {
     return (
-      <div className="admin-shell">
-        <section className="section">
-          <div className="container" style={{ maxWidth: 420 }}>
-            <h1>Admin</h1>
-            <form
-              className="panel"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void signIn(adminKey);
-              }}
-            >
-              {error && <div className="alert alert-error">{error}</div>}
-              <div className="field">
-                <label htmlFor="key">Admin key</label>
-                <input
-                  id="key" type="password" value={adminKey} autoComplete="off"
-                  onChange={(e) => setAdminKey(e.target.value)}
-                />
-              </div>
-              <button className="btn btn-primary btn-block" disabled={busy || !adminKey}>
-                {busy ? 'Checking…' : 'Sign in'}
-              </button>
-            </form>
+      <div className="admin-auth-page">
+        <div className="admin-auth-card">
+          <div className="admin-auth-header">
+            <img src={hilomLogo} alt="Hilom Collective" className="admin-auth-logo" />
+            <h1 className="admin-auth-title">Admin Portal</h1>
+            <p className="admin-auth-subtitle">Sign in to manage content, events, and commerce</p>
           </div>
-        </section>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void signIn(adminKey);
+            }}
+          >
+            {error && <div className="alert alert-error" style={{ marginBottom: '1.25rem' }}>{error}</div>}
+
+            <div className="field" style={{ marginBottom: '1.25rem' }}>
+              <label htmlFor="key" style={{ fontWeight: 600 }}>Admin Access Key</label>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input
+                  id="key"
+                  type={showPassword ? 'text' : 'password'}
+                  value={adminKey}
+                  autoComplete="current-password"
+                  placeholder="Enter secret key…"
+                  onChange={(e) => setAdminKey(e.target.value)}
+                  style={{ paddingRight: '2.5rem' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  style={{
+                    position: 'absolute',
+                    right: '0.75rem',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--muted)',
+                    padding: 0,
+                  }}
+                  title={showPassword ? 'Hide key' : 'Show key'}
+                >
+                  {showPassword ? '👁️' : '🔒'}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="btn btn-primary btn-block"
+              disabled={busy || !adminKey.trim()}
+              style={{ padding: '0.75rem 1rem', fontSize: '0.95rem' }}
+            >
+              {busy ? 'Verifying access…' : 'Sign in to Dashboard'}
+            </button>
+          </form>
+        </div>
       </div>
     );
   }
 
-  // Which top-level tab is active, derived from the URL rather than tracked
-  // separately — /admin/pages/{id} still highlights "Pages". Flush chrome
-  // (no padding) only while the page editor itself is on screen, so Puck gets
-  // the full viewport the way its own demos look.
   const activeTab = location.pathname.split('/')[2] ?? 'pages';
   const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
   const editingPost = /^\/admin\/posts\/[^/]+/.test(location.pathname);
@@ -153,27 +158,57 @@ export default function Admin() {
 
   return (
     <div className="admin-shell">
-      <div className="admin-topbar">
-        <img src={hilomLogo} alt="" className="brand-logo" />
-        <h1>Admin</h1>
-        <div className="admin-tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.path}
-              className={activeTab === t.path ? 'btn btn-primary small' : 'btn btn-ghost small'}
-              onClick={() => navigate(`/admin/${t.path}`)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <div className="spacer" />
-        <button className="btn btn-ghost small" onClick={signOut}>
-          Sign out
-        </button>
-      </div>
+      {/* Elevated Admin Topbar */}
+      <header className="admin-topbar">
+        <Link to="/admin/pages" className="admin-topbar-brand">
+          <img src={hilomLogo} alt="Hilom" className="brand-logo" />
+          <div className="admin-brand-text">
+            <span className="admin-brand-title">Hilom CMS</span>
+            <span className="admin-brand-badge">Production Live</span>
+          </div>
+        </Link>
 
-      <div className={flushChrome ? 'admin-content admin-content--flush' : 'admin-content'}>
+        <nav className="admin-tabs" aria-label="Admin Navigation">
+          {TABS.map((t) => {
+            const isActive = activeTab === t.path;
+            return (
+              <button
+                key={t.path}
+                className={`admin-tab-btn ${isActive ? 'admin-tab-btn--active' : ''}`}
+                onClick={() => navigate(`/admin/${t.path}`)}
+              >
+                <span>{t.icon}</span>
+                <span>{t.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="admin-topbar-actions">
+          <a
+            href="/"
+            target="_blank"
+            rel="noreferrer"
+            className="admin-view-site-link"
+            title="Open website in new tab"
+          >
+            <span>🌐</span>
+            <span>View Site ↗</span>
+          </a>
+          <button
+            className="btn btn-ghost small"
+            onClick={signOut}
+            title="Sign out of admin"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+          >
+            <span>🚪</span>
+            <span>Sign out</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Admin Body */}
+      <main className={flushChrome ? 'admin-content admin-content--flush' : 'admin-content'}>
         <Routes>
           <Route index element={<Navigate to="pages" replace />} />
           <Route path="pages" element={<PagesTab adminKey={adminKey} />} />
@@ -185,7 +220,10 @@ export default function Admin() {
             path="media"
             element={
               <div className="panel">
-                <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Media library</h2>
+                <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Media Library</h2>
+                <p className="small muted" style={{ marginTop: '-0.25rem', marginBottom: '1.25rem' }}>
+                  Upload and manage imagery for pages, blog posts, and event listings. Files are stored securely on AWS S3 and served via CloudFront CDN.
+                </p>
                 <MediaGrid adminKey={adminKey} />
               </div>
             }
@@ -195,7 +233,7 @@ export default function Admin() {
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>
-      </div>
+      </main>
     </div>
   );
 }

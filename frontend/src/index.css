@@ -242,24 +242,175 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
    100%-height box to fill (Puck sizes itself to its parent), and a magic-number
    `calc(100vh - <topbar px>)` on the editor would silently drift out of sync
    the moment the topbar's height changes (e.g. it wraps onto two lines). */
-.admin-shell { height: 100vh; display: flex; flex-direction: column; background: #f4f5f2; }
+.admin-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f6f7f4;
+  color: var(--ink);
+  font-family: inherit;
+}
 
+/* Admin Auth Screen */
+.admin-auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 50% 20%, #eef1ec 0%, #e1e7de 100%);
+}
+.admin-auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(43, 51, 44, 0.1);
+  padding: 2.25rem 2rem;
+  animation: fadeIn 0.3s ease-out;
+}
+.admin-auth-header {
+  text-align: center;
+  margin-bottom: 1.75rem;
+}
+.admin-auth-logo {
+  height: 48px;
+  margin: 0 auto 1rem;
+  display: block;
+}
+.admin-auth-title {
+  font-size: 1.4rem;
+  font-family: var(--serif);
+  color: var(--forest);
+  margin: 0 0 0.35rem;
+}
+.admin-auth-subtitle {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Admin Topbar */
 .admin-topbar {
   flex: none;
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: 0.6rem 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.65rem 1.5rem;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  z-index: 10;
 }
-.admin-topbar .brand-logo { height: 32px; }
-.admin-topbar h1 { font-size: 1.05rem; margin: 0; color: var(--ink); }
-.admin-tabs { display: flex; gap: 0.35rem; flex-wrap: wrap; }
-.admin-topbar .spacer { margin-left: auto; }
+.admin-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+}
+.admin-topbar .brand-logo {
+  height: 30px;
+  width: auto;
+}
+.admin-brand-text {
+  display: flex;
+  flex-direction: column;
+}
+.admin-brand-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--forest);
+  line-height: 1.2;
+}
+.admin-brand-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--forest-light);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.admin-brand-badge::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2f5e3e;
+}
 
-/* Boxed tabs (list/table views) keep readable measure, page-like padding, and
-   scroll their own content rather than the whole shell. */
-.admin-content { flex: 1; min-height: 0; overflow-y: auto; padding: 1.5rem; }
-.admin-content > * { max-width: 1400px; margin: 0 auto; }
+/* Admin Navigation Tabs */
+.admin-tabs {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  overflow-x: auto;
+  padding: 0.1rem;
+}
+.admin-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ink-light);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.admin-tab-btn:hover {
+  background: rgba(47, 94, 62, 0.06);
+  color: var(--forest);
+}
+.admin-tab-btn--active {
+  background: var(--forest) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(47, 94, 62, 0.25);
+}
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+.admin-view-site-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--forest);
+  text-decoration: none;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  transition: background 0.15s;
+}
+.admin-view-site-link:hover {
+  background: #e9ece4;
+}
+
+/* Admin Content Area */
+.admin-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.75rem 2rem;
+}
+.admin-content > * {
+  max-width: 1400px;
+  margin: 0 auto;
+}
 
 /* The page editor is flush: full width, no padding, so Puck's own canvas and
    header own the whole space below the admin topbar — the point of this
