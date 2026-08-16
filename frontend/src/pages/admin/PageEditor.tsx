@@ -44,6 +44,7 @@ function usePagesAdapter(adminKey: string): EditorAdapter<AdminPage> {
       restoreRevision: (pageId, revisionId) => adminRestoreRevision(adminKey, pageId, revisionId),
       headerTitle: (page) => `${page.title} — /${page.slug === 'home' ? '' : page.slug}`,
       publishNotice: 'Published — the page is live.',
+      viewUrl: (page) => (page.slug === 'home' ? '/' : `/${page.slug}`),
     }),
     [adminKey],
   );
