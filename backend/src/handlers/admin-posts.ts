@@ -88,8 +88,16 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (method === 'DELETE') return deletePost(postId);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
-    if (err instanceof BlockValidationError || err instanceof SlugError) {
-      return badRequest(err.message);
+    if (
+      err instanceof BlockValidationError ||
+      err instanceof SlugError ||
+      (err instanceof Error &&
+        (err.name === 'BlockValidationError' ||
+          err.name === 'SlugError' ||
+          err.message.includes('is required') ||
+          err.message.includes('must be')))
+    ) {
+      return badRequest((err as Error).message);
     }
     return serverError('adminPosts', err);
   }

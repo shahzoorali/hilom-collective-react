@@ -264,59 +264,101 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
 /* The page editor is flush: full width, no padding, so Puck's own canvas and
    header own the whole space below the admin topbar — the point of this
    change is that the editor stops looking like a widget embedded in a page. */
-.admin-content--flush { padding: 0; overflow: hidden; height: 100%; }
-.admin-content--flush > * { max-width: none; margin: 0; height: 100%; }
-
-/* ---------------------------------------------------------------------------
-   Puck Editor Canvas & Layout Scrolling Fixes (for iframe={{ enabled: false }})
-   --------------------------------------------------------------------------- */
-[class*="_PuckLayout_"] {
-  height: 100% !important;
-  max-height: 100% !important;
-}
-
-[class*="_PuckLayout-inner_"] {
-  height: 100% !important;
-  max-height: 100% !important;
+.admin-content--flush {
+  padding: 0 !important;
   overflow: hidden !important;
-}
-
-[class*="_PuckCanvas_"] {
   height: 100% !important;
-  max-height: 100% !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.admin-content--flush > * {
+  max-width: none !important;
+  margin: 0 !important;
+  height: 100% !important;
   min-height: 0 !important;
   flex: 1 1 auto !important;
 }
 
+/* ---------------------------------------------------------------------------
+   Puck Editor Canvas & Layout Scrolling Fixes (for iframe={{ enabled: false }})
+   --------------------------------------------------------------------------- */
+/* Root Puck container strictly bounded to remaining screen height */
+div[class*="_PuckLayout_"],
+[class*="_PuckLayout_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Force CSS Grid second row to minmax(0, 1fr) so editor area stays strictly bounded */
+div[class*="_PuckLayout-inner_"],
+[class*="_PuckLayout-inner_"],
+[class*="_PuckLayout-inner_"][class*="_PuckLayout-inner_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  grid-template-rows: min-content minmax(0, 1fr) !important;
+  overflow: hidden !important;
+}
+
+@media (min-width: 638px) {
+  div[class*="_PuckLayout-inner_"],
+  [class*="_PuckLayout-inner_"],
+  [class*="_PuckLayout-inner_"][class*="_PuckLayout-inner_"] {
+    grid-template-rows: min-content minmax(0, 1fr) !important;
+  }
+}
+
+/* Bounded scrollable canvas column with explicit overflow-y: auto */
+div[class*="_PuckCanvas_"],
+[class*="_PuckCanvas_"],
+[class*="_PuckCanvas_"][class*="_PuckCanvas_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+/* The inner wrapper and root inside the canvas must expand freely with content */
+div[class*="_PuckCanvas-inner_"],
 [class*="_PuckCanvas-inner_"] {
   min-height: 100% !important;
   height: auto !important;
+  display: block !important;
   position: relative !important;
-  display: flex !important;
-  justify-content: center !important;
+  width: 100% !important;
 }
 
+div[class*="_PuckCanvas-root_"],
 [class*="_PuckCanvas-root_"] {
   position: relative !important;
   top: auto !important;
   bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  width: 100% !important;
   min-height: 100% !important;
   height: auto !important;
-  width: 100% !important;
-  max-width: 100% !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 #frame-root {
   height: auto !important;
   min-height: 100% !important;
+  overflow: visible !important;
 }
 
-/* Extra bottom breathing room in the dropzone so editors can easily see and drop new blocks at the end */
+/* Generous bottom padding for dropzone so editors can easily add more blocks */
 [data-puck-dropzone] {
-  min-height: 250px !important;
-  padding-bottom: 140px !important;
+  min-height: 350px !important;
+  padding-bottom: 220px !important;
 }
 
 /* ---------------------------------------------------------------------------
