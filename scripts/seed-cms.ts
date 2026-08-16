@@ -288,28 +288,70 @@ async function buildServices() {
 async function buildEvents() {
   return [
     block('hero', { heading: 'Upcoming Events' }),
-    block('imageCardGrid', {
-      variant: 'event',
-      items: [
-        {
-          image: await getMedia('pages/event-1.png', ''),
-          title: 'The Overloaded Mom Reset',
-          subtitle: '(and How Partners Can Support) with St. Raphael Health Hub',
-          desc: 'For moms who are always caring for everyone else, and rarely for themselves. This online workshop offers a space to pause, understand what your body and mind are going through, and learn practical, doable ways to feel supported, with partners invited to join in too.',
-          meta: 'July 22, 2026 | 3:00–5:00 PM | Via Zoom',
-        },
-        {
-          image: await getMedia('pages/event-2.jpeg', ''),
-          title: 'Sacred Authority: Becoming the Author of Your Life',
-          subtitle: 'A virtual session by Maude Labs, co-presented with The Authenticity Institute',
-          desc: 'A 90-minute virtual session for founders, leaders, and purpose-driven individuals ready to reclaim their story and lead from authenticity, not expectation. Led by Dr. Katrina Gisbert-Tay.',
-          meta: 'July 22, 2026 | 8:00–9:30 PM | Virtual',
-          note: 'Use code: HILOM for 10% off',
-        },
-      ],
-    }),
+    // Individual events are no longer authored as block items — they are
+    // managed rows (Admin → Events) that this block renders live, sorted into
+    // Upcoming and Past. See seedEvents() below for the two events that used
+    // to be hand-authored here.
+    block('eventGrid', {}),
     joinTheMovement('btn-accent', '/community', 'Join Our Community', 'cream'),
   ];
+}
+
+/**
+ * The two events that used to be authored directly into the Events page's
+ * blocks become real rows in the `events` table instead — this is what makes
+ * the new eventGrid block have something to show. Both are already in the
+ * past relative to today, so seeding them is also the easiest way to prove
+ * the Past Events split actually works on real data.
+ *
+ * Published immediately (unlike page blocks, which stay draft until
+ * reviewed): these rows are inert until the Events page's own draft — which
+ * now points at the eventGrid block — is itself published.
+ */
+async function seedEvents(): Promise<void> {
+  const image1 = await getMedia('pages/event-1.png', '');
+  const image2 = await getMedia('pages/event-2.jpeg', '');
+
+  const events = [
+    {
+      title: 'The Overloaded Mom Reset',
+      subtitle: '(and How Partners Can Support) with St. Raphael Health Hub',
+      description:
+        '<p>For moms who are always caring for everyone else, and rarely for themselves. This online workshop offers a space to pause, understand what your body and mind are going through, and learn practical, doable ways to feel supported, with partners invited to join in too.</p>',
+      image: image1,
+      location: 'Via Zoom',
+      starts_at: '2026-07-22T15:00:00+08:00',
+      ends_at: '2026-07-22T17:00:00+08:00',
+      status: 'published',
+    },
+    {
+      title: 'Sacred Authority: Becoming the Author of Your Life',
+      subtitle: 'A virtual session by Maude Labs, co-presented with The Authenticity Institute',
+      description:
+        '<p>A 90-minute virtual session for founders, leaders, and purpose-driven individuals ready to reclaim their story and lead from authenticity, not expectation. Led by Dr. Katrina Gisbert-Tay.</p>',
+      image: image2,
+      location: 'Virtual',
+      starts_at: '2026-07-22T20:00:00+08:00',
+      ends_at: '2026-07-22T21:30:00+08:00',
+      note: 'Use code: HILOM for 10% off',
+      status: 'published',
+    },
+  ];
+
+  // Idempotent on title, unlike the page draft writes above (which simply
+  // overwrite): events are individual rows, not one blob to replace, so
+  // re-running this script must not create duplicates every time.
+  const { events: existing } = await api<{ events: { title: string }[] }>('/admin/events');
+  const existingTitles = new Set(existing.map((e) => e.title));
+
+  for (const eventInput of events) {
+    if (existingTitles.has(eventInput.title)) {
+      console.log(`  skipped (already exists): ${eventInput.title}`);
+      continue;
+    }
+    await api('/admin/events', { method: 'POST', body: JSON.stringify(eventInput) });
+    console.log(`  event: ${eventInput.title}`);
+  }
 }
 
 function buildCommunity() {
@@ -339,6 +381,9 @@ async function main(): Promise<void> {
     community: buildCommunity,
   };
 
+  console.log('\nevents:');
+  await seedEvents();
+
   for (const [slug, build] of Object.entries(builders)) {
     const page = bySlug.get(slug);
     if (!page) {
@@ -352,8 +397,9 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    '\nDone. Nothing is live yet — open /admin → Pages, compare each preview against the ' +
-      'current page, then press Publish.',
+    '\nDone. The two seeded events are published rows (Admin → Events) but invisible until the ' +
+      'Events page itself is published. Nothing else is live yet either — open /admin → Pages, ' +
+      'compare each preview against the current page, then press Publish.',
   );
 }
 

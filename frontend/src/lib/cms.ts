@@ -44,6 +44,21 @@ export interface CmsForm {
   success_message: string;
 }
 
+export interface CmsEvent {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  description: string | null;
+  image_url: string | null;
+  image_alt: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  link_url: string | null;
+  link_label: string | null;
+  note: string | null;
+}
+
 export const getPage = (slug: string) =>
   apiFetch<{ page: CmsPage }>(`/pages/${encodeURIComponent(slug)}`).then((r) => r.page);
 
@@ -55,6 +70,9 @@ export const getMenus = () =>
 
 export const getForm = (slug: string) =>
   apiFetch<{ form: CmsForm }>(`/forms/${encodeURIComponent(slug)}`).then((r) => r.form);
+
+export const getEvents = () =>
+  apiFetch<{ upcoming: CmsEvent[]; past: CmsEvent[] }>('/events');
 
 export const submitForm = (slug: string, data: Record<string, unknown>) =>
   apiFetch<{ ok: true; message: string }>(`/forms/${encodeURIComponent(slug)}/submissions`, {
@@ -258,3 +276,42 @@ export const adminDeleteSubmission = (adminKey: string, formId: string, submissi
     `/admin/forms/${formId}/submissions/${submissionId}`,
     adminInit(adminKey, 'DELETE'),
   );
+
+export interface AdminEvent extends CmsEvent {
+  image_id: string | null;
+  status: 'draft' | 'published';
+  created_at: string;
+  updated_at: string;
+}
+
+/** The write shape: image travels as one {id,url,alt} object (same MediaRef
+ *  every media field uses), not the three flattened columns the read shape
+ *  returns — the backend's validateEvent expects `image`, not `image_url`. */
+export type AdminEventInput = {
+  title: string;
+  subtitle?: string;
+  description?: string;
+  image?: { id: string; url: string; alt: string };
+  location?: string;
+  starts_at: string;
+  ends_at?: string;
+  link_url?: string;
+  link_label?: string;
+  note?: string;
+  status?: 'draft' | 'published';
+};
+
+export const adminListEvents = (adminKey: string) =>
+  apiFetch<{ events: AdminEvent[] }>('/admin/events', adminInit(adminKey)).then((r) => r.events);
+
+export const adminCreateEvent = (adminKey: string, input: AdminEventInput) =>
+  apiFetch<{ event: AdminEvent }>('/admin/events', adminInit(adminKey, 'POST', input)).then((r) => r.event);
+
+export const adminUpdateEvent = (adminKey: string, eventId: string, input: AdminEventInput) =>
+  apiFetch<{ event: AdminEvent }>(
+    `/admin/events/${eventId}`,
+    adminInit(adminKey, 'PUT', input),
+  ).then((r) => r.event);
+
+export const adminDeleteEvent = (adminKey: string, eventId: string) =>
+  apiFetch<{ deleted: boolean }>(`/admin/events/${eventId}`, adminInit(adminKey, 'DELETE'));

@@ -281,6 +281,8 @@ export class HilomBackendStack extends cdk.Stack {
     const adminMenus = makeFn('AdminMenusFn', 'handlers/admin-menus.ts', 'handler');
     const adminMedia = makeFn('AdminMediaFn', 'handlers/admin-media.ts', 'handler');
     const adminForms = makeFn('AdminFormsFn', 'handlers/admin-forms.ts', 'handler');
+    const eventsPublic = makeFn('EventsPublicFn', 'handlers/events.ts', 'handler');
+    const adminEvents = makeFn('AdminEventsFn', 'handlers/admin-events.ts', 'handler');
 
     // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
     // hilomcollective.com is already a verified, DKIM-signed domain identity
@@ -329,10 +331,13 @@ export class HilomBackendStack extends cdk.Stack {
     adminKeySecret.grantRead(adminProductsUpdate);
 
     // CMS grants.
-    for (const fn of [pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms]) {
+    for (const fn of [
+      pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms,
+      eventsPublic, adminEvents,
+    ]) {
       supabaseSecret.grantRead(fn);
     }
-    for (const fn of [adminPages, adminMenus, adminMedia, adminForms]) {
+    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents]) {
       adminKeySecret.grantRead(fn);
     }
     // The public form endpoint salts its IP hashes with the admin key, which is
@@ -480,6 +485,11 @@ export class HilomBackendStack extends cdk.Stack {
       ['/admin/forms/{formId}', [GET, PUT, DELETE]],
       ['/admin/forms/{formId}/submissions', [GET]],
       ['/admin/forms/{formId}/submissions/{submissionId}', [DELETE]],
+    ]);
+    cmsRoutes(eventsPublic, 'EventsPublicInt', [['/events', [GET]]]);
+    cmsRoutes(adminEvents, 'AdminEventsInt', [
+      ['/admin/events', [GET, POST]],
+      ['/admin/events/{eventId}', [GET, PUT, DELETE]],
     ]);
 
     // ---------------------------------------------------------------------

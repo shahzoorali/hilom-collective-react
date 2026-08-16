@@ -7,6 +7,7 @@ import PagesTab from './admin/PagesTab';
 import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
 import FormsTab from './admin/FormsTab';
+import EventsTab from './admin/EventsTab';
 import { MediaGrid } from './admin/MediaLibrary';
 
 /**
@@ -25,6 +26,7 @@ const KEY_STORAGE = 'hilom.adminKey';
  *  the URL reflect which tab (and, for Pages, which page) is open. */
 const TABS = [
   { label: 'Pages', path: 'pages' },
+  { label: 'Events', path: 'events' },
   { label: 'Media', path: 'media' },
   { label: 'Menus', path: 'menus' },
   { label: 'Forms', path: 'forms' },
@@ -164,6 +166,7 @@ export default function Admin() {
           <Route index element={<Navigate to="pages" replace />} />
           <Route path="pages" element={<PagesTab adminKey={adminKey} />} />
           <Route path="pages/:pageId" element={<PageEditorRoute adminKey={adminKey} />} />
+          <Route path="events" element={<EventsTab adminKey={adminKey} />} />
           <Route
             path="media"
             element={

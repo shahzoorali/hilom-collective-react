@@ -184,6 +184,15 @@ export const BLOCK_CATALOG = {
       background: backgroundField,
     },
   },
+  eventGrid: {
+    label: 'Events list',
+    description:
+      'The live, managed events list (Admin → Events) — upcoming events first, then a Past Events section. Individual events are not edited here.',
+    fields: {
+      heading: { kind: 'text', label: 'Heading' },
+      background: backgroundField,
+    },
+  },
   ctaBanner: {
     label: 'Call to action',
     description: 'Centred closing banner ("There\'s a place for you here").',
