@@ -186,7 +186,9 @@ export default function OrderDetail({
             {order.product_slug && <span className="ord-slug">/{order.product_slug}</span>}
           </Detail>
           <Detail label="Grants courses">
-            {order.moodle_course_ids.length === 0 ? NONE : (
+            {/* Defensive against an old API build that predates this field —
+                the panel should degrade, not take the whole page down. */}
+            {(order.moodle_course_ids?.length ?? 0) === 0 ? NONE : (
               <span className="ord-chips">
                 {order.moodle_course_ids.map((id) => (
                   <span key={id} className="prod-chip">{id}</span>
@@ -200,8 +202,12 @@ export default function OrderDetail({
             <span className="ord-age">{relativeAge(order.created_at)}</span>
           </Detail>
           <Detail label="Last changed">
-            {new Date(order.updated_at).toLocaleString()}
-            <span className="ord-age">{relativeAge(order.updated_at)}</span>
+            {order.updated_at ? (
+              <>
+                {new Date(order.updated_at).toLocaleString()}
+                <span className="ord-age">{relativeAge(order.updated_at)}</span>
+              </>
+            ) : NONE}
           </Detail>
         </dl>
       </section>
