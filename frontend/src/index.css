@@ -553,6 +553,190 @@ div[class*="_PuckCanvas-root_"],
 }
 
 /* ---------------------------------------------------------------------------
+   Admin › Commerce › Products & pricing
+   Card-per-product, replacing the two-rows-joined-by-colSpan table. The table
+   could not express "one product = a name, a price, a description and a
+   visibility flag" without splitting each product across two <tr>s, which read
+   as ten unrelated rows rather than five products.
+   --------------------------------------------------------------------------- */
+.prod-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.prod-list { display: flex; flex-direction: column; gap: 0.85rem; }
+
+.prod-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 1rem 1.1rem;
+  /* The left edge is the product's status stripe: it turns ochre the moment
+     there are unsaved edits, so a dirty card is findable in a long list. */
+  border-left: 3px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.prod-card:hover { box-shadow: var(--shadow); }
+.prod-card--hidden { background: #fbfaf6; }
+.prod-card--hidden .prod-card__name { color: var(--muted); }
+.prod-card--dirty { border-left-color: var(--ochre); }
+
+.prod-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.prod-card__name { font-size: 1rem; margin: 0 0 0.2rem; color: var(--forest); }
+.prod-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+.prod-card__slug {
+  font-family: 'Courier New', monospace;
+  color: var(--muted);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.08rem 0.35rem;
+}
+.prod-card__courses { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+/* Bare comma-joined Moodle ids ("10, 15, 16") read as prose; as chips they read
+   as the set of things this product actually grants. */
+.prod-chip {
+  background: #eaf3e4;
+  color: var(--forest-dark);
+  border-radius: 5px;
+  padding: 0.08rem 0.4rem;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+/* Visibility control. Previously a .pill that happened to be a <button>, which
+   gave no affordance at all that the catalog could be changed by clicking it. */
+.prod-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: 0;
+  padding: 0.25rem;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.prod-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+.prod-toggle__track {
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: #cfd4cb;
+  position: relative;
+  transition: background 0.15s ease;
+  flex: none;
+}
+.prod-toggle__thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+.prod-toggle.is-on { color: var(--forest-dark); }
+.prod-toggle.is-on .prod-toggle__track { background: var(--forest); }
+.prod-toggle.is-on .prod-toggle__thumb { transform: translateX(15px); }
+.prod-toggle:focus-visible { outline: 2px solid var(--forest); outline-offset: 2px; border-radius: 6px; }
+
+.prod-card__body {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  margin: 0.9rem 0 0.75rem;
+}
+@media (max-width: 720px) {
+  .prod-card__body { grid-template-columns: minmax(0, 1fr); }
+}
+
+.prod-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+/* Currency lives inside the field, so the number reads as money rather than as
+   an anonymous quantity that happens to sit under a "(PHP)" column header. */
+.prod-price {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.prod-price:focus-within { outline: 2px solid var(--forest); outline-offset: 1px; border-color: var(--forest); }
+.prod-price.is-invalid { border-color: var(--danger-line); background: var(--danger-bg); }
+.prod-price__symbol {
+  padding: 0 0.15rem 0 0.7rem;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.prod-price input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-left: 0.25rem;
+}
+.prod-price input:focus { outline: none; }
+
+.prod-hint { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
+.prod-hint--bad { color: var(--danger-fg); font-weight: 600; }
+
+.prod-field--desc textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  resize: vertical;
+}
+.prod-field--desc textarea:focus {
+  outline: 2px solid var(--forest);
+  outline-offset: 1px;
+  border-color: var(--forest);
+}
+
+.prod-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+.prod-status { display: flex; align-items: center; gap: 0.4rem; margin-right: auto; color: #8a5a11; }
+.prod-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ochre); flex: none; }
+
+/* ---------------------------------------------------------------------------
    Admin UI / UX Enhancements: Drawers, Modals, Toasts, Previews & Stats
    --------------------------------------------------------------------------- */
 
