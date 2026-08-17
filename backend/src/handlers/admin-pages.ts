@@ -9,6 +9,12 @@
  * feature as admin-posts.ts — reasoning lives in the comments over there and
  * isn't repeated per-field in this file.
  *
+ * None of this touches Amplify. CmsPage.tsx fetches a page live and the
+ * public API filters status = 'published', so a write here takes effect for
+ * visitors immediately — the same as every other admin action. The
+ * prerendered <head> (title/description/og:image) only refreshes on the next
+ * real code deploy, which is a freshness detail, not a correctness one.
+ *
  * Routes (one Lambda, dispatched on path — see the note in pages.ts):
  *   GET    /admin/pages
  *   GET    /admin/pages/trash
@@ -38,7 +44,6 @@ import {
 } from '../lib/http.js';
 import { validateBlocks, BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, SlugError, findAvailableSlug } from '../lib/slug.js';
-import { triggerAmplifyBuild } from '../lib/amplify-build.js';
 
 /** How many publishes of history to keep per page. */
 const REVISION_LIMIT = 20;
@@ -286,15 +291,6 @@ async function publish(pageId: string, body: Record<string, unknown>): Promise<A
 
   await pruneRevisions(pageId);
 
-  // CmsPage.tsx fetches live from the API, so the page itself is already
-  // correct for visitors without this — this refreshes the prerendered <head>
-  // (title/description/og:image/JSON-LD) that crawlers and link-unfurlers see
-  // without executing JS, which would otherwise stay stale until the next
-  // unrelated deploy.
-  triggerAmplifyBuild('adminPages.publish').catch((err) =>
-    console.warn('[adminPages.publish] build trigger failed', err),
-  );
-
   return ok({ page: data });
 }
 
@@ -320,9 +316,6 @@ async function pruneRevisions(pageId: string): Promise<void> {
 /** Unpublishes a live page, or cancels a pending schedule — both are "back to draft". */
 async function unpublish(pageId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
-  const { data: existing } = await supabase.from('pages').select('status').eq('id', pageId).maybeSingle();
-  const wasPublished = existing?.status === 'published';
-
   const { data, error } = await supabase
     .from('pages')
     .update({ status: 'draft', scheduled_at: null, previous_status: null })
@@ -332,14 +325,6 @@ async function unpublish(pageId: string): Promise<APIGatewayProxyResultV2> {
 
   if (error) throw error;
   if (!data) return notFound('Page not found');
-
-  // A cancelled schedule was never live — nothing to remove from the build.
-  if (wasPublished) {
-    triggerAmplifyBuild('adminPages.unpublish').catch((err) =>
-      console.warn('[adminPages.unpublish] build trigger failed', err),
-    );
-  }
-
   return ok({ page: data });
 }
 
@@ -401,8 +386,6 @@ async function trashPage(pageId: string): Promise<APIGatewayProxyResultV2> {
     return ok({ page: data });
   }
 
-  const wasPublished = existing.status === 'published';
-
   const { data, error } = await supabase
     .from('pages')
     .update({ status: 'trash', previous_status: existing.status, deleted_at: new Date().toISOString() })
@@ -411,16 +394,6 @@ async function trashPage(pageId: string): Promise<APIGatewayProxyResultV2> {
     .maybeSingle();
 
   if (error) throw error;
-
-  // Removes the trashed page's prerendered <head> from the build output; the
-  // live page itself already 404s correctly via the API the moment its status
-  // stops being 'published' (CmsPage.tsx has no dependency on the static file).
-  if (wasPublished) {
-    triggerAmplifyBuild('adminPages.trash').catch((err) =>
-      console.warn('[adminPages.trash] build trigger failed', err),
-    );
-  }
-
   return ok({ page: data });
 }
 
@@ -447,13 +420,6 @@ async function untrashPage(pageId: string): Promise<APIGatewayProxyResultV2> {
     .maybeSingle();
 
   if (error) throw error;
-
-  if (restoredStatus === 'published') {
-    triggerAmplifyBuild('adminPages.untrash').catch((err) =>
-      console.warn('[adminPages.untrash] build trigger failed', err),
-    );
-  }
-
   return ok({ page: data });
 }
 

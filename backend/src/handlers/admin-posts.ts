@@ -1,10 +1,18 @@
 /**
  * Admin blog management — posts and categories.
  *
- * Posts follow the admin-pages.ts pattern: draft/published split, revisions,
- * publish triggers an Amplify rebuild via webhook. Trash, duplicate, and
- * scheduled publish also mirror admin-pages.ts exactly — see the comments
- * there for the reasoning; they are not repeated per-field here.
+ * Posts follow the admin-pages.ts pattern: draft/published split, revisions.
+ * Trash, duplicate, and scheduled publish also mirror admin-pages.ts exactly —
+ * see the comments there for the reasoning; they are not repeated per-field
+ * here.
+ *
+ * None of this touches Amplify. /blog/<slug> is a normal client-side route —
+ * BlogPost.tsx fetches the post live, and the public API already filters
+ * status = 'published' — so every write here is a plain database update and
+ * takes effect immediately, the same as every other admin action. The
+ * prerendered <head> that scrapers see (title/description/og:image) still
+ * only refreshes on the next real code deploy, which is a freshness detail,
+ * not a correctness one — visitors are never served stale content.
  *
  * Routes (one Lambda, dispatched on path):
  *   GET    /admin/posts
@@ -45,7 +53,6 @@ import {
   SlugError,
 } from '../lib/cms-posts.js';
 import { findAvailableSlug } from '../lib/slug.js';
-import { triggerAmplifyBuild } from '../lib/amplify-build.js';
 
 /** How many publishes of history to keep per post. */
 const REVISION_LIMIT = 20;
@@ -323,20 +330,12 @@ async function publish(postId: string, body: Record<string, unknown>): Promise<A
 
   await pruneRevisions(postId);
 
-  // Trigger Amplify rebuild — fire-and-forget.
-  triggerAmplifyBuild('adminPosts.publish').catch((err) =>
-    console.warn('[adminPosts.publish] build trigger failed', err),
-  );
-
   return ok({ post: data });
 }
 
 /** Unpublishes a live post, or cancels a pending schedule — both are "back to draft". */
 async function unpublish(postId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
-  const { data: existing } = await supabase.from('posts').select('status').eq('id', postId).maybeSingle();
-  const wasPublished = existing?.status === 'published';
-
   const { data, error } = await supabase
     .from('posts')
     .update({ status: 'draft', scheduled_at: null, previous_status: null })
@@ -346,14 +345,6 @@ async function unpublish(postId: string): Promise<APIGatewayProxyResultV2> {
 
   if (error) throw error;
   if (!data) return notFound('Post not found');
-
-  // A cancelled schedule was never live — nothing to remove from the build.
-  if (wasPublished) {
-    triggerAmplifyBuild('adminPosts.unpublish').catch((err) =>
-      console.warn('[adminPosts.unpublish] build trigger failed', err),
-    );
-  }
-
   return ok({ post: data });
 }
 
@@ -429,8 +420,6 @@ async function trashPost(postId: string): Promise<APIGatewayProxyResultV2> {
     return ok({ post: data });
   }
 
-  const wasPublished = existing.status === 'published';
-
   const { data, error } = await supabase
     .from('posts')
     .update({ status: 'trash', previous_status: existing.status, deleted_at: new Date().toISOString() })
@@ -439,18 +428,6 @@ async function trashPost(postId: string): Promise<APIGatewayProxyResultV2> {
     .maybeSingle();
 
   if (error) throw error;
-
-  // A published post has a static prerendered file at /blog/<slug>/ — trashing
-  // the row does not remove it. Without a rebuild that page stays live and
-  // reachable, serving trashed content, until some unrelated deploy overwrites
-  // it (Amplify replaces dist/ wholesale each build, so the file only
-  // disappears once prerender re-runs and no longer emits it).
-  if (wasPublished) {
-    triggerAmplifyBuild('adminPosts.trash').catch((err) =>
-      console.warn('[adminPosts.trash] build trigger failed', err),
-    );
-  }
-
   return ok({ post: data });
 }
 
@@ -477,13 +454,6 @@ async function untrashPost(postId: string): Promise<APIGatewayProxyResultV2> {
     .maybeSingle();
 
   if (error) throw error;
-
-  if (restoredStatus === 'published') {
-    triggerAmplifyBuild('adminPosts.untrash').catch((err) =>
-      console.warn('[adminPosts.untrash] build trigger failed', err),
-    );
-  }
-
   return ok({ post: data });
 }
 

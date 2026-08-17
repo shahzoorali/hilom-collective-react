@@ -85,8 +85,6 @@ export class HilomBackendStack extends cdk.Stack {
 
     // The admin key has no external source of truth, so CDK generates it. It is
     // never rendered into the template — only the generated secret's ARN is.
-    const buildHookSecret = secretsmanager.Secret.fromSecretNameV2(this, 'BuildHookSecret', 'hilom/amplify-build-hook');
-
     const adminKeySecret = new secretsmanager.Secret(this, 'AdminApiKey', {
       secretName: 'hilom/admin-api-key',
       description: 'Shared key for /admin/* endpoints until Cognito admin groups land in Phase 7',
@@ -366,12 +364,6 @@ export class HilomBackendStack extends cdk.Stack {
     }
     for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
       adminKeySecret.grantRead(fn);
-    }
-    // admin-posts, admin-pages, and the scheduled-publish sweep all trigger
-    // Amplify rebuilds — see backend/src/lib/amplify-build.ts for why each needs it.
-    for (const fn of [adminPosts, adminPages, scheduledPublishSweep]) {
-      buildHookSecret.grantRead(fn);
-      fn.addEnvironment('BUILD_HOOK_SECRET_ID', buildHookSecret.secretName);
     }
     // The public form endpoint salts its IP hashes with the admin key, which is
     // the one high-entropy secret this function already has a reason to reach.
