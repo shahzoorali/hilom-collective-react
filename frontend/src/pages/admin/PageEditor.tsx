@@ -16,39 +16,38 @@
  *  - Save / Publish / Unpublish live in Puck's own header via the
  *    `headerActions` override, rather than in a separate toolbar above it, so
  *    the editor keeps Puck's undo/redo and viewport controls next to them.
+ *
+ * This component now delegates to the generic BlockEditor with a pages adapter,
+ * keeping the same behavior as before the blog feature landed.
  */
-import { useEffect, useRef, useState } from 'react';
-import { Puck, type Data } from '@puckeditor/core';
-import '@puckeditor/core/puck.css';
-import type { Block } from '../../cms/blocks';
+import { useMemo } from 'react';
+import BlockEditor, { type EditorAdapter } from './BlockEditor';
 import {
   adminGetPage,
-  adminListRevisions,
-  adminPublishPage,
-  adminRestoreRevision,
   adminSaveDraft,
+  adminPublishPage,
   adminUnpublishPage,
+  adminListRevisions,
+  adminRestoreRevision,
   type AdminPage,
-  type PageRevision,
 } from '../../lib/cms';
-import { createPuckConfig } from './puckConfig';
 
-/**
- * Puck keeps each block's id inside `props`; we store it alongside `type`.
- * These two functions are the whole of the format difference.
- */
-function toPuckData(blocks: Block[]): Data {
-  return {
-    root: {},
-    content: blocks.map((block) => ({ type: block.type, props: { ...block.props, id: block.id } })),
-  } as Data;
-}
-
-function fromPuckData(data: Data): Block[] {
-  return (data.content ?? []).map((item, i) => {
-    const { id, ...props } = item.props as Record<string, unknown> & { id?: string };
-    return { id: typeof id === 'string' ? id : `b-${i}-${Date.now()}`, type: item.type as string, props };
-  });
+function usePagesAdapter(adminKey: string): EditorAdapter<AdminPage> {
+  return useMemo(
+    () => ({
+      label: 'page',
+      load: (pageId) => adminGetPage(adminKey, pageId),
+      saveDraft: (pageId, blocks) => adminSaveDraft(adminKey, pageId, blocks),
+      publish: (pageId) => adminPublishPage(adminKey, pageId),
+      unpublish: (pageId) => adminUnpublishPage(adminKey, pageId),
+      listRevisions: (pageId) => adminListRevisions(adminKey, pageId),
+      restoreRevision: (pageId, revisionId) => adminRestoreRevision(adminKey, pageId, revisionId),
+      headerTitle: (page) => `${page.title} — /${page.slug === 'home' ? '' : page.slug}`,
+      publishNotice: 'Published — the page is live.',
+      viewUrl: (page) => (page.slug === 'home' ? '/' : `/${page.slug}`),
+    }),
+    [adminKey],
+  );
 }
 
 export default function PageEditor({
@@ -60,189 +59,14 @@ export default function PageEditor({
   pageId: string;
   onBack: () => void;
 }) {
-  const [page, setPage] = useState<AdminPage | null>(null);
-  const [initialData, setInitialData] = useState<Data | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [dirty, setDirty] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [revisions, setRevisions] = useState<PageRevision[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  // Bumped every time content is pushed onto the canvas from outside Puck
-  // (initial load, revision restore). It is the whole of the remount key —
-  // see the note on <Puck key=…> below for why nothing derived from the
-  // content itself can be used here.
-  const [canvasVersion, setCanvasVersion] = useState(0);
-
-  // Puck is uncontrolled once mounted: it owns edit state and reports changes.
-  // Keeping the latest in a ref (rather than state) avoids re-rendering the
-  // whole editor on every keystroke.
-  const latest = useRef<Block[]>([]);
-  const [config] = useState(() => createPuckConfig(adminKey));
-
-  useEffect(() => {
-    adminGetPage(adminKey, pageId)
-      .then((p) => {
-        setPage(p);
-        const blocks = p.draft_blocks ?? [];
-        latest.current = blocks;
-        setInitialData(toPuckData(blocks));
-        setCanvasVersion((v) => v + 1);
-      })
-      .catch((e: Error) => setError(e.message));
-    adminListRevisions(adminKey, pageId).then(setRevisions).catch(() => setRevisions([]));
-  }, [adminKey, pageId]);
-
-  // Closing the tab mid-edit would silently lose the draft.
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
-
-  async function run(action: () => Promise<void>, message: string) {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await action();
-      setNotice(message);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const save = () =>
-    run(async () => {
-      setPage(await adminSaveDraft(adminKey, pageId, latest.current));
-      setDirty(false);
-    }, 'Draft saved.');
-
-  const publish = () =>
-    run(async () => {
-      // Publish what is on the canvas, not what was last saved — that is what an
-      // editor pressing Publish means.
-      await adminSaveDraft(adminKey, pageId, latest.current);
-      setPage(await adminPublishPage(adminKey, pageId));
-      setDirty(false);
-      setRevisions(await adminListRevisions(adminKey, pageId));
-    }, 'Published — the page is live.');
-
-  const unpublish = () =>
-    run(async () => {
-      setPage(await adminUnpublishPage(adminKey, pageId));
-    }, 'Unpublished. The built-in page is being served again.');
-
-  /** Restoring replaces the canvas, so Puck is remounted with the new content
-   *  by bumping canvasVersion — see the remount key below. */
-  const restore = (revisionId: string) =>
-    run(async () => {
-      const restored = await adminRestoreRevision(adminKey, pageId, revisionId);
-      const blocks = restored.draft_blocks ?? [];
-      latest.current = blocks;
-      setInitialData(toPuckData(blocks));
-      setCanvasVersion((v) => v + 1);
-      setDirty(false);
-      setShowHistory(false);
-    }, 'Revision loaded onto the canvas. Publish it to make it live.');
-
-  if (error && !page) return <div className="alert alert-error" style={{ margin: '1rem' }}>{error}</div>;
-  if (!page || !initialData) return <p className="muted" style={{ margin: '1rem' }}>Loading…</p>;
-
+  const adapter = usePagesAdapter(adminKey);
   return (
-    // Flex column filling the exact space .admin-content--flush gives it (see
-    // index.css): alerts and history take only the room they need, and the
-    // Puck canvas takes the rest, edge to edge. That full-viewport layout is
-    // the point — a page editor boxed inside a padded container is what this
-    // replaced.
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {(error || notice || showHistory) && (
-        <div style={{ padding: '0.75rem 1rem 0' }}>
-          {error && <div className="alert alert-error">{error}</div>}
-          {notice && <div className="alert alert-success">{notice}</div>}
-
-          {showHistory && (
-            <div className="panel" style={{ marginBottom: '0.8rem' }}>
-              <h3 style={{ fontSize: '1rem', marginTop: 0 }}>Publish history</h3>
-              {revisions.length === 0 ? (
-                <p className="small muted" style={{ marginBottom: 0 }}>
-                  Nothing published yet.
-                </p>
-              ) : (
-                revisions.map((revision) => (
-                  <button
-                    key={revision.id}
-                    className="btn btn-ghost small"
-                    style={{ marginRight: '0.4rem', marginBottom: '0.4rem' }}
-                    onClick={() => restore(revision.id)}
-                    disabled={busy}
-                  >
-                    {new Date(revision.created_at).toLocaleString()}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* flex: 1 + minHeight: 0 is the standard fix for a flex child that must
-          fill remaining space but also contains its own scrolling content —
-          without minHeight: 0 the browser lets this box grow past its share. */}
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <Puck
-          // Remount ONLY when content is pushed in from outside Puck. This must
-          // not be derived from the content itself: an earlier key included the
-          // block count, so restoring a revision with the same number of blocks
-          // left the canvas showing the old content while `latest` already held
-          // the restored blocks — Publish then shipped content nobody had seen.
-          // It must also not include `published_at`, which would throw away
-          // undo history on every publish for no gain: publishing does not
-          // change what is on the canvas.
-          key={`${page.id}:${canvasVersion}`}
-          config={config}
-          data={initialData}
-          iframe={{ enabled: false }}
-          headerTitle={`${page.title} — /${page.slug === 'home' ? '' : page.slug}`}
-          onChange={(data) => {
-            latest.current = fromPuckData(data);
-            setDirty(true);
-          }}
-          onPublish={() => void publish()}
-          overrides={{
-            headerActions: ({ children }) => (
-              <>
-                <button className="btn btn-ghost small" onClick={onBack} disabled={busy}>
-                  ← All pages
-                </button>
-                <span className={page.status === 'published' ? 'pill pill-ok' : 'pill pill-warn'}>
-                  {page.status}
-                </span>
-                <button
-                  className="btn btn-ghost small"
-                  onClick={() => setShowHistory((s) => !s)}
-                  disabled={busy}
-                >
-                  History
-                </button>
-                <button className="btn btn-ghost small" onClick={save} disabled={busy || !dirty}>
-                  {dirty ? 'Save draft' : 'Saved'}
-                </button>
-                {page.status === 'published' && (
-                  <button className="btn btn-ghost small" onClick={unpublish} disabled={busy}>
-                    Unpublish
-                  </button>
-                )}
-                {/* Puck's own Publish button, which routes to onPublish above. */}
-                {children}
-              </>
-            ),
-          }}
-        />
-      </div>
-    </div>
+    <BlockEditor
+      adminKey={adminKey}
+      resourceId={pageId}
+      adapter={adapter}
+      onBack={onBack}
+      backLabel="All pages"
+    />
   );
 }

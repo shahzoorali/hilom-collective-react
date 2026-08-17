@@ -11,6 +11,7 @@ export const RESERVED_SLUGS = new Set([
   'checkout',
   'auth',
   'admin',
+  'blog',
   'products',
   'orders',
   'webhooks',

@@ -315,3 +315,154 @@ export const adminUpdateEvent = (adminKey: string, eventId: string, input: Admin
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>
   apiFetch<{ deleted: boolean }>(`/admin/events/${eventId}`, adminInit(adminKey, 'DELETE'));
+
+// --- blog (public) ---
+
+export interface BlogCategory {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  position: number;
+}
+
+export interface BlogPost {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string | null;
+  image_url: string | null;
+  image_alt: string | null;
+  author_name: string | null;
+  author_image_url: string | null;
+  category_id: string | null;
+  categories: { slug: string; name: string } | null;
+  tags: string[];
+  published_at: string;
+}
+
+export interface BlogPostDetail extends BlogPost {
+  blocks: Block[];
+  seo_title: string | null;
+  seo_description: string | null;
+}
+
+export interface BlogListResponse {
+  posts: BlogPost[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export const getPosts = (params?: { page?: number; category?: string; tag?: string }) => {
+  const search = new URLSearchParams();
+  if (params?.page && params.page > 1) search.set('page', String(params.page));
+  if (params?.category) search.set('category', params.category);
+  if (params?.tag) search.set('tag', params.tag);
+  const qs = search.toString();
+  return apiFetch<BlogListResponse>(`/posts${qs ? `?${qs}` : ''}`);
+};
+
+export const getPost = (slug: string) =>
+  apiFetch<{ post: BlogPostDetail; related: BlogPost[] }>(`/posts/${encodeURIComponent(slug)}`);
+
+export const getCategories = () =>
+  apiFetch<{ categories: BlogCategory[] }>('/categories').then((r) => r.categories);
+
+// --- blog (admin) ---
+
+export interface AdminPost {
+  id: string;
+  slug: string;
+  title: string;
+  excerpt: string | null;
+  image_id: string | null;
+  image_url: string | null;
+  image_alt: string | null;
+  author_name: string | null;
+  author_image_url: string | null;
+  category_id: string | null;
+  categories?: { slug: string; name: string } | null;
+  tags: string[];
+  seo_title: string | null;
+  seo_description: string | null;
+  status: 'draft' | 'published';
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+  draft_blocks?: Block[];
+  published_blocks?: Block[];
+}
+
+export const adminListPosts = (adminKey: string) =>
+  apiFetch<{ posts: AdminPost[] }>('/admin/posts', adminInit(adminKey)).then((r) => r.posts);
+
+export const adminGetPost = (adminKey: string, postId: string) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}`, adminInit(adminKey)).then((r) => r.post);
+
+export const adminCreatePost = (adminKey: string, body: { title: string; slug?: string }) =>
+  apiFetch<{ post: AdminPost }>('/admin/posts', adminInit(adminKey, 'POST', body)).then((r) => r.post);
+
+export const adminUpdatePost = (
+  adminKey: string,
+  postId: string,
+  patch: Record<string, unknown>,
+) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}`, adminInit(adminKey, 'PATCH', patch)).then(
+    (r) => r.post,
+  );
+
+export const adminSavePostDraft = (adminKey: string, postId: string, blocks: Block[]) =>
+  apiFetch<{ post: AdminPost }>(
+    `/admin/posts/${postId}/draft`,
+    adminInit(adminKey, 'PUT', { blocks }),
+  ).then((r) => r.post);
+
+export const adminPublishPost = (adminKey: string, postId: string) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}/publish`, adminInit(adminKey, 'POST')).then(
+    (r) => r.post,
+  );
+
+export const adminUnpublishPost = (adminKey: string, postId: string) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}/unpublish`, adminInit(adminKey, 'POST')).then(
+    (r) => r.post,
+  );
+
+export const adminDeletePost = (adminKey: string, postId: string) =>
+  apiFetch<{ deleted: boolean }>(`/admin/posts/${postId}`, adminInit(adminKey, 'DELETE'));
+
+export interface PostRevision {
+  id: string;
+  note: string | null;
+  created_at: string;
+}
+
+export const adminListPostRevisions = (adminKey: string, postId: string) =>
+  apiFetch<{ revisions: PostRevision[] }>(`/admin/posts/${postId}/revisions`, adminInit(adminKey)).then(
+    (r) => r.revisions,
+  );
+
+export const adminRestorePostRevision = (adminKey: string, postId: string, revisionId: string) =>
+  apiFetch<{ post: AdminPost }>(
+    `/admin/posts/${postId}/revisions/${revisionId}/restore`,
+    adminInit(adminKey, 'POST'),
+  ).then((r) => r.post);
+
+// --- categories (admin) ---
+
+export interface AdminCategory extends BlogCategory {
+  created_at: string;
+  updated_at: string;
+}
+
+export const adminListCategories = (adminKey: string) =>
+  apiFetch<{ categories: AdminCategory[] }>('/admin/categories', adminInit(adminKey)).then((r) => r.categories);
+
+export const adminCreateCategory = (adminKey: string, body: { name: string; slug?: string; description?: string; position?: number }) =>
+  apiFetch<{ category: AdminCategory }>('/admin/categories', adminInit(adminKey, 'POST', body)).then((r) => r.category);
+
+export const adminUpdateCategory = (adminKey: string, categoryId: string, body: { name: string; slug?: string; description?: string; position?: number }) =>
+  apiFetch<{ category: AdminCategory }>(`/admin/categories/${categoryId}`, adminInit(adminKey, 'PATCH', body)).then((r) => r.category);
+
+export const adminDeleteCategory = (adminKey: string, categoryId: string) =>
+  apiFetch<{ deleted: boolean }>(`/admin/categories/${categoryId}`, adminInit(adminKey, 'DELETE'));

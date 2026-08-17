@@ -229,7 +229,12 @@ export interface Block {
   props: Record<string, unknown>;
 }
 
-export class BlockValidationError extends Error {}
+export class BlockValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BlockValidationError';
+  }
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -251,9 +256,6 @@ function coerceField(spec: FieldSpec, raw: unknown, path: string): unknown {
     case 'text':
     case 'href': {
       if (raw === undefined || raw === null || raw === '') {
-        if (spec.kind === 'text' && spec.required) {
-          throw new BlockValidationError(`${path} is required`);
-        }
         return undefined;
       }
       if (typeof raw !== 'string') throw new BlockValidationError(`${path} must be a string`);

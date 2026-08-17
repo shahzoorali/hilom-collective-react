@@ -102,6 +102,7 @@ function toPuckField(spec: FieldSpec, adminKey: string): Field {
         type: 'array',
         label: spec.label,
         arrayFields: toPuckFields(spec.fields, adminKey),
+        defaultItemProps: defaultProps(spec.fields),
         getItemSummary: (item: Props, index?: number) =>
           // Whatever reads most like a name for this row, so the collapsed list
           // says "Ginhawa Kits" rather than "Item 4".

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   adminListOrders, adminListProducts, adminRetryEnrollment, adminRevokeAccess,
   adminSyncCourses, adminUpdateProduct, listCourses,
@@ -13,6 +13,23 @@ import { money } from '../../components/Layout';
  * unchanged, and the only difference is that the admin key now arrives as a
  * prop instead of being local state with its own sign-in form.
  */
+
+/** A price draft is valid if it parses to a finite, non-negative number. */
+function isPriceValid(raw: string) {
+  const trimmed = raw.trim();
+  const pesos = Number(trimmed);
+  return trimmed !== '' && Number.isFinite(pesos) && pesos >= 0;
+}
+
+/**
+ * Whether a price draft differs from what is stored. An unparseable draft counts
+ * as dirty so the card stays in its "unsaved" state and shows the validation
+ * hint, rather than looking clean while holding text that would be rejected.
+ */
+function isPriceDirty(product: AdminProduct, raw: string) {
+  if (!isPriceValid(raw)) return true;
+  return Math.round(Number(raw.trim()) * 100) !== product.price_centavos;
+}
 
 function StatusPill({ status }: { status: string }) {
   const cls =
@@ -100,19 +117,31 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     }
   }
 
-  async function onSavePrice(product: AdminProduct) {
+  /**
+   * Price and description are edited together on one card, so they save together
+   * in one PATCH. Only the fields that actually changed are sent, so saving a
+   * description can never silently rewrite a price the user did not touch.
+   */
+  async function onSaveProduct(product: AdminProduct) {
     const raw = (priceDrafts[product.id] ?? '').trim();
-    const pesos = Number(raw);
-    if (!raw || !Number.isFinite(pesos) || pesos < 0) {
-      setError(`"${raw}" is not a valid price.`);
-      return;
+    const trimmedDesc = (descriptionDrafts[product.id] ?? '').trim();
+
+    const patch: { price_centavos?: number; description?: string } = {};
+
+    if (isPriceDirty(product, raw)) {
+      if (!isPriceValid(raw)) {
+        setError(`"${raw}" is not a valid price.`);
+        return;
+      }
+      // Pesos -> centavos. Math.round avoids float artefacts such as
+      // 14.99 * 100 === 1498.9999999999998, which would fail the integer check
+      // server-side and reject a perfectly valid price.
+      patch.price_centavos = Math.round(Number(raw) * 100);
     }
-    // Pesos -> centavos. Math.round avoids float artefacts such as
-    // 14.99 * 100 === 1498.9999999999998, which would fail the integer check
-    // server-side and reject a perfectly valid price.
-    const centavos = Math.round(pesos * 100);
-    if (centavos === product.price_centavos) {
-      setNotice('Price unchanged.');
+    if (trimmedDesc !== (product.description ?? '')) patch.description = trimmedDesc;
+
+    if (Object.keys(patch).length === 0) {
+      setNotice('Nothing to save.');
       return;
     }
 
@@ -120,38 +149,29 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     setError(null);
     setNotice(null);
     try {
-      const updated = await adminUpdateProduct(adminKey, product.id, { price_centavos: centavos });
-      setNotice(
-        `${updated.name}: ${money(product.price_centavos, product.currency)} → ${money(updated.price_centavos, updated.currency)}`,
-      );
+      const updated = await adminUpdateProduct(adminKey, product.id, patch);
+      const parts: string[] = [];
+      if (patch.price_centavos !== undefined) {
+        parts.push(
+          `${money(product.price_centavos, product.currency)} → ${money(updated.price_centavos, updated.currency)}`,
+        );
+      }
+      if (patch.description !== undefined) {
+        parts.push(`description ${patch.description ? 'updated' : 'cleared'}`);
+      }
+      setNotice(`${updated.name}: ${parts.join(', ')}.`);
       await load(adminKey, onlyStuck);
     } catch (e) {
-      setError(`Price update failed: ${(e as Error).message}`);
+      setError(`Update failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
   }
 
-  async function onSaveDescription(product: AdminProduct) {
-    const draft = descriptionDrafts[product.id] ?? '';
-    const trimmed = draft.trim();
-    if (trimmed === (product.description ?? '')) {
-      setNotice('Description unchanged.');
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const updated = await adminUpdateProduct(adminKey, product.id, { description: trimmed });
-      setNotice(`${updated.name}: description ${trimmed ? 'updated' : 'cleared'}.`);
-      await load(adminKey, onlyStuck);
-    } catch (e) {
-      setError(`Description update failed: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
+  /** Drop local edits and snap both fields back to what the server has. */
+  function onDiscard(product: AdminProduct) {
+    setPriceDrafts({ ...priceDrafts, [product.id]: (product.price_centavos / 100).toFixed(2) });
+    setDescriptionDrafts({ ...descriptionDrafts, [product.id]: product.description ?? '' });
   }
 
   async function onToggleActive(product: AdminProduct) {
@@ -197,6 +217,8 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  const visibleCount = products.filter((p) => p.is_active).length;
+
   const staleness = lastSynced
     ? `${Math.round((Date.now() - new Date(lastSynced).getTime()) / 3_600_000)}h ago`
     : 'never';
@@ -218,99 +240,156 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
         </div>
 
         <div className="panel" style={{ marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.15rem' }}>Products &amp; pricing</h2>
-          <p className="small muted">
+          <div className="prod-head">
+            <h2 style={{ fontSize: '1.15rem', margin: 0 }}>Products &amp; pricing</h2>
+            {products.length > 0 && (
+              <span className="small muted">
+                {products.length} product{products.length === 1 ? '' : 's'} ·{' '}
+                {visibleCount} visible · {products.length - visibleCount} hidden
+              </span>
+            )}
+          </div>
+          {/* The description hint used to be repeated verbatim under every single product
+              row. It says the same thing each time, so it belongs here once. */}
+          <p className="small muted" style={{ marginBottom: '1.25rem' }}>
             Prices are stored in the database, so changes take effect immediately with no deploy.
-            Existing orders keep the amount they were actually charged.
+            Existing orders keep the amount they were actually charged. A blank description shows
+            nothing on the public site — there is no placeholder text.
           </p>
 
           {products.length === 0 ? (
             <p className="muted">No products.</p>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Product</th><th>Courses</th><th>Price (PHP)</th><th>Visible</th><th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.map((p) => {
-                    const draft = priceDrafts[p.id] ?? '';
-                    const dirty = Math.round(Number(draft) * 100) !== p.price_centavos;
-                    const descDraft = descriptionDrafts[p.id] ?? '';
-                    const descDirty = descDraft.trim() !== (p.description ?? '');
-                    return (
-                      <Fragment key={p.id}>
-                      <tr>
-                        <td>
-                          <strong>{p.name}</strong>
-                          <div className="small muted">{p.slug}</div>
-                        </td>
-                        <td className="small">
-                          {p.product_courses.map((c) => c.moodle_course_id).join(', ') || '—'}
-                        </td>
-                        <td>
+            /* One card per product rather than two table rows joined by a colSpan.
+               The old markup put each description in its own full-width row, which
+               made it genuinely hard to see where one product ended and the next
+               began, and gave every product two identically-labelled "Save" buttons. */
+            <div className="prod-list">
+              {products.map((p) => {
+                const draft = priceDrafts[p.id] ?? '';
+                const descDraft = descriptionDrafts[p.id] ?? '';
+                const priceDirty = isPriceDirty(p, draft);
+                const descDirty = descDraft.trim() !== (p.description ?? '');
+                const dirty = priceDirty || descDirty;
+                const priceValid = isPriceValid(draft);
+                return (
+                  <article
+                    key={p.id}
+                    className={`prod-card${p.is_active ? '' : ' prod-card--hidden'}${dirty ? ' prod-card--dirty' : ''}`}
+                  >
+                    <header className="prod-card__head">
+                      <div className="prod-card__id">
+                        <h3 className="prod-card__name">{p.name}</h3>
+                        <div className="prod-card__meta">
+                          <code className="prod-card__slug">/{p.slug}</code>
+                          <span className="prod-card__courses">
+                            {p.product_courses.length === 0 ? (
+                              <span className="muted">no courses linked</span>
+                            ) : (
+                              <>
+                                <span className="muted">
+                                  {p.product_courses.length === 1 ? 'course' : 'courses'}
+                                </span>
+                                {p.product_courses.map((c) => (
+                                  <span key={c.moodle_course_id} className="prod-chip">
+                                    {c.moodle_course_id}
+                                  </span>
+                                ))}
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* A pill that happened to be a <button> gave no hint it could be
+                          clicked. This reads as a control and states what it will do. */}
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={p.is_active}
+                        className={`prod-toggle${p.is_active ? ' is-on' : ''}`}
+                        onClick={() => onToggleActive(p)}
+                        disabled={busy}
+                        title={
+                          p.is_active
+                            ? 'Visible in the public catalog — click to hide'
+                            : 'Hidden from the public catalog — click to show'
+                        }
+                      >
+                        <span className="prod-toggle__track"><span className="prod-toggle__thumb" /></span>
+                        <span className="prod-toggle__label">{p.is_active ? 'Visible' : 'Hidden'}</span>
+                      </button>
+                    </header>
+
+                    <div className="prod-card__body">
+                      <div className="prod-field prod-field--price">
+                        <label className="prod-label" htmlFor={`price-${p.id}`}>Price</label>
+                        <div className={`prod-price${priceValid ? '' : ' is-invalid'}`}>
+                          <span className="prod-price__symbol">₱</span>
                           <input
+                            id={`price-${p.id}`}
                             type="number" min="0" step="0.01" value={draft}
-                            style={{ width: 120 }}
-                            onChange={(e) =>
-                              setPriceDrafts({ ...priceDrafts, [p.id]: e.target.value })
-                            }
+                            aria-invalid={!priceValid}
+                            onChange={(e) => setPriceDrafts({ ...priceDrafts, [p.id]: e.target.value })}
                           />
-                        </td>
-                        <td>
-                          <button
-                            className={p.is_active ? 'pill pill-ok' : 'pill pill-bad'}
-                            style={{ border: 0, cursor: 'pointer' }}
-                            onClick={() => onToggleActive(p)}
-                            disabled={busy}
-                            title="Toggle whether this product appears in the public catalog"
-                          >
-                            {p.is_active ? 'visible' : 'hidden'}
-                          </button>
-                        </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          <button
-                            className="btn btn-primary small"
-                            onClick={() => onSavePrice(p)}
-                            disabled={busy || !dirty}
-                          >
-                            Save
-                          </button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td colSpan={5} style={{ paddingTop: 0 }}>
-                          <label className="small muted" style={{ display: 'block', marginBottom: '0.25rem' }}>
-                            Description shown on the public site — left blank shows nothing
-                            (no placeholder text).
-                          </label>
-                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-                            <textarea
-                              rows={2}
-                              style={{ flex: 1 }}
-                              value={descDraft}
-                              placeholder="(blank)"
-                              onChange={(e) =>
-                                setDescriptionDrafts({ ...descriptionDrafts, [p.id]: e.target.value })
-                              }
-                            />
-                            <button
-                              className="btn btn-primary small"
-                              onClick={() => onSaveDescription(p)}
-                              disabled={busy || !descDirty}
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </div>
+                        <span className="prod-hint">
+                          {!priceValid
+                            ? <span className="prod-hint--bad">Enter a valid amount</span>
+                            : priceDirty
+                              ? <>was {money(p.price_centavos, p.currency)}</>
+                              : <>saved</>}
+                        </span>
+                      </div>
+
+                      <div className="prod-field prod-field--desc">
+                        <label className="prod-label" htmlFor={`desc-${p.id}`}>Description</label>
+                        <textarea
+                          id={`desc-${p.id}`}
+                          rows={2}
+                          value={descDraft}
+                          placeholder="Nothing shown on the public site"
+                          onChange={(e) =>
+                            setDescriptionDrafts({ ...descriptionDrafts, [p.id]: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <footer className="prod-card__foot">
+                      <span className="prod-status small">
+                        {dirty ? (
+                          <>
+                            <span className="prod-dot" />
+                            Unsaved {[priceDirty && 'price', descDirty && 'description'].filter(Boolean).join(' and ')}
+                          </>
+                        ) : (
+                          <span className="muted">No changes</span>
+                        )}
+                      </span>
+                      {dirty && (
+                        <button
+                          className="btn btn-ghost small"
+                          onClick={() => onDiscard(p)}
+                          disabled={busy}
+                        >
+                          Discard
+                        </button>
+                      )}
+                      {/* One save per product. Price and description are two fields of the
+                          same row, so they go up in a single PATCH instead of two buttons
+                          racing two requests and two reloads. */}
+                      <button
+                        className="btn btn-primary small"
+                        onClick={() => onSaveProduct(p)}
+                        disabled={busy || !dirty || !priceValid}
+                      >
+                        {busy ? 'Saving…' : 'Save changes'}
+                      </button>
+                    </footer>
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
