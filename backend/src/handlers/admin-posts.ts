@@ -2,17 +2,23 @@
  * Admin blog management — posts and categories.
  *
  * Posts follow the admin-pages.ts pattern: draft/published split, revisions,
- * publish triggers an Amplify rebuild via webhook.
+ * publish triggers an Amplify rebuild via webhook. Trash, duplicate, and
+ * scheduled publish also mirror admin-pages.ts exactly — see the comments
+ * there for the reasoning; they are not repeated per-field here.
  *
  * Routes (one Lambda, dispatched on path):
  *   GET    /admin/posts
+ *   GET    /admin/posts/trash
  *   POST   /admin/posts
  *   GET    /admin/posts/{postId}
  *   PATCH  /admin/posts/{postId}
- *   DELETE /admin/posts/{postId}
+ *   DELETE /admin/posts/{postId}                — move to trash
+ *   DELETE /admin/posts/{postId}/permanent       — hard delete (trash only)
+ *   POST   /admin/posts/{postId}/untrash
+ *   POST   /admin/posts/{postId}/duplicate
  *   PUT    /admin/posts/{postId}/draft
- *   POST   /admin/posts/{postId}/publish
- *   POST   /admin/posts/{postId}/unpublish
+ *   POST   /admin/posts/{postId}/publish         — body: { scheduledAt? }
+ *   POST   /admin/posts/{postId}/unpublish        — also cancels a schedule
  *   GET    /admin/posts/{postId}/revisions
  *   POST   /admin/posts/{postId}/revisions/{revisionId}/restore
  *   GET    /admin/categories
@@ -38,13 +44,14 @@ import {
   BlockValidationError,
   SlugError,
 } from '../lib/cms-posts.js';
+import { findAvailableSlug } from '../lib/slug.js';
 import { triggerAmplifyBuild } from '../lib/amplify-build.js';
 
 /** How many publishes of history to keep per post. */
 const REVISION_LIMIT = 20;
 
 const POST_COLUMNS =
-  'id, slug, title, excerpt, image_id, image_url, image_alt, author_name, author_image_url, category_id, tags, seo_title, seo_description, status, created_at, updated_at, published_at';
+  'id, slug, title, excerpt, image_id, image_url, image_alt, author_name, author_image_url, category_id, tags, seo_title, seo_description, status, scheduled_at, deleted_at, previous_status, created_at, updated_at, published_at';
 
 const CATEGORY_COLUMNS = 'id, slug, name, description, position, created_at, updated_at';
 
@@ -70,7 +77,12 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return badRequest(`Unsupported method ${method}`);
     }
 
-    // --- Posts ---
+    // --- Posts: trash list is a static route, not a {postId} — check first. ---
+    if (path === '/admin/posts/trash') {
+      if (method === 'GET') return listTrash();
+      return badRequest(`Unsupported method ${method}`);
+    }
+
     if (!postId) {
       if (method === 'GET') return listPosts();
       if (method === 'POST') return createPost(parseBody(event));
@@ -78,14 +90,17 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     if (path.endsWith('/draft')) return saveDraft(postId, parseBody(event));
-    if (path.endsWith('/publish')) return publish(postId);
+    if (path.endsWith('/publish')) return publish(postId, parseBody(event));
     if (path.endsWith('/unpublish')) return unpublish(postId);
+    if (path.endsWith('/untrash')) return untrashPost(postId);
+    if (path.endsWith('/duplicate')) return duplicatePost(postId);
+    if (path.endsWith('/permanent')) return permanentlyDeletePost(postId);
     if (path.endsWith('/restore') && revisionId) return restore(postId, revisionId);
     if (path.endsWith('/revisions')) return revisions(postId);
 
     if (method === 'GET') return getPost(postId);
     if (method === 'PATCH') return updateMeta(postId, parseBody(event));
-    if (method === 'DELETE') return deletePost(postId);
+    if (method === 'DELETE') return trashPost(postId);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     if (
@@ -124,7 +139,22 @@ async function listPosts(): Promise<APIGatewayProxyResultV2> {
   const { data, error } = await supabase
     .from('posts')
     .select(`${POST_COLUMNS}, categories!posts_category_id_fkey(slug, name)`)
+    // Trash has its own view (GET /admin/posts/trash) — it must not also
+    // silently reappear in the main list an editor scrolls through daily.
+    .neq('status', 'trash')
     .order('updated_at', { ascending: false });
+
+  if (error) throw error;
+  return ok({ posts: data ?? [] });
+}
+
+async function listTrash(): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data, error } = await supabase
+    .from('posts')
+    .select(`${POST_COLUMNS}, categories!posts_category_id_fkey(slug, name)`)
+    .eq('status', 'trash')
+    .order('deleted_at', { ascending: false });
 
   if (error) throw error;
   return ok({ posts: data ?? [] });
@@ -227,7 +257,12 @@ async function saveDraft(
   return ok({ post: data });
 }
 
-async function publish(postId: string): Promise<APIGatewayProxyResultV2> {
+/**
+ * Publish immediately, or — if `scheduledAt` is a valid future timestamp —
+ * schedule it instead. A past or present `scheduledAt` publishes immediately,
+ * same as WordPress treats picking a non-future date in the publish box.
+ */
+async function publish(postId: string, body: Record<string, unknown>): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
   const { data: post, error: readError } = await supabase
     .from('posts')
@@ -238,11 +273,42 @@ async function publish(postId: string): Promise<APIGatewayProxyResultV2> {
   if (readError) throw readError;
   if (!post) return notFound('Post not found');
 
+  // Validated up front either way: a schedule with already-broken blocks
+  // should fail now, at the moment the editor is looking at it, not silently
+  // sit un-publishable until the sweep discovers it later.
   const blocks = validateBlocks(post.draft_blocks);
+
+  let scheduledAtIso: string | null = null;
+  if (typeof body.scheduledAt === 'string' && body.scheduledAt) {
+    const parsed = new Date(body.scheduledAt);
+    if (Number.isNaN(parsed.getTime())) throw new BlockValidationError('scheduledAt is not a valid date');
+    if (parsed.getTime() > Date.now()) scheduledAtIso = parsed.toISOString();
+  }
+
+  if (scheduledAtIso) {
+    // published_blocks/published_at are deliberately untouched: nothing goes
+    // live yet, so nothing changes for a visitor and no rebuild is needed —
+    // the scheduled-publish sweep does the actual publish write later.
+    const { data, error } = await supabase
+      .from('posts')
+      .update({ status: 'scheduled', scheduled_at: scheduledAtIso, previous_status: null })
+      .eq('id', postId)
+      .select(POST_COLUMNS)
+      .maybeSingle();
+
+    if (error) throw error;
+    return ok({ post: data });
+  }
 
   const { data, error } = await supabase
     .from('posts')
-    .update({ published_blocks: blocks, status: 'published', published_at: new Date().toISOString() })
+    .update({
+      published_blocks: blocks,
+      status: 'published',
+      published_at: new Date().toISOString(),
+      scheduled_at: null,
+      previous_status: null,
+    })
     .eq('id', postId)
     .select(POST_COLUMNS)
     .maybeSingle();
@@ -265,11 +331,15 @@ async function publish(postId: string): Promise<APIGatewayProxyResultV2> {
   return ok({ post: data });
 }
 
+/** Unpublishes a live post, or cancels a pending schedule — both are "back to draft". */
 async function unpublish(postId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
+  const { data: existing } = await supabase.from('posts').select('status').eq('id', postId).maybeSingle();
+  const wasPublished = existing?.status === 'published';
+
   const { data, error } = await supabase
     .from('posts')
-    .update({ status: 'draft' })
+    .update({ status: 'draft', scheduled_at: null, previous_status: null })
     .eq('id', postId)
     .select(POST_COLUMNS)
     .maybeSingle();
@@ -277,10 +347,12 @@ async function unpublish(postId: string): Promise<APIGatewayProxyResultV2> {
   if (error) throw error;
   if (!data) return notFound('Post not found');
 
-  // Trigger rebuild so the prerendered page is removed.
-  triggerAmplifyBuild('adminPosts.unpublish').catch((err) =>
-    console.warn('[adminPosts.unpublish] build trigger failed', err),
-  );
+  // A cancelled schedule was never live — nothing to remove from the build.
+  if (wasPublished) {
+    triggerAmplifyBuild('adminPosts.unpublish').catch((err) =>
+      console.warn('[adminPosts.unpublish] build trigger failed', err),
+    );
+  }
 
   return ok({ post: data });
 }
@@ -340,21 +412,154 @@ async function restore(postId: string, revisionId: string): Promise<APIGatewayPr
   return ok({ post: data });
 }
 
-async function deletePost(postId: string): Promise<APIGatewayProxyResultV2> {
+/** Moves a post to trash. Idempotent: trashing an already-trashed post is a no-op, not a double-trash that would clobber `previous_status`. */
+async function trashPost(postId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
-  const { error } = await supabase.from('posts').delete().eq('id', postId);
+  const { data: existing, error: readError } = await supabase
+    .from('posts')
+    .select('status')
+    .eq('id', postId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!existing) return notFound('Post not found');
+
+  if (existing.status === 'trash') {
+    const { data } = await supabase.from('posts').select(POST_COLUMNS).eq('id', postId).maybeSingle();
+    return ok({ post: data });
+  }
+
+  const wasPublished = existing.status === 'published';
+
+  const { data, error } = await supabase
+    .from('posts')
+    .update({ status: 'trash', previous_status: existing.status, deleted_at: new Date().toISOString() })
+    .eq('id', postId)
+    .select(POST_COLUMNS)
+    .maybeSingle();
+
   if (error) throw error;
 
-  // A published post has a static prerendered file at /blog/<slug>/ — deleting
+  // A published post has a static prerendered file at /blog/<slug>/ — trashing
   // the row does not remove it. Without a rebuild that page stays live and
-  // reachable, serving deleted content, until some unrelated deploy happens to
-  // overwrite it (Amplify replaces dist/ wholesale each build, so the file
-  // only disappears once prerender re-runs and no longer emits it).
-  triggerAmplifyBuild('adminPosts.delete').catch((err) =>
-    console.warn('[adminPosts.delete] build trigger failed', err),
-  );
+  // reachable, serving trashed content, until some unrelated deploy overwrites
+  // it (Amplify replaces dist/ wholesale each build, so the file only
+  // disappears once prerender re-runs and no longer emits it).
+  if (wasPublished) {
+    triggerAmplifyBuild('adminPosts.trash').catch((err) =>
+      console.warn('[adminPosts.trash] build trigger failed', err),
+    );
+  }
 
+  return ok({ post: data });
+}
+
+/** Restores a trashed post to whatever it was before (draft or published). */
+async function untrashPost(postId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: existing, error: readError } = await supabase
+    .from('posts')
+    .select('status, previous_status')
+    .eq('id', postId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!existing) return notFound('Post not found');
+  if (existing.status !== 'trash') return badRequest('Post is not in trash');
+
+  const restoredStatus = existing.previous_status ?? 'draft';
+
+  const { data, error } = await supabase
+    .from('posts')
+    .update({ status: restoredStatus, previous_status: null, deleted_at: null })
+    .eq('id', postId)
+    .select(POST_COLUMNS)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (restoredStatus === 'published') {
+    triggerAmplifyBuild('adminPosts.untrash').catch((err) =>
+      console.warn('[adminPosts.untrash] build trigger failed', err),
+    );
+  }
+
+  return ok({ post: data });
+}
+
+/** Hard delete — only ever reachable on a row already sitting in trash. */
+async function permanentlyDeletePost(postId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: existing, error: readError } = await supabase
+    .from('posts')
+    .select('status')
+    .eq('id', postId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!existing) return notFound('Post not found');
+  if (existing.status !== 'trash') {
+    return badRequest('Only a trashed post can be permanently deleted — move it to trash first.');
+  }
+
+  // post_revisions cascades via its FK; nothing else references a post.
+  const { error } = await supabase.from('posts').delete().eq('id', postId);
+  if (error) throw error;
   return ok({ deleted: true });
+}
+
+/**
+ * Copies a post's editable content into a new draft — title suffixed
+ * "(Copy)", slug de-duplicated. Copies `draft_blocks` (the content an editor
+ * was actually looking at), never `published_blocks`, and always lands as a
+ * fresh, unpublished draft regardless of the source's status.
+ */
+async function duplicatePost(postId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: original, error: readError } = await supabase
+    .from('posts')
+    .select(
+      'title, slug, excerpt, image_id, image_url, image_alt, author_name, author_image_url, category_id, tags, seo_title, seo_description, draft_blocks',
+    )
+    .eq('id', postId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!original) return notFound('Post not found');
+
+  const slug = await findAvailableSlug(`${original.slug}-copy`, async (candidate) => {
+    const { count, error } = await supabase
+      .from('posts')
+      .select('id', { count: 'exact', head: true })
+      .eq('slug', candidate);
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  });
+
+  const { data, error } = await supabase
+    .from('posts')
+    .insert({
+      title: `${original.title} (Copy)`.slice(0, 200),
+      slug,
+      excerpt: original.excerpt,
+      image_id: original.image_id,
+      image_url: original.image_url,
+      image_alt: original.image_alt,
+      author_name: original.author_name,
+      author_image_url: original.author_image_url,
+      category_id: original.category_id,
+      tags: original.tags,
+      seo_title: original.seo_title,
+      seo_description: original.seo_description,
+      status: 'draft',
+      draft_blocks: original.draft_blocks,
+      published_blocks: [],
+    })
+    .select(POST_COLUMNS)
+    .maybeSingle();
+
+  if (error) throw error;
+  return ok({ post: data });
 }
 
 // =========================================================================

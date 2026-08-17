@@ -5,15 +5,23 @@
  * a live page can never change what visitors see until publish is pressed, and
  * publish is the only write that ever touches `published_blocks`.
  *
+ * Trash, duplicate, and scheduled publish here are the pages side of the same
+ * feature as admin-posts.ts — reasoning lives in the comments over there and
+ * isn't repeated per-field in this file.
+ *
  * Routes (one Lambda, dispatched on path — see the note in pages.ts):
  *   GET    /admin/pages
+ *   GET    /admin/pages/trash
  *   POST   /admin/pages
  *   GET    /admin/pages/{pageId}
  *   PATCH  /admin/pages/{pageId}
- *   DELETE /admin/pages/{pageId}
+ *   DELETE /admin/pages/{pageId}              — move to trash (system pages excluded)
+ *   DELETE /admin/pages/{pageId}/permanent     — hard delete (trash only)
+ *   POST   /admin/pages/{pageId}/untrash
+ *   POST   /admin/pages/{pageId}/duplicate
  *   PUT    /admin/pages/{pageId}/draft
- *   POST   /admin/pages/{pageId}/publish
- *   POST   /admin/pages/{pageId}/unpublish
+ *   POST   /admin/pages/{pageId}/publish       — body: { scheduledAt? }
+ *   POST   /admin/pages/{pageId}/unpublish      — also cancels a schedule
  *   GET    /admin/pages/{pageId}/revisions
  *   POST   /admin/pages/{pageId}/revisions/{revisionId}/restore
  */
@@ -29,14 +37,14 @@ import {
   isAuthorizedAdmin,
 } from '../lib/http.js';
 import { validateBlocks, BlockValidationError } from '../lib/cms-blocks.js';
-import { normalizeSlug, slugify, SlugError } from '../lib/slug.js';
+import { normalizeSlug, slugify, SlugError, findAvailableSlug } from '../lib/slug.js';
 import { triggerAmplifyBuild } from '../lib/amplify-build.js';
 
 /** How many publishes of history to keep per page. */
 const REVISION_LIMIT = 20;
 
 const PAGE_COLUMNS =
-  'id, slug, title, status, seo_title, seo_description, is_system, created_at, updated_at, published_at';
+  'id, slug, title, status, seo_title, seo_description, is_system, scheduled_at, deleted_at, previous_status, created_at, updated_at, published_at';
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   if (!(await isAuthorizedAdmin(event.headers))) return unauthorized();
@@ -47,6 +55,12 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const path = event.requestContext.http.path;
 
   try {
+    // Trash list is a static route, not a {pageId} — check first.
+    if (path === '/admin/pages/trash') {
+      if (method === 'GET') return listTrash();
+      return badRequest(`Unsupported method ${method}`);
+    }
+
     if (!pageId) {
       if (method === 'GET') return list();
       if (method === 'POST') return create(parseBody(event));
@@ -54,14 +68,17 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     if (path.endsWith('/draft')) return saveDraft(pageId, parseBody(event));
-    if (path.endsWith('/publish')) return publish(pageId);
+    if (path.endsWith('/publish')) return publish(pageId, parseBody(event));
     if (path.endsWith('/unpublish')) return unpublish(pageId);
+    if (path.endsWith('/untrash')) return untrashPage(pageId);
+    if (path.endsWith('/duplicate')) return duplicatePage(pageId);
+    if (path.endsWith('/permanent')) return permanentlyDeletePage(pageId);
     if (path.endsWith('/restore') && revisionId) return restore(pageId, revisionId);
     if (path.endsWith('/revisions')) return revisions(pageId);
 
     if (method === 'GET') return get(pageId);
     if (method === 'PATCH') return updateMeta(pageId, parseBody(event));
-    if (method === 'DELETE') return remove(pageId);
+    if (method === 'DELETE') return trashPage(pageId);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     // Validation failures are the caller's fault and must say what was wrong;
@@ -87,7 +104,25 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 
 async function list(): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
-  const { data, error } = await supabase.from('pages').select(PAGE_COLUMNS).order('title');
+  const { data, error } = await supabase
+    .from('pages')
+    .select(PAGE_COLUMNS)
+    // Trash has its own view (GET /admin/pages/trash) — it must not also
+    // silently reappear in the main list an editor scrolls through daily.
+    .neq('status', 'trash')
+    .order('title');
+
+  if (error) throw error;
+  return ok({ pages: data ?? [] });
+}
+
+async function listTrash(): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data, error } = await supabase
+    .from('pages')
+    .select(PAGE_COLUMNS)
+    .eq('status', 'trash')
+    .order('deleted_at', { ascending: false });
 
   if (error) throw error;
   return ok({ pages: data ?? [] });
@@ -185,7 +220,12 @@ async function saveDraft(
   return ok({ page: data });
 }
 
-async function publish(pageId: string): Promise<APIGatewayProxyResultV2> {
+/**
+ * Publish immediately, or — if `scheduledAt` is a valid future timestamp —
+ * schedule it instead. A past or present `scheduledAt` publishes immediately,
+ * same as WordPress treats picking a non-future date in the publish box.
+ */
+async function publish(pageId: string, body: Record<string, unknown>): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
   const { data: page, error: readError } = await supabase
     .from('pages')
@@ -200,9 +240,37 @@ async function publish(pageId: string): Promise<APIGatewayProxyResultV2> {
   // been stored before a block type was removed from the catalog.
   const blocks = validateBlocks(page.draft_blocks);
 
+  let scheduledAtIso: string | null = null;
+  if (typeof body.scheduledAt === 'string' && body.scheduledAt) {
+    const parsed = new Date(body.scheduledAt);
+    if (Number.isNaN(parsed.getTime())) throw new BlockValidationError('scheduledAt is not a valid date');
+    if (parsed.getTime() > Date.now()) scheduledAtIso = parsed.toISOString();
+  }
+
+  if (scheduledAtIso) {
+    // published_blocks/published_at are deliberately untouched: nothing goes
+    // live yet, so nothing changes for a visitor and no rebuild is needed —
+    // the scheduled-publish sweep does the actual publish write later.
+    const { data, error } = await supabase
+      .from('pages')
+      .update({ status: 'scheduled', scheduled_at: scheduledAtIso, previous_status: null })
+      .eq('id', pageId)
+      .select(PAGE_COLUMNS)
+      .maybeSingle();
+
+    if (error) throw error;
+    return ok({ page: data });
+  }
+
   const { data, error } = await supabase
     .from('pages')
-    .update({ published_blocks: blocks, status: 'published', published_at: new Date().toISOString() })
+    .update({
+      published_blocks: blocks,
+      status: 'published',
+      published_at: new Date().toISOString(),
+      scheduled_at: null,
+      previous_status: null,
+    })
     .eq('id', pageId)
     .select(PAGE_COLUMNS)
     .maybeSingle();
@@ -249,11 +317,15 @@ async function pruneRevisions(pageId: string): Promise<void> {
     );
 }
 
+/** Unpublishes a live page, or cancels a pending schedule — both are "back to draft". */
 async function unpublish(pageId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
+  const { data: existing } = await supabase.from('pages').select('status').eq('id', pageId).maybeSingle();
+  const wasPublished = existing?.status === 'published';
+
   const { data, error } = await supabase
     .from('pages')
-    .update({ status: 'draft' })
+    .update({ status: 'draft', scheduled_at: null, previous_status: null })
     .eq('id', pageId)
     .select(PAGE_COLUMNS)
     .maybeSingle();
@@ -261,9 +333,12 @@ async function unpublish(pageId: string): Promise<APIGatewayProxyResultV2> {
   if (error) throw error;
   if (!data) return notFound('Page not found');
 
-  triggerAmplifyBuild('adminPages.unpublish').catch((err) =>
-    console.warn('[adminPages.unpublish] build trigger failed', err),
-  );
+  // A cancelled schedule was never live — nothing to remove from the build.
+  if (wasPublished) {
+    triggerAmplifyBuild('adminPages.unpublish').catch((err) =>
+      console.warn('[adminPages.unpublish] build trigger failed', err),
+    );
+  }
 
   return ok({ page: data });
 }
@@ -306,29 +381,146 @@ async function restore(pageId: string, revisionId: string): Promise<APIGatewayPr
   return ok({ page: data });
 }
 
-async function remove(pageId: string): Promise<APIGatewayProxyResultV2> {
+/** Moves a page to trash. Idempotent: trashing an already-trashed page is a no-op, not a double-trash that would clobber `previous_status`. */
+async function trashPage(pageId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
-  const { data: page, error: readError } = await supabase
+  const { data: existing, error: readError } = await supabase
     .from('pages')
-    .select('id, is_system')
+    .select('status, is_system')
     .eq('id', pageId)
     .maybeSingle();
 
   if (readError) throw readError;
-  if (!page) return notFound('Page not found');
-  if (page.is_system) {
-    return badRequest('Built-in pages cannot be deleted. Unpublish it instead.');
+  if (!existing) return notFound('Page not found');
+  if (existing.is_system) {
+    return badRequest('Built-in pages cannot be trashed. Unpublish it instead.');
   }
 
-  const { error } = await supabase.from('pages').delete().eq('id', pageId);
+  if (existing.status === 'trash') {
+    const { data } = await supabase.from('pages').select(PAGE_COLUMNS).eq('id', pageId).maybeSingle();
+    return ok({ page: data });
+  }
+
+  const wasPublished = existing.status === 'published';
+
+  const { data, error } = await supabase
+    .from('pages')
+    .update({ status: 'trash', previous_status: existing.status, deleted_at: new Date().toISOString() })
+    .eq('id', pageId)
+    .select(PAGE_COLUMNS)
+    .maybeSingle();
+
   if (error) throw error;
 
-  // Removes the deleted page's prerendered <head> from the build output; the
-  // live page itself already 404s correctly via the API the moment this row
-  // is gone (CmsPage.tsx has no dependency on the static file).
-  triggerAmplifyBuild('adminPages.delete').catch((err) =>
-    console.warn('[adminPages.delete] build trigger failed', err),
-  );
+  // Removes the trashed page's prerendered <head> from the build output; the
+  // live page itself already 404s correctly via the API the moment its status
+  // stops being 'published' (CmsPage.tsx has no dependency on the static file).
+  if (wasPublished) {
+    triggerAmplifyBuild('adminPages.trash').catch((err) =>
+      console.warn('[adminPages.trash] build trigger failed', err),
+    );
+  }
 
+  return ok({ page: data });
+}
+
+/** Restores a trashed page to whatever it was before (draft or published). */
+async function untrashPage(pageId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: existing, error: readError } = await supabase
+    .from('pages')
+    .select('status, previous_status')
+    .eq('id', pageId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!existing) return notFound('Page not found');
+  if (existing.status !== 'trash') return badRequest('Page is not in trash');
+
+  const restoredStatus = existing.previous_status ?? 'draft';
+
+  const { data, error } = await supabase
+    .from('pages')
+    .update({ status: restoredStatus, previous_status: null, deleted_at: null })
+    .eq('id', pageId)
+    .select(PAGE_COLUMNS)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (restoredStatus === 'published') {
+    triggerAmplifyBuild('adminPages.untrash').catch((err) =>
+      console.warn('[adminPages.untrash] build trigger failed', err),
+    );
+  }
+
+  return ok({ page: data });
+}
+
+/** Hard delete — only ever reachable on a row already sitting in trash. */
+async function permanentlyDeletePage(pageId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: existing, error: readError } = await supabase
+    .from('pages')
+    .select('status')
+    .eq('id', pageId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!existing) return notFound('Page not found');
+  if (existing.status !== 'trash') {
+    return badRequest('Only a trashed page can be permanently deleted — move it to trash first.');
+  }
+
+  // page_revisions cascades via its FK; nothing else references a page.
+  const { error } = await supabase.from('pages').delete().eq('id', pageId);
+  if (error) throw error;
   return ok({ deleted: true });
+}
+
+/**
+ * Copies a page's editable content into a new draft — title suffixed
+ * "(Copy)", slug de-duplicated. Copies `draft_blocks` (the content an editor
+ * was actually looking at), never `published_blocks`, always lands as a fresh
+ * unpublished draft regardless of the source's status, and is never itself a
+ * system page — nothing in code references the duplicate's new slug, even
+ * when duplicating a built-in page.
+ */
+async function duplicatePage(pageId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: original, error: readError } = await supabase
+    .from('pages')
+    .select('title, slug, seo_title, seo_description, draft_blocks')
+    .eq('id', pageId)
+    .maybeSingle();
+
+  if (readError) throw readError;
+  if (!original) return notFound('Page not found');
+
+  const slug = await findAvailableSlug(`${original.slug}-copy`, async (candidate) => {
+    const { count, error } = await supabase
+      .from('pages')
+      .select('id', { count: 'exact', head: true })
+      .eq('slug', candidate);
+    if (error) throw error;
+    return (count ?? 0) > 0;
+  });
+
+  const { data, error } = await supabase
+    .from('pages')
+    .insert({
+      title: `${original.title} (Copy)`.slice(0, 200),
+      slug,
+      seo_title: original.seo_title,
+      seo_description: original.seo_description,
+      status: 'draft',
+      is_system: false,
+      draft_blocks: original.draft_blocks,
+      published_blocks: [],
+    })
+    .select(PAGE_COLUMNS)
+    .maybeSingle();
+
+  if (error) throw error;
+  return ok({ page: data });
 }

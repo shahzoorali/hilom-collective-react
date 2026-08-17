@@ -10,13 +10,21 @@ import { Puck, type Data } from '@puckeditor/core';
 import '@puckeditor/core/puck.css';
 import type { Block } from '../../cms/blocks';
 import { createPuckConfig } from './puckConfig';
+import ScheduledBadge from './ScheduledBadge';
 
 /**
  * Resource adapter — the contract between the editor and whichever CMS
  * resource type it is editing.
  */
 export interface EditorAdapter<
-  T extends { id: string; slug: string; title: string; status: 'draft' | 'published'; draft_blocks?: Block[] },
+  T extends {
+    id: string;
+    slug: string;
+    title: string;
+    status: 'draft' | 'published' | 'scheduled' | 'trash';
+    scheduled_at?: string | null;
+    draft_blocks?: Block[];
+  },
 > {
   /** Human label for the resource type, e.g. "page" or "post". */
   label: string;
@@ -24,9 +32,9 @@ export interface EditorAdapter<
   load: (key: string) => Promise<T>;
   /** Save blocks to the draft column. */
   saveDraft: (key: string, blocks: Block[]) => Promise<T>;
-  /** Publish: copy draft to published. */
-  publish: (key: string) => Promise<T>;
-  /** Unpublish: set status to draft. */
+  /** Publish immediately, or — with `scheduledAt` in the future — schedule instead. */
+  publish: (key: string, scheduledAt?: string) => Promise<T>;
+  /** Unpublish, or cancel a pending schedule: both put it back to draft. */
   unpublish: (key: string) => Promise<T>;
   /** List revision history. */
   listRevisions: (key: string) => Promise<{ id: string; note: string | null; created_at: string }[]>;
@@ -58,7 +66,14 @@ function fromPuckData(data: Data): Block[] {
 }
 
 export default function BlockEditor<
-  T extends { id: string; slug: string; title: string; status: 'draft' | 'published'; draft_blocks?: Block[] },
+  T extends {
+    id: string;
+    slug: string;
+    title: string;
+    status: 'draft' | 'published' | 'scheduled' | 'trash';
+    scheduled_at?: string | null;
+    draft_blocks?: Block[];
+  },
 >({
   adminKey,
   resourceId,
@@ -85,6 +100,8 @@ export default function BlockEditor<
   const [revisions, setRevisions] = useState<{ id: string; note: string | null; created_at: string }[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [canvasVersion, setCanvasVersion] = useState(0);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleInput, setScheduleInput] = useState('');
 
   const latest = useRef<Block[]>([]);
   const [config] = useState(() => createPuckConfig(adminKey));
@@ -147,11 +164,29 @@ export default function BlockEditor<
       setRevisions(await adapter.listRevisions(resourceId));
     }, adapter.publishNotice ?? 'Published — content is now live.');
 
+  /**
+   * A `datetime-local` input has no timezone of its own — it's "wall clock
+   * time in whatever timezone this browser is in" — so `new Date(value)`
+   * (which `Date` treats as local time for that exact string shape) is the
+   * correct read, not a UTC reinterpretation that would silently shift it by
+   * the browser's offset.
+   */
+  const schedule = () =>
+    run(async () => {
+      if (!scheduleInput) throw new Error('Pick a date and time first.');
+      const iso = new Date(scheduleInput).toISOString();
+      await adapter.saveDraft(resourceId, latest.current);
+      const updated = await adapter.publish(resourceId, iso);
+      setResource(updated);
+      setDirty(false);
+      setShowSchedule(false);
+    }, 'Scheduled — it will go live automatically at the time you picked.');
+
   const unpublish = () =>
     run(async () => {
       const updated = await adapter.unpublish(resourceId);
       setResource(updated);
-    }, 'Unpublished. Post is now in draft status.');
+    }, resource?.status === 'scheduled' ? 'Schedule cancelled. Post is back in draft.' : 'Unpublished. Post is now in draft status.');
 
   const restore = (revisionId: string) =>
     run(async () => {
@@ -284,12 +319,16 @@ export default function BlockEditor<
                   ← {backLabel ?? `All ${adapter.label}s`}
                 </button>
 
-                <span
-                  className={resource.status === 'published' ? 'pill pill-ok' : 'pill pill-warn'}
-                  style={{ textTransform: 'capitalize', fontSize: '0.78rem' }}
-                >
-                  {resource.status}
-                </span>
+                {resource.status === 'scheduled' ? (
+                  <ScheduledBadge at={resource.scheduled_at ?? null} />
+                ) : (
+                  <span
+                    className={resource.status === 'published' ? 'pill pill-ok' : 'pill pill-warn'}
+                    style={{ textTransform: 'capitalize', fontSize: '0.78rem' }}
+                  >
+                    {resource.status}
+                  </span>
+                )}
 
                 {/* Extra custom actions (like Post Settings) */}
                 {renderExtraHeaderActions && renderExtraHeaderActions(resource)}
@@ -324,15 +363,57 @@ export default function BlockEditor<
                   {dirty ? '● Save draft' : 'Saved'}
                 </button>
 
-                {resource.status === 'published' && (
+                {(resource.status === 'published' || resource.status === 'scheduled') && (
                   <button
                     className="btn btn-ghost small"
                     onClick={unpublish}
                     disabled={busy}
                     style={{ color: 'var(--danger-fg)' }}
                   >
-                    Unpublish
+                    {resource.status === 'scheduled' ? 'Cancel schedule' : 'Unpublish'}
                   </button>
+                )}
+
+                {/* Puck's own Publish button covers "publish now"; scheduling is a
+                    separate control because Puck has no way to pass extra data
+                    through its built-in button's click. */}
+                {resource.status !== 'trash' && (
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      className="btn btn-ghost small"
+                      onClick={() => setShowSchedule((v) => !v)}
+                      disabled={busy}
+                      title="Publish at a future date and time"
+                    >
+                      🕒 {resource.status === 'scheduled' ? 'Reschedule' : 'Schedule'}
+                    </button>
+                    {showSchedule && (
+                      <div className="admin-schedule-popover">
+                        <label className="small" style={{ marginBottom: '0.35rem' }}>
+                          Publish at
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleInput}
+                          min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                          onChange={(e) => setScheduleInput(e.target.value)}
+                        />
+                        <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem' }}>
+                          <button
+                            className="btn btn-primary small"
+                            onClick={schedule}
+                            disabled={busy || !scheduleInput}
+                            style={{ flex: 1 }}
+                          >
+                            Schedule
+                          </button>
+                          <button className="btn btn-ghost small" onClick={() => setShowSchedule(false)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {puckPublishButton}

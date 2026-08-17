@@ -1203,6 +1203,49 @@ div[class*="_PuckCanvas-root_"],
   margin-top: 0.2rem;
 }
 
+/* Active/Trash toggle above the Pages and Posts tables — a plain tab pair,
+   not a full nav component, since there are only ever exactly two views. */
+.admin-view-toggle {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.admin-view-toggle__btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.55rem 0.2rem;
+  margin-bottom: -1px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.admin-view-toggle__btn:hover { color: var(--ink); }
+.admin-view-toggle__btn.is-active { color: var(--forest); border-bottom-color: var(--forest); }
+
+/* Scheduling popover on the editor's header — anchored to the Schedule
+   button's wrapper (position: relative), not a modal, since it is one date
+   field and two buttons: a full overlay would be more chrome than content. */
+.admin-schedule-popover {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.85rem;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+}
+.admin-schedule-popover input[type='datetime-local'] {
+  width: 100%;
+}
+
 /* Search and Filter Toolbar */
 .admin-toolbar {
   display: flex;

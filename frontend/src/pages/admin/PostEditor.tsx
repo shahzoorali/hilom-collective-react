@@ -30,7 +30,7 @@ function usePostsAdapter(adminKey: string): EditorAdapter<AdminPost> {
       label: 'post',
       load: (postId) => adminGetPost(adminKey, postId),
       saveDraft: (postId, blocks) => adminSavePostDraft(adminKey, postId, blocks),
-      publish: (postId) => adminPublishPost(adminKey, postId),
+      publish: (postId, scheduledAt) => adminPublishPost(adminKey, postId, scheduledAt),
       unpublish: (postId) => adminUnpublishPost(adminKey, postId),
       listRevisions: (postId) => adminListPostRevisions(adminKey, postId),
       restoreRevision: (postId, revisionId) =>

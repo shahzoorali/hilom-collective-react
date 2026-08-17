@@ -38,7 +38,7 @@ function usePagesAdapter(adminKey: string): EditorAdapter<AdminPage> {
       label: 'page',
       load: (pageId) => adminGetPage(adminKey, pageId),
       saveDraft: (pageId, blocks) => adminSaveDraft(adminKey, pageId, blocks),
-      publish: (pageId) => adminPublishPage(adminKey, pageId),
+      publish: (pageId, scheduledAt) => adminPublishPage(adminKey, pageId, scheduledAt),
       unpublish: (pageId) => adminUnpublishPage(adminKey, pageId),
       listRevisions: (pageId) => adminListRevisions(adminKey, pageId),
       restoreRevision: (pageId, revisionId) => adminRestoreRevision(adminKey, pageId, revisionId),

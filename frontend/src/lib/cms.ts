@@ -89,22 +89,33 @@ const adminInit = (adminKey: string, method?: string, body?: unknown): RequestIn
   ...(body ? { body: JSON.stringify(body) } : {}),
 });
 
+/** `trash` and `scheduled` share the enum `published`/`draft` already used
+ *  everywhere status is checked — see db/migrations/0009 for why. */
+export type AdminContentStatus = 'draft' | 'published' | 'scheduled' | 'trash';
+
 export interface AdminPage {
   id: string;
   slug: string;
   title: string;
-  status: 'draft' | 'published';
+  status: AdminContentStatus;
   seo_title: string | null;
   seo_description: string | null;
   is_system: boolean;
   updated_at: string;
   published_at: string | null;
+  scheduled_at: string | null;
+  deleted_at: string | null;
+  /** What to restore to on untrash — only meaningful while status is 'trash'. */
+  previous_status: AdminContentStatus | null;
   draft_blocks?: Block[];
   published_blocks?: Block[];
 }
 
 export const adminListPages = (adminKey: string) =>
   apiFetch<{ pages: AdminPage[] }>('/admin/pages', adminInit(adminKey)).then((r) => r.pages);
+
+export const adminListTrashedPages = (adminKey: string) =>
+  apiFetch<{ pages: AdminPage[] }>('/admin/pages/trash', adminInit(adminKey)).then((r) => r.pages);
 
 export const adminGetPage = (adminKey: string, pageId: string) =>
   apiFetch<{ page: AdminPage }>(`/admin/pages/${pageId}`, adminInit(adminKey)).then((r) => r.page);
@@ -127,18 +138,37 @@ export const adminSaveDraft = (adminKey: string, pageId: string, blocks: Block[]
     adminInit(adminKey, 'PUT', { blocks }),
   ).then((r) => r.page);
 
-export const adminPublishPage = (adminKey: string, pageId: string) =>
-  apiFetch<{ page: AdminPage }>(`/admin/pages/${pageId}/publish`, adminInit(adminKey, 'POST')).then(
-    (r) => r.page,
-  );
+/** `scheduledAt` in the future schedules instead of publishing immediately —
+ *  a past/present value (or omitting it) publishes right away. */
+export const adminPublishPage = (adminKey: string, pageId: string, scheduledAt?: string) =>
+  apiFetch<{ page: AdminPage }>(
+    `/admin/pages/${pageId}/publish`,
+    adminInit(adminKey, 'POST', scheduledAt ? { scheduledAt } : undefined),
+  ).then((r) => r.page);
 
+/** Also cancels a pending schedule — both are "back to draft" server-side. */
 export const adminUnpublishPage = (adminKey: string, pageId: string) =>
   apiFetch<{ page: AdminPage }>(`/admin/pages/${pageId}/unpublish`, adminInit(adminKey, 'POST')).then(
     (r) => r.page,
   );
 
-export const adminDeletePage = (adminKey: string, pageId: string) =>
-  apiFetch<{ deleted: boolean }>(`/admin/pages/${pageId}`, adminInit(adminKey, 'DELETE'));
+/** Moves a page to trash (soft delete) — not the permanent kind. */
+export const adminTrashPage = (adminKey: string, pageId: string) =>
+  apiFetch<{ page: AdminPage }>(`/admin/pages/${pageId}`, adminInit(adminKey, 'DELETE')).then((r) => r.page);
+
+export const adminUntrashPage = (adminKey: string, pageId: string) =>
+  apiFetch<{ page: AdminPage }>(`/admin/pages/${pageId}/untrash`, adminInit(adminKey, 'POST')).then(
+    (r) => r.page,
+  );
+
+/** Only valid on a page already in trash — irreversible. */
+export const adminPermanentlyDeletePage = (adminKey: string, pageId: string) =>
+  apiFetch<{ deleted: boolean }>(`/admin/pages/${pageId}/permanent`, adminInit(adminKey, 'DELETE'));
+
+export const adminDuplicatePage = (adminKey: string, pageId: string) =>
+  apiFetch<{ page: AdminPage }>(`/admin/pages/${pageId}/duplicate`, adminInit(adminKey, 'POST')).then(
+    (r) => r.page,
+  );
 
 export interface PageRevision {
   id: string;
@@ -386,16 +416,23 @@ export interface AdminPost {
   tags: string[];
   seo_title: string | null;
   seo_description: string | null;
-  status: 'draft' | 'published';
+  status: AdminContentStatus;
   created_at: string;
   updated_at: string;
   published_at: string | null;
+  scheduled_at: string | null;
+  deleted_at: string | null;
+  /** What to restore to on untrash — only meaningful while status is 'trash'. */
+  previous_status: AdminContentStatus | null;
   draft_blocks?: Block[];
   published_blocks?: Block[];
 }
 
 export const adminListPosts = (adminKey: string) =>
   apiFetch<{ posts: AdminPost[] }>('/admin/posts', adminInit(adminKey)).then((r) => r.posts);
+
+export const adminListTrashedPosts = (adminKey: string) =>
+  apiFetch<{ posts: AdminPost[] }>('/admin/posts/trash', adminInit(adminKey)).then((r) => r.posts);
 
 export const adminGetPost = (adminKey: string, postId: string) =>
   apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}`, adminInit(adminKey)).then((r) => r.post);
@@ -418,18 +455,37 @@ export const adminSavePostDraft = (adminKey: string, postId: string, blocks: Blo
     adminInit(adminKey, 'PUT', { blocks }),
   ).then((r) => r.post);
 
-export const adminPublishPost = (adminKey: string, postId: string) =>
-  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}/publish`, adminInit(adminKey, 'POST')).then(
-    (r) => r.post,
-  );
+/** `scheduledAt` in the future schedules instead of publishing immediately —
+ *  a past/present value (or omitting it) publishes right away. */
+export const adminPublishPost = (adminKey: string, postId: string, scheduledAt?: string) =>
+  apiFetch<{ post: AdminPost }>(
+    `/admin/posts/${postId}/publish`,
+    adminInit(adminKey, 'POST', scheduledAt ? { scheduledAt } : undefined),
+  ).then((r) => r.post);
 
+/** Also cancels a pending schedule — both are "back to draft" server-side. */
 export const adminUnpublishPost = (adminKey: string, postId: string) =>
   apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}/unpublish`, adminInit(adminKey, 'POST')).then(
     (r) => r.post,
   );
 
-export const adminDeletePost = (adminKey: string, postId: string) =>
-  apiFetch<{ deleted: boolean }>(`/admin/posts/${postId}`, adminInit(adminKey, 'DELETE'));
+/** Moves a post to trash (soft delete) — not the permanent kind. */
+export const adminTrashPost = (adminKey: string, postId: string) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}`, adminInit(adminKey, 'DELETE')).then((r) => r.post);
+
+export const adminUntrashPost = (adminKey: string, postId: string) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}/untrash`, adminInit(adminKey, 'POST')).then(
+    (r) => r.post,
+  );
+
+/** Only valid on a post already in trash — irreversible. */
+export const adminPermanentlyDeletePost = (adminKey: string, postId: string) =>
+  apiFetch<{ deleted: boolean }>(`/admin/posts/${postId}/permanent`, adminInit(adminKey, 'DELETE'));
+
+export const adminDuplicatePost = (adminKey: string, postId: string) =>
+  apiFetch<{ post: AdminPost }>(`/admin/posts/${postId}/duplicate`, adminInit(adminKey, 'POST')).then(
+    (r) => r.post,
+  );
 
 export interface PostRevision {
   id: string;

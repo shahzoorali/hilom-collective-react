@@ -46,3 +46,23 @@ export function slugify(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
 }
+
+/**
+ * Finds a slug that doesn't collide, trying `base`, then `base-2`, `base-3`,
+ * ... — used by "Duplicate" so a copy never fails on the unique constraint.
+ * `exists` is caller-supplied so this file stays free of any DB dependency;
+ * the 80-char cap matches `normalizeSlug`'s, enforced here too since a
+ * collision suffix can push a max-length base over it.
+ */
+export async function findAvailableSlug(
+  base: string,
+  exists: (candidate: string) => Promise<boolean>,
+): Promise<string> {
+  let candidate = base.slice(0, 80);
+  for (let n = 2; await exists(candidate); n++) {
+    const suffix = `-${n}`;
+    candidate = base.slice(0, 80 - suffix.length) + suffix;
+    if (n > 500) throw new SlugError('Could not find an available slug for the duplicate');
+  }
+  return candidate;
+}

@@ -16,6 +16,8 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 
@@ -288,6 +290,13 @@ export class HilomBackendStack extends cdk.Stack {
     const adminEvents = makeFn('AdminEventsFn', 'handlers/admin-events.ts', 'handler');
     const postsPublic = makeFn('PostsPublicFn', 'handlers/posts.ts', 'handler');
     const adminPosts = makeFn('AdminPostsFn', 'handlers/admin-posts.ts', 'handler');
+    // Not behind API Gateway — invoked on a schedule (below), not by a
+    // request. Publishes posts/pages whose scheduled_at has arrived.
+    const scheduledPublishSweep = makeFn(
+      'ScheduledPublishSweepFn',
+      'handlers/scheduled-publish-sweep.ts',
+      'handler',
+    );
 
     // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
     // hilomcollective.com is already a verified, DKIM-signed domain identity
@@ -312,6 +321,15 @@ export class HilomBackendStack extends cdk.Stack {
         reportBatchItemFailures: true, // only failed messages re-queue, not the whole batch
       }),
     );
+
+    // Scheduled publish: a rate rule, not `cron`, because "publish within a
+    // few minutes of the scheduled time" is the actual requirement — cron's
+    // wall-clock-aligned firing buys nothing here and is harder to reason
+    // about the latency of.
+    new events.Rule(this, 'ScheduledPublishRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+      targets: [new eventsTargets.LambdaFunction(scheduledPublishSweep)],
+    });
 
     // Least privilege: only the functions that read a given secret can read it.
     for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate]) {
@@ -342,16 +360,16 @@ export class HilomBackendStack extends cdk.Stack {
     // CMS grants.
     for (const fn of [
       pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms,
-      eventsPublic, adminEvents, postsPublic, adminPosts,
+      eventsPublic, adminEvents, postsPublic, adminPosts, scheduledPublishSweep,
     ]) {
       supabaseSecret.grantRead(fn);
     }
     for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
       adminKeySecret.grantRead(fn);
     }
-    // admin-posts and admin-pages trigger Amplify rebuilds on publish/unpublish/
-    // delete — see backend/src/lib/amplify-build.ts for why each needs it.
-    for (const fn of [adminPosts, adminPages]) {
+    // admin-posts, admin-pages, and the scheduled-publish sweep all trigger
+    // Amplify rebuilds — see backend/src/lib/amplify-build.ts for why each needs it.
+    for (const fn of [adminPosts, adminPages, scheduledPublishSweep]) {
       buildHookSecret.grantRead(fn);
       fn.addEnvironment('BUILD_HOOK_SECRET_ID', buildHookSecret.secretName);
     }
@@ -480,10 +498,17 @@ export class HilomBackendStack extends cdk.Stack {
     ]);
     cmsRoutes(adminPages, 'AdminPagesInt', [
       ['/admin/pages', [GET, POST]],
+      // Static route registered ahead of the {pageId} entries below — API
+      // Gateway prefers an exact match, so a literal "trash" segment never
+      // gets captured as a page id.
+      ['/admin/pages/trash', [GET]],
       ['/admin/pages/{pageId}', [GET, PATCH, DELETE]],
       ['/admin/pages/{pageId}/draft', [PUT]],
       ['/admin/pages/{pageId}/publish', [POST]],
       ['/admin/pages/{pageId}/unpublish', [POST]],
+      ['/admin/pages/{pageId}/untrash', [POST]],
+      ['/admin/pages/{pageId}/duplicate', [POST]],
+      ['/admin/pages/{pageId}/permanent', [DELETE]],
       ['/admin/pages/{pageId}/revisions', [GET]],
       ['/admin/pages/{pageId}/revisions/{revisionId}/restore', [POST]],
     ]);
@@ -514,10 +539,15 @@ export class HilomBackendStack extends cdk.Stack {
     ]);
     cmsRoutes(adminPosts, 'AdminPostsInt', [
       ['/admin/posts', [GET, POST]],
+      // Static route ahead of {postId} — same reasoning as pages/trash above.
+      ['/admin/posts/trash', [GET]],
       ['/admin/posts/{postId}', [GET, PATCH, DELETE]],
       ['/admin/posts/{postId}/draft', [PUT]],
       ['/admin/posts/{postId}/publish', [POST]],
       ['/admin/posts/{postId}/unpublish', [POST]],
+      ['/admin/posts/{postId}/untrash', [POST]],
+      ['/admin/posts/{postId}/duplicate', [POST]],
+      ['/admin/posts/{postId}/permanent', [DELETE]],
       ['/admin/posts/{postId}/revisions', [GET]],
       ['/admin/posts/{postId}/revisions/{revisionId}/restore', [POST]],
       ['/admin/categories', [GET, POST]],
