@@ -38,7 +38,7 @@ import {
   BlockValidationError,
   SlugError,
 } from '../lib/cms-posts.js';
-import { getSecret } from '../lib/secrets.js';
+import { triggerAmplifyBuild } from '../lib/amplify-build.js';
 
 /** How many publishes of history to keep per post. */
 const REVISION_LIMIT = 20;
@@ -258,7 +258,9 @@ async function publish(postId: string): Promise<APIGatewayProxyResultV2> {
   await pruneRevisions(postId);
 
   // Trigger Amplify rebuild — fire-and-forget.
-  triggerBuild().catch((err) => console.warn('[adminPosts.publish] build trigger failed', err));
+  triggerAmplifyBuild('adminPosts.publish').catch((err) =>
+    console.warn('[adminPosts.publish] build trigger failed', err),
+  );
 
   return ok({ post: data });
 }
@@ -276,7 +278,9 @@ async function unpublish(postId: string): Promise<APIGatewayProxyResultV2> {
   if (!data) return notFound('Post not found');
 
   // Trigger rebuild so the prerendered page is removed.
-  triggerBuild().catch((err) => console.warn('[adminPosts.unpublish] build trigger failed', err));
+  triggerAmplifyBuild('adminPosts.unpublish').catch((err) =>
+    console.warn('[adminPosts.unpublish] build trigger failed', err),
+  );
 
   return ok({ post: data });
 }
@@ -340,6 +344,16 @@ async function deletePost(postId: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
   const { error } = await supabase.from('posts').delete().eq('id', postId);
   if (error) throw error;
+
+  // A published post has a static prerendered file at /blog/<slug>/ — deleting
+  // the row does not remove it. Without a rebuild that page stays live and
+  // reachable, serving deleted content, until some unrelated deploy happens to
+  // overwrite it (Amplify replaces dist/ wholesale each build, so the file
+  // only disappears once prerender re-runs and no longer emits it).
+  triggerAmplifyBuild('adminPosts.delete').catch((err) =>
+    console.warn('[adminPosts.delete] build trigger failed', err),
+  );
+
   return ok({ deleted: true });
 }
 
@@ -398,27 +412,4 @@ async function deleteCategory(categoryId: string): Promise<APIGatewayProxyResult
   const { error } = await supabase.from('categories').delete().eq('id', categoryId);
   if (error) throw error;
   return ok({ deleted: true });
-}
-
-// =========================================================================
-// Amplify rebuild trigger
-// =========================================================================
-
-async function triggerBuild(): Promise<void> {
-  const secretId = process.env.BUILD_HOOK_SECRET_ID;
-  if (!secretId) {
-    console.warn('[triggerBuild] BUILD_HOOK_SECRET_ID not set, skipping');
-    return;
-  }
-
-  const { url } = await getSecret<{ url: string }>(secretId);
-  if (!url) {
-    console.warn('[triggerBuild] No webhook URL in secret, skipping');
-    return;
-  }
-
-  const res = await fetch(url, { method: 'POST' });
-  if (!res.ok) {
-    console.warn(`[triggerBuild] webhook returned ${res.status}`);
-  }
 }

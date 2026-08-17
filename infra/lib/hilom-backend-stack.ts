@@ -349,9 +349,12 @@ export class HilomBackendStack extends cdk.Stack {
     for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
       adminKeySecret.grantRead(fn);
     }
-    // The admin-posts handler triggers Amplify rebuilds on publish/unpublish.
-    buildHookSecret.grantRead(adminPosts);
-    adminPosts.addEnvironment('BUILD_HOOK_SECRET_ID', buildHookSecret.secretName);
+    // admin-posts and admin-pages trigger Amplify rebuilds on publish/unpublish/
+    // delete — see backend/src/lib/amplify-build.ts for why each needs it.
+    for (const fn of [adminPosts, adminPages]) {
+      buildHookSecret.grantRead(fn);
+      fn.addEnvironment('BUILD_HOOK_SECRET_ID', buildHookSecret.secretName);
+    }
     // The public form endpoint salts its IP hashes with the admin key, which is
     // the one high-entropy secret this function already has a reason to reach.
     adminKeySecret.grantRead(formsPublic);

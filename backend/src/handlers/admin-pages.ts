@@ -30,6 +30,7 @@ import {
 } from '../lib/http.js';
 import { validateBlocks, BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, SlugError } from '../lib/slug.js';
+import { triggerAmplifyBuild } from '../lib/amplify-build.js';
 
 /** How many publishes of history to keep per page. */
 const REVISION_LIMIT = 20;
@@ -216,6 +217,16 @@ async function publish(pageId: string): Promise<APIGatewayProxyResultV2> {
   if (revisionError) console.warn('[adminPages.publish] revision insert failed', revisionError);
 
   await pruneRevisions(pageId);
+
+  // CmsPage.tsx fetches live from the API, so the page itself is already
+  // correct for visitors without this — this refreshes the prerendered <head>
+  // (title/description/og:image/JSON-LD) that crawlers and link-unfurlers see
+  // without executing JS, which would otherwise stay stale until the next
+  // unrelated deploy.
+  triggerAmplifyBuild('adminPages.publish').catch((err) =>
+    console.warn('[adminPages.publish] build trigger failed', err),
+  );
+
   return ok({ page: data });
 }
 
@@ -249,6 +260,11 @@ async function unpublish(pageId: string): Promise<APIGatewayProxyResultV2> {
 
   if (error) throw error;
   if (!data) return notFound('Page not found');
+
+  triggerAmplifyBuild('adminPages.unpublish').catch((err) =>
+    console.warn('[adminPages.unpublish] build trigger failed', err),
+  );
+
   return ok({ page: data });
 }
 
@@ -306,5 +322,13 @@ async function remove(pageId: string): Promise<APIGatewayProxyResultV2> {
 
   const { error } = await supabase.from('pages').delete().eq('id', pageId);
   if (error) throw error;
+
+  // Removes the deleted page's prerendered <head> from the build output; the
+  // live page itself already 404s correctly via the API the moment this row
+  // is gone (CmsPage.tsx has no dependency on the static file).
+  triggerAmplifyBuild('adminPages.delete').catch((err) =>
+    console.warn('[adminPages.delete] build trigger failed', err),
+  );
+
   return ok({ deleted: true });
 }
