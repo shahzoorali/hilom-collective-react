@@ -435,6 +435,24 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
 /* ---------------------------------------------------------------------------
    Puck Editor Canvas & Layout Scrolling Fixes (for iframe={{ enabled: false }})
    --------------------------------------------------------------------------- */
+/* Puck's own outermost wrapper (`<div class="Puck _Puck_xxxxx_19">`) sits between
+   BlockEditor's bounded flex child and _PuckLayout_, and ships with `height: auto`.
+   Left unbounded it grows to the full height of the block list inside a parent that
+   is only the viewport tall, and — because every rule below sizes with `height: 100%`
+   — each descendant then resolves 100% against *that* overgrown number. The result
+   is that nothing is ever taller than its own content, so _PuckCanvas_ never
+   overflows and never shows a scrollbar: the canvas simply spills off-screen and
+   blocks past the fold are unreachable. Bounding this element is what makes every
+   `height: 100%` below it mean "the space actually available". */
+.Puck,
+div[class*="_Puck_"],
+[class*="_Puck_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
 /* Root Puck container strictly bounded to remaining screen height */
 div[class*="_PuckLayout_"],
 [class*="_PuckLayout_"] {
