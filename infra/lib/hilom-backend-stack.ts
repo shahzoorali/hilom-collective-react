@@ -264,6 +264,7 @@ export class HilomBackendStack extends cdk.Stack {
       props.frontendUrl ?? 'https://www.hilomcollective.com',
     );
     const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
+    const adminOrderPayment = makeFn('AdminOrderPaymentFn', 'handlers/orders.ts', 'adminPayment');
     const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');
     const adminProductsUpdate = makeFn('AdminProductsUpdateFn', 'handlers/admin-products.ts', 'update');
     const enrollmentRetryConsumer = makeFn(
@@ -313,7 +314,7 @@ export class HilomBackendStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, revokeAccess, adminProductsList, adminProductsUpdate]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -331,6 +332,10 @@ export class HilomBackendStack extends cdk.Stack {
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
     adminKeySecret.grantRead(adminOrders);
+    // Reads the transaction behind an order straight from PayMongo, so it needs
+    // both the admin key (to authorize the caller) and the PayMongo secret key.
+    adminKeySecret.grantRead(adminOrderPayment);
+    paymongoSecret.grantRead(adminOrderPayment);
     adminKeySecret.grantRead(adminProductsList);
     adminKeySecret.grantRead(adminProductsUpdate);
 
@@ -437,6 +442,7 @@ export class HilomBackendStack extends cdk.Stack {
     route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
     route('/orders/status-by-session/{sessionId}', apigw.HttpMethod.GET, orderStatusBySession, 'OrderStatusBySessionInt');
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
+    route('/admin/orders/{orderId}/payment', apigw.HttpMethod.GET, adminOrderPayment, 'AdminOrderPaymentInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');
     route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');
     route('/community/submit', apigw.HttpMethod.POST, communitySubmit, 'CommunitySubmitInt');

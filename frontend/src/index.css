@@ -737,6 +737,141 @@ div[class*="_PuckCanvas-root_"],
 .prod-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ochre); flex: none; }
 
 /* ---------------------------------------------------------------------------
+   Admin › Commerce › Orders — support detail
+   The row stays the scan view; everything support needs that does not fit in a
+   row lives in an expandable panel underneath it.
+   --------------------------------------------------------------------------- */
+.ord-search {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.ord-search input { max-width: 420px; }
+
+.ord-table th:first-child, .ord-table td:first-child { width: 1%; padding-right: 0; }
+.ord-row.is-open > td { background: var(--page); border-bottom-color: transparent; }
+.ord-row:hover > td { background: #fbfaf6; }
+/* The row preview stays clipped; the panel below carries the full text. */
+.ord-problem { max-width: 320px; }
+
+.ord-expand {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  color: var(--muted);
+  line-height: 1;
+}
+.ord-expand:hover { color: var(--forest); }
+.ord-expand:focus-visible { outline: 2px solid var(--forest); outline-offset: 1px; border-radius: 4px; }
+.ord-caret { display: inline-block; transition: transform 0.15s ease; font-size: 0.8rem; }
+.ord-caret.is-open { transform: rotate(90deg); }
+
+.ord-detail-row > td { background: var(--page); padding: 0 0 1rem; }
+
+.ord-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+  padding: 1.1rem 1.25rem;
+  margin: 0 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.ord-head {
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 0.6rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+/* Marks the one block that is not our own data, so a stale or missing value
+   there is read as "PayMongo said so" rather than as a bug in the admin. */
+.ord-source {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: var(--leaf);
+}
+.ord-subhead { font-size: 0.8rem; margin: 0.75rem 0 0.35rem; color: var(--forest); }
+
+.ord-grid { margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.ord-detail { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 0.6rem; align-items: baseline; }
+.ord-detail dt { font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+.ord-detail dd {
+  margin: 0;
+  font-size: 0.83rem;
+  /* Ids are long and unbroken; without this they force the panel wider than
+     the table and reintroduce horizontal scrolling. */
+  overflow-wrap: anywhere;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.ord-slug { font-family: 'Courier New', monospace; font-size: 0.76rem; color: var(--muted); }
+.ord-age { font-size: 0.72rem; color: var(--muted); }
+.ord-chips { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+.ord-method {
+  background: var(--cream);
+  color: #8a5a11;
+  border-radius: 5px;
+  padding: 0.05rem 0.4rem;
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+.ord-fee { color: var(--danger-fg); }
+/* A missing Moodle id or Cognito sub is the answer to "why can't they get in",
+   so it reads as a finding rather than as an empty cell. */
+.ord-missing { color: var(--danger-fg); font-weight: 600; font-size: 0.78rem; }
+
+.ord-copy {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 0.68rem;
+  font-family: var(--sans);
+  color: var(--muted);
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+}
+.ord-copy:hover { border-color: var(--forest); color: var(--forest); }
+.ord-link { font-size: 0.72rem; font-family: var(--sans); white-space: nowrap; }
+
+.ord-error {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  border-radius: 8px;
+  color: var(--danger-fg);
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ord-unavailable { color: #8a5a11; margin: 0; }
+.ord-refunds ul { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; }
+.ord-refunds li { margin-bottom: 0.25rem; }
+
+/* ---------------------------------------------------------------------------
    Admin UI / UX Enhancements: Drawers, Modals, Toasts, Previews & Stats
    --------------------------------------------------------------------------- */
 

@@ -29,14 +29,63 @@ export interface ProductDetail extends Product {
 export interface AdminOrder {
   id: string;
   paymongo_payment_id: string;
+  product_id: string;
   buyer_email: string;
   amount_centavos: number;
   currency: string;
   status: string;
+  /** Null when SSO identity was never created — the "logged in but sees nothing" case. */
+  cognito_user_sub: string | null;
   moodle_user_id: number | null;
   error_detail: string | null;
   created_at: string;
+  /** When the status last changed, which is how long a stuck order has been stuck. */
+  updated_at: string;
+  product_name: string | null;
+  product_slug: string | null;
+  /** Courses this sale should have granted — what to check in Moodle. */
+  moodle_course_ids: number[];
 }
+
+export interface OrderRefund {
+  id: string;
+  amount_centavos: number | null;
+  status: string | null;
+  created_at: string | null;
+}
+
+export interface OrderPayment {
+  id: string;
+  status: string | null;
+  /** e.g. "gcash", "card", "qrph". Null if PayMongo did not report one. */
+  method: string | null;
+  amount_centavos: number | null;
+  fee_centavos: number | null;
+  net_centavos: number | null;
+  currency: string | null;
+  paid_at: string | null;
+  description: string | null;
+  billing_name: string | null;
+  billing_email: string | null;
+  billing_phone: string | null;
+  refunds: OrderRefund[];
+  refunded_centavos: number;
+}
+
+/**
+ * Live transaction detail, read from PayMongo at request time rather than from
+ * our own tables — fees and refund state change after capture, so a local copy
+ * would be stale exactly when support needs it. `available: false` carries a
+ * human-readable reason instead of throwing.
+ */
+export type OrderPaymentResult =
+  | { available: true; payment: OrderPayment }
+  | { available: false; reason: string };
+
+export const adminGetOrderPayment = (adminKey: string, orderId: string) =>
+  apiFetch<OrderPaymentResult>(`/admin/orders/${orderId}/payment`, {
+    headers: { 'x-admin-key': adminKey },
+  });
 
 /** Shared fetch wrapper: prefixes API_BASE and turns a non-2xx into the
  *  backend's `error` message rather than an opaque status code. Exported so the

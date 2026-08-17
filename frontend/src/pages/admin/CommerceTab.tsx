@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   adminListOrders, adminListProducts, adminRetryEnrollment, adminRevokeAccess,
   adminSyncCourses, adminUpdateProduct, listCourses,
   type AdminOrder, type AdminProduct, type CourseSummary,
 } from '../../lib/api';
 import { money } from '../../components/Layout';
+import OrderDetail from './OrderDetail';
 
 /**
  * Course sync, product pricing, and orders.
@@ -53,6 +54,8 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [onlyStuck, setOnlyStuck] = useState(false);
+  const [query, setQuery] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(
     async (key: string, stuckOnly: boolean) => {
@@ -218,6 +221,21 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   }
 
   const visibleCount = products.filter((p) => p.is_active).length;
+
+  /**
+   * Client-side because the endpoint returns at most 100 rows anyway, so there
+   * is nothing here the browser does not already hold. If that limit ever grows
+   * into real pagination this has to move server-side, or search will silently
+   * only cover the first page.
+   */
+  const filteredOrders = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter((o) =>
+      [o.buyer_email, o.paymongo_payment_id, o.id, o.product_name ?? '']
+        .some((field) => field.toLowerCase().includes(q)),
+    );
+  }, [orders, query]);
 
   const staleness = lastSynced
     ? `${Math.round((Date.now() - new Date(lastSynced).getTime()) / 3_600_000)}h ago`
@@ -412,45 +430,94 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
             </button>
           </div>
 
+          {/* Support arrives with an email address or a payment id from the
+              customer, not with a date. Without this the only way to find their
+              order was to read down a hundred rows. */}
+          <div className="ord-search">
+            <input
+              type="search"
+              value={query}
+              placeholder="Search buyer email, payment id, or order id…"
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search orders"
+            />
+            {query && (
+              <span className="small muted">
+                {filteredOrders.length} of {orders.length}
+              </span>
+            )}
+          </div>
+
           {orders.length === 0 ? (
             <p className="muted" style={{ marginTop: '1rem' }}>No orders{onlyStuck ? ' needing attention' : ''}.</p>
+          ) : filteredOrders.length === 0 ? (
+            <p className="muted" style={{ marginTop: '1rem' }}>
+              No orders match “{query}”.
+            </p>
           ) : (
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
-              <table>
+              <table className="ord-table">
                 <thead>
                   <tr>
-                    <th>Created</th><th>Buyer</th><th>Amount</th><th>Status</th><th>Problem</th><th />
+                    <th aria-label="Expand" /><th>Created</th><th>Buyer</th><th>Product</th>
+                    <th>Amount</th><th>Status</th><th>Problem</th><th />
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.map((o) => (
-                    <tr key={o.id}>
-                      <td className="small">{new Date(o.created_at).toLocaleString()}</td>
-                      <td className="small">{o.buyer_email}</td>
-                      <td className="small">{money(o.amount_centavos, o.currency)}</td>
-                      <td><StatusPill status={o.status} /></td>
-                      <td className="small mono" style={{ maxWidth: 320 }}>
-                        {o.error_detail ? o.error_detail.slice(0, 160) : '—'}
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {o.status !== 'fulfilled' && o.status !== 'refunded' && (
-                          <button className="btn btn-ghost small" onClick={() => onRetry(o.id)} disabled={busy}>
-                            Retry
-                          </button>
+                  {filteredOrders.map((o) => {
+                    const open = expandedId === o.id;
+                    return (
+                      <Fragment key={o.id}>
+                        <tr className={open ? 'ord-row is-open' : 'ord-row'}>
+                          <td>
+                            <button
+                              type="button"
+                              className="ord-expand"
+                              aria-expanded={open}
+                              aria-label={open ? 'Hide order detail' : 'Show order detail'}
+                              onClick={() => setExpandedId(open ? null : o.id)}
+                            >
+                              <span className={open ? 'ord-caret is-open' : 'ord-caret'}>▸</span>
+                            </button>
+                          </td>
+                          <td className="small">{new Date(o.created_at).toLocaleString()}</td>
+                          <td className="small">{o.buyer_email}</td>
+                          <td className="small">
+                            {o.product_name ?? <span className="muted">unknown</span>}
+                          </td>
+                          <td className="small">{money(o.amount_centavos, o.currency)}</td>
+                          <td><StatusPill status={o.status} /></td>
+                          <td className="small mono ord-problem">
+                            {o.error_detail ? o.error_detail.slice(0, 160) : '—'}
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {o.status !== 'fulfilled' && o.status !== 'refunded' && (
+                              <button className="btn btn-ghost small" onClick={() => onRetry(o.id)} disabled={busy}>
+                                Retry
+                              </button>
+                            )}
+                            {o.status !== 'refunded' && (
+                              <button
+                                className="btn btn-ghost small"
+                                style={{ marginLeft: '0.35rem', color: '#8c2f1d', borderColor: '#f5c6bd' }}
+                                onClick={() => onRevoke(o)}
+                                disabled={busy}
+                              >
+                                Revoke
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr className="ord-detail-row">
+                            <td colSpan={8}>
+                              <OrderDetail adminKey={adminKey} order={o} />
+                            </td>
+                          </tr>
                         )}
-                        {o.status !== 'refunded' && (
-                          <button
-                            className="btn btn-ghost small"
-                            style={{ marginLeft: '0.35rem', color: '#8c2f1d', borderColor: '#f5c6bd' }}
-                            onClick={() => onRevoke(o)}
-                            disabled={busy}
-                          >
-                            Revoke
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
