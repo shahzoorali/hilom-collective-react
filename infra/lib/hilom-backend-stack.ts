@@ -311,6 +311,20 @@ export class HilomBackendStack extends cdk.Stack {
       }),
     );
 
+    // Same SES identity, granted to every path that can call ensureCognitoUser
+    // (via fulfillOrder) and so may send the account-created welcome email.
+    for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail'],
+          resources: [
+            `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
+            `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
+          ],
+        }),
+      );
+    }
+
     paymongoWebhook.addEnvironment('ENROLLMENT_RETRY_QUEUE_URL', enrollmentRetryQueue.queueUrl);
     enrollmentRetryQueue.grantSendMessages(paymongoWebhook);
     enrollmentRetryConsumer.addEventSource(

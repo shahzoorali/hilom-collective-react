@@ -11,6 +11,7 @@ import {
   UserNotFoundException,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { getCognitoSecret } from './secrets.js';
+import { sendAccountCreatedEmail } from './email.js';
 
 let client: CognitoIdentityProviderClient | undefined;
 
@@ -23,11 +24,10 @@ async function getClient(): Promise<{ client: CognitoIdentityProviderClient; use
 /**
  * Returns the Cognito `sub` for the given email, creating the user if needed.
  *
- * New accounts are NOT given a suppressed invite: Cognito sends its own
- * "here is your temporary password" email by default. This uses Cognito's
- * built-in email sending, which is sandboxed to ~50 emails/day — fine for
- * early testing, but must move to an SES-backed configuration before launch
- * volume could plausibly exceed that.
+ * Cognito's own built-in "here is your temporary password" email is
+ * suppressed (MessageAction: 'SUPPRESS') in favor of our own SES-sent welcome
+ * email — matching branding, sent from noreply@hilomcollective.com, and not
+ * subject to Cognito's ~50 emails/day sandbox limit.
  */
 export async function ensureCognitoUser(
   email: string,
@@ -51,6 +51,7 @@ export async function ensureCognitoUser(
     new AdminCreateUserCommand({
       UserPoolId: userPoolId,
       Username: email,
+      MessageAction: 'SUPPRESS',
       UserAttributes: [
         { Name: 'email', Value: email },
         { Name: 'email_verified', Value: 'true' },
@@ -61,5 +62,15 @@ export async function ensureCognitoUser(
   );
   const sub = created.User?.Attributes?.find((a) => a.Name === 'sub')?.Value;
   if (!sub) throw new Error(`AdminCreateUser for ${email} returned no sub attribute`);
+
+  // Best-effort: a failed welcome email must not undo the account creation or
+  // fail the enrollment — the buyer already paid, and this is recoverable
+  // (support can resend, or the buyer can self-serve via "Forgot password").
+  try {
+    await sendAccountCreatedEmail(email, firstname);
+  } catch (err) {
+    console.error('sendAccountCreatedEmail failed', { email, err });
+  }
+
   return sub;
 }
