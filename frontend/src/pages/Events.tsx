@@ -69,6 +69,28 @@ export default function Events() {
         </div>
       </section>
 
+      <section className="section" style={{ textAlign: 'center', paddingTop: 0 }}>
+        <div className="container">
+          <div className="card" style={{ padding: '2rem', maxWidth: '640px', margin: '0 auto' }}>
+            <p className="badge" style={{ background: 'var(--ochre)' }}>
+              2027 Retreat
+            </p>
+            <h2>Join the Retreat Waitlist</h2>
+            <p className="desc" style={{ margin: '0 auto 1.25rem', maxWidth: '48ch' }}>
+              Be the first to know when registration opens for our 2027 retreat.
+            </p>
+            <a
+              className="btn btn-primary"
+              href="https://wp.hilomcollective.com/2027-retreat-waitlist/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Join the Waitlist
+            </a>
+          </div>
+        </div>
+      </section>
+
       <section className="section" style={{ textAlign: 'center', background: 'var(--cream)' }}>
         <div className="container">
           <p className="badge">Join The Movement</p>

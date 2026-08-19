@@ -12,9 +12,11 @@ interface ServiceCardProps {
   desc: string;
   cta: string;
   to: string;
+  externalCta?: string;
+  externalHref?: string;
 }
 
-function ServiceCard({ img, title, subtitle, desc, cta, to }: ServiceCardProps) {
+function ServiceCard({ img, title, subtitle, desc, cta, to, externalCta, externalHref }: ServiceCardProps) {
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <img src={img} alt="" style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover' }} />
@@ -24,9 +26,16 @@ function ServiceCard({ img, title, subtitle, desc, cta, to }: ServiceCardProps) 
           {subtitle}
         </p>
         <p className="desc">{desc}</p>
-        <Link className="btn btn-primary" to={to}>
-          {cta}
-        </Link>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <Link className="btn btn-primary" to={to}>
+            {cta}
+          </Link>
+          {externalCta && externalHref && (
+            <a className="btn btn-ghost" href={externalHref} target="_blank" rel="noopener noreferrer">
+              {externalCta}
+            </a>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -83,6 +92,8 @@ export default function Services() {
             desc="We work with LGUs, NGOs, foundations, and community organizations to co-create meaningful wellness initiatives."
             cta="Partner With Us"
             to="/community"
+            externalCta="Facilitator Intake Form"
+            externalHref="https://wp.hilomcollective.com/facilitate-with-us-2/"
           />
           <ServiceCard
             img={kitsImg}
