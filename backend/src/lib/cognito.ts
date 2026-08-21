@@ -15,6 +15,7 @@ import {
   UserNotFoundException,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { getCognitoSecret } from './secrets.js';
+import { sendAccountCreatedEmail } from './email.js';
 
 let client: CognitoIdentityProviderClient | undefined;
 
@@ -27,16 +28,18 @@ async function getClient(): Promise<{ client: CognitoIdentityProviderClient; use
 /**
  * Returns the Cognito `sub` for the given email, creating the user if needed.
  *
- * New accounts suppress Cognito's own "here is your temporary password"
- * invite: this path only runs as a fallback (checkout normally creates the
- * account itself via Hosted UI sign-in before payment — see checkout.ts), and
- * a buyer who is meant to sign in via SSO has no use for a password that
- * arrives out of nowhere. The enrollment-confirmation email (see
- * enrollment-email.ts) is what actually tells them their access is ready.
+ * Cognito's own built-in "here is your temporary password" email is
+ * suppressed (MessageAction: 'SUPPRESS') in favor of our own SES-sent welcome
+ * email — matching branding, sent from noreply@hilomcollective.com, and not
+ * subject to Cognito's ~50 emails/day sandbox limit.
  *
- * Still relevant regardless of this path's frequency: the user pool's default
- * email sending is sandboxed to ~50/day and must move to an SES-backed
- * configuration before launch volume could plausibly exceed that.
+ * This path — a Cognito account being admin-created rather than found — is
+ * now the fallback case rather than the norm: checkout requires signing in via
+ * Hosted UI before payment (see checkout.ts), so most buyers already have an
+ * account by the time fulfillment calls this. It's kept for orders that reach
+ * fulfillment without one — a manually recorded payment, or a checkout session
+ * created before that change shipped — because the alternative is an order
+ * that took money and cannot be fulfilled at all.
  */
 export async function ensureCognitoUser(
   email: string,
@@ -60,23 +63,26 @@ export async function ensureCognitoUser(
     new AdminCreateUserCommand({
       UserPoolId: userPoolId,
       Username: email,
+      MessageAction: 'SUPPRESS',
       UserAttributes: [
         { Name: 'email', Value: email },
         { Name: 'email_verified', Value: 'true' },
         { Name: 'given_name', Value: firstname },
         { Name: 'family_name', Value: lastname },
       ],
-      // This path only runs now when a buyer reaches fulfillment without
-      // having signed in first (checkout requires it — see checkout.ts — so
-      // this is the fallback, not the norm). Such a buyer is not expecting a
-      // password and has no use for one: their real route in is Moodle SSO,
-      // and the enrollment email (see enrollment-email.ts) is what tells them
-      // that. Sending Cognito's own "temporary password" email on top would
-      // just be a confusing, unusable credential arriving out of nowhere.
-      MessageAction: 'SUPPRESS',
     }),
   );
   const sub = created.User?.Attributes?.find((a) => a.Name === 'sub')?.Value;
   if (!sub) throw new Error(`AdminCreateUser for ${email} returned no sub attribute`);
+
+  // Best-effort: a failed welcome email must not undo the account creation or
+  // fail the enrollment — the buyer already paid, and this is recoverable
+  // (support can resend, or the buyer can self-serve via "Forgot password").
+  try {
+    await sendAccountCreatedEmail(email, firstname);
+  } catch (err) {
+    console.error('sendAccountCreatedEmail failed', { email, err });
+  }
+
   return sub;
 }

@@ -13,7 +13,11 @@ import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 import * as path from 'node:path';
 
@@ -201,6 +205,51 @@ export class HilomBackendStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
+    // CMS media. Separate from courseImagesBucket above, which is a public
+    // read-only mirror of Moodle images written only by syncCourses; this one
+    // takes browser uploads and is private, read through CloudFront only.
+    //
+    // Browser uploads go straight to S3 with a presigned PUT, so the bucket
+    // needs its own CORS block — that is a different setting from the HTTP
+    // API's corsPreflight further down, and editing the wrong one is the
+    // obvious way to spend an afternoon on a broken upload.
+    const mediaBucket = new s3.Bucket(this, 'MediaBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      // The site's images are content, not derived artifacts: tearing down the
+      // stack must not delete them.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: [props.corsOrigin ?? '*'],
+          allowedHeaders: ['*'],
+          maxAge: 3000,
+        },
+      ],
+      lifecycleRules: [
+        {
+          // An upload whose presigned PUT succeeded but whose confirm call never
+          // ran leaves an orphan object; this stops paying to store it forever.
+          id: 'abort-incomplete-uploads',
+          abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+        },
+      ],
+    });
+
+    const mediaDistribution = new cloudfront.Distribution(this, 'MediaDistribution', {
+      comment: 'Hilom CMS media',
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(mediaBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        // nosniff matters here: uploads are user-supplied files served from a
+        // domain we control.
+        responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
+      },
+    });
+
     const productsList = makeFn('ProductsListFn', 'handlers/products.ts', 'list');
     const productsDetail = makeFn('ProductsDetailFn', 'handlers/products.ts', 'detail');
     const coursesList = makeFn('CoursesListFn', 'handlers/courses.ts', 'list');
@@ -231,6 +280,7 @@ export class HilomBackendStack extends cdk.Stack {
     checkoutSession.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
     checkoutSession.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
     const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
+    const adminOrderPayment = makeFn('AdminOrderPaymentFn', 'handlers/orders.ts', 'adminPayment');
     const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');
     const adminProductsUpdate = makeFn('AdminProductsUpdateFn', 'handlers/admin-products.ts', 'update');
     const enrollmentRetryConsumer = makeFn(
@@ -239,6 +289,28 @@ export class HilomBackendStack extends cdk.Stack {
       'handler',
     );
     const communitySubmit = makeFn('CommunitySubmitFn', 'handlers/community.ts', 'submit');
+
+    // CMS. Unlike the commerce endpoints above, each of these files exports a
+    // single `handler` that dispatches on the request path — see the note in
+    // backend/src/handlers/pages.ts.
+    const pagesPublic = makeFn('PagesPublicFn', 'handlers/pages.ts', 'handler');
+    const menusPublic = makeFn('MenusPublicFn', 'handlers/menus.ts', 'handler');
+    const formsPublic = makeFn('FormsPublicFn', 'handlers/forms.ts', 'handler');
+    const adminPages = makeFn('AdminPagesFn', 'handlers/admin-pages.ts', 'handler');
+    const adminMenus = makeFn('AdminMenusFn', 'handlers/admin-menus.ts', 'handler');
+    const adminMedia = makeFn('AdminMediaFn', 'handlers/admin-media.ts', 'handler');
+    const adminForms = makeFn('AdminFormsFn', 'handlers/admin-forms.ts', 'handler');
+    const eventsPublic = makeFn('EventsPublicFn', 'handlers/events.ts', 'handler');
+    const adminEvents = makeFn('AdminEventsFn', 'handlers/admin-events.ts', 'handler');
+    const postsPublic = makeFn('PostsPublicFn', 'handlers/posts.ts', 'handler');
+    const adminPosts = makeFn('AdminPostsFn', 'handlers/admin-posts.ts', 'handler');
+    // Not behind API Gateway — invoked on a schedule (below), not by a
+    // request. Publishes posts/pages whose scheduled_at has arrived.
+    const scheduledPublishSweep = makeFn(
+      'ScheduledPublishSweepFn',
+      'handlers/scheduled-publish-sweep.ts',
+      'handler',
+    );
 
     // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
     // hilomcollective.com is already a verified, DKIM-signed domain identity
@@ -255,6 +327,23 @@ export class HilomBackendStack extends cdk.Stack {
       }),
     );
 
+    // Same SES identity, granted to every path that can call fulfillOrder and
+    // so may send either of the two emails it can trigger: the account-created
+    // welcome email (backend/src/lib/email.ts, via ensureCognitoUser) and the
+    // enrollment-confirmation email (backend/src/lib/enrollment-email.ts) —
+    // both plain SES API calls, so neither is tied to this Lambda's own region.
+    for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail'],
+          resources: [
+            `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
+            `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
+          ],
+        }),
+      );
+    }
+
     paymongoWebhook.addEnvironment('ENROLLMENT_RETRY_QUEUE_URL', enrollmentRetryQueue.queueUrl);
     enrollmentRetryQueue.grantSendMessages(paymongoWebhook);
     enrollmentRetryConsumer.addEventSource(
@@ -264,8 +353,17 @@ export class HilomBackendStack extends cdk.Stack {
       }),
     );
 
+    // Scheduled publish: a rate rule, not `cron`, because "publish within a
+    // few minutes of the scheduled time" is the actual requirement — cron's
+    // wall-clock-aligned firing buys nothing here and is harder to reason
+    // about the latency of.
+    new events.Rule(this, 'ScheduledPublishRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+      targets: [new eventsTargets.LambdaFunction(scheduledPublishSweep)],
+    });
+
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, revokeAccess, adminProductsList, adminProductsUpdate]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -283,13 +381,41 @@ export class HilomBackendStack extends cdk.Stack {
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
     adminKeySecret.grantRead(adminOrders);
+    // Reads the transaction behind an order straight from PayMongo, so it needs
+    // both the admin key (to authorize the caller) and the PayMongo secret key.
+    adminKeySecret.grantRead(adminOrderPayment);
+    paymongoSecret.grantRead(adminOrderPayment);
     adminKeySecret.grantRead(adminProductsList);
     adminKeySecret.grantRead(adminProductsUpdate);
 
+    // CMS grants.
+    for (const fn of [
+      pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms,
+      eventsPublic, adminEvents, postsPublic, adminPosts, scheduledPublishSweep,
+    ]) {
+      supabaseSecret.grantRead(fn);
+    }
+    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
+      adminKeySecret.grantRead(fn);
+    }
+    // The public form endpoint salts its IP hashes with the admin key, which is
+    // the one high-entropy secret this function already has a reason to reach.
+    adminKeySecret.grantRead(formsPublic);
+
+    // Presigning can only sign what the signing role is itself allowed to do,
+    // so these grants are what make the upload URL work — and what bound it.
+    mediaBucket.grantPut(adminMedia);
+    mediaBucket.grantRead(adminMedia); // HeadObject on confirm
+    mediaBucket.grantDelete(adminMedia);
+    adminMedia.addEnvironment('MEDIA_BUCKET', mediaBucket.bucketName);
+    adminMedia.addEnvironment('MEDIA_CDN_BASE', `https://${mediaDistribution.distributionDomainName}`);
+
     // Every path that can fulfill an order needs the full fulfillment
     // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
-    // identity), SES (the enrollment-confirmation email fulfillOrder sends on
-    // success).
+    // identity). SES is granted separately above — the same ap-south-1 grant
+    // already covers both the account-created welcome email and the
+    // enrollment-confirmation email (enrollment-email.ts), since both are
+    // plain SES API calls with no region tie to the function's own region.
     for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
       supabaseSecret.grantRead(fn);
       moodleSecret.grantRead(fn);
@@ -298,23 +424,6 @@ export class HilomBackendStack extends cdk.Stack {
         new iam.PolicyStatement({
           actions: ['cognito-idp:AdminGetUser', 'cognito-idp:AdminCreateUser'],
           resources: [cognitoUserPoolArn],
-        }),
-      );
-      // Same ap-south-1 identity the community form uses (below), not the
-      // newer ap-southeast-1 one — see enrollment-email.ts for why: a Lambda
-      // calling the SES API isn't region-locked to its own region, and
-      // ap-south-1 already has production access while ap-southeast-1 is
-      // still sandboxed. The configuration-set resource is required for the
-      // same reason the community form's grant needs it — the domain identity
-      // has a default configuration set attached, so SES checks permission on
-      // that resource too, not just the identity.
-      fn.addToRolePolicy(
-        new iam.PolicyStatement({
-          actions: ['ses:SendEmail'],
-          resources: [
-            `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
-            `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
-          ],
         }),
       );
     }
@@ -338,10 +447,15 @@ export class HilomBackendStack extends cdk.Stack {
         // PATCH is needed by /admin/products/{id}. Without it the browser
         // preflight succeeds but omits PATCH from allow-methods, and the real
         // request fails as an opaque "Failed to fetch" with no server-side log.
+        // PUT and DELETE were added for the CMS: draft/menu/form saves are PUT,
+        // and page/media/submission removal is DELETE. Same failure mode as
+        // PATCH if they are missing.
         allowMethods: [
           apigw.CorsHttpMethod.GET,
           apigw.CorsHttpMethod.POST,
           apigw.CorsHttpMethod.PATCH,
+          apigw.CorsHttpMethod.PUT,
+          apigw.CorsHttpMethod.DELETE,
           apigw.CorsHttpMethod.OPTIONS,
         ],
         allowHeaders: ['content-type', 'x-admin-key', 'authorization'],
@@ -377,9 +491,96 @@ export class HilomBackendStack extends cdk.Stack {
     route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
     route('/orders/status-by-session/{sessionId}', apigw.HttpMethod.GET, orderStatusBySession, 'OrderStatusBySessionInt');
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
+    route('/admin/orders/{orderId}/payment', apigw.HttpMethod.GET, adminOrderPayment, 'AdminOrderPaymentInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');
     route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');
     route('/community/submit', apigw.HttpMethod.POST, communitySubmit, 'CommunitySubmitInt');
+
+    // -----------------------------------------------------------------
+    // CMS routes. One integration per function, reused across that
+    // function's routes — `route` above creates a new integration per call,
+    // which is fine for one route each but needless when one Lambda backs a
+    // dozen.
+    // -----------------------------------------------------------------
+    const cmsRoutes = (
+      fn: nodejs.NodejsFunction,
+      id: string,
+      entries: [string, apigw.HttpMethod[]][],
+    ): void => {
+      const integration = new integrations.HttpLambdaIntegration(id, fn);
+      for (const [routePath, methods] of entries) {
+        httpApi.addRoutes({ path: routePath, methods, integration });
+      }
+    };
+
+    const { GET, POST, PUT, PATCH, DELETE } = apigw.HttpMethod;
+
+    cmsRoutes(pagesPublic, 'PagesPublicInt', [
+      ['/pages', [GET]],
+      ['/pages/{slug}', [GET]],
+    ]);
+    cmsRoutes(menusPublic, 'MenusPublicInt', [['/menus', [GET]]]);
+    cmsRoutes(formsPublic, 'FormsPublicInt', [
+      ['/forms/{slug}', [GET]],
+      ['/forms/{slug}/submissions', [POST]],
+    ]);
+    cmsRoutes(adminPages, 'AdminPagesInt', [
+      ['/admin/pages', [GET, POST]],
+      // Static route registered ahead of the {pageId} entries below — API
+      // Gateway prefers an exact match, so a literal "trash" segment never
+      // gets captured as a page id.
+      ['/admin/pages/trash', [GET]],
+      ['/admin/pages/{pageId}', [GET, PATCH, DELETE]],
+      ['/admin/pages/{pageId}/draft', [PUT]],
+      ['/admin/pages/{pageId}/publish', [POST]],
+      ['/admin/pages/{pageId}/unpublish', [POST]],
+      ['/admin/pages/{pageId}/untrash', [POST]],
+      ['/admin/pages/{pageId}/duplicate', [POST]],
+      ['/admin/pages/{pageId}/permanent', [DELETE]],
+      ['/admin/pages/{pageId}/revisions', [GET]],
+      ['/admin/pages/{pageId}/revisions/{revisionId}/restore', [POST]],
+    ]);
+    cmsRoutes(adminMenus, 'AdminMenusInt', [
+      ['/admin/menus', [GET]],
+      ['/admin/menus/{key}', [PUT]],
+    ]);
+    cmsRoutes(adminMedia, 'AdminMediaInt', [
+      ['/admin/media', [GET, POST]],
+      ['/admin/media/upload-url', [POST]],
+      ['/admin/media/{mediaId}', [PATCH, DELETE]],
+    ]);
+    cmsRoutes(adminForms, 'AdminFormsInt', [
+      ['/admin/forms', [GET, POST]],
+      ['/admin/forms/{formId}', [GET, PUT, DELETE]],
+      ['/admin/forms/{formId}/submissions', [GET]],
+      ['/admin/forms/{formId}/submissions/{submissionId}', [DELETE]],
+    ]);
+    cmsRoutes(eventsPublic, 'EventsPublicInt', [['/events', [GET]]]);
+    cmsRoutes(adminEvents, 'AdminEventsInt', [
+      ['/admin/events', [GET, POST]],
+      ['/admin/events/{eventId}', [GET, PUT, DELETE]],
+    ]);
+    cmsRoutes(postsPublic, 'PostsPublicInt', [
+      ['/posts', [GET]],
+      ['/posts/{slug}', [GET]],
+      ['/categories', [GET]],
+    ]);
+    cmsRoutes(adminPosts, 'AdminPostsInt', [
+      ['/admin/posts', [GET, POST]],
+      // Static route ahead of {postId} — same reasoning as pages/trash above.
+      ['/admin/posts/trash', [GET]],
+      ['/admin/posts/{postId}', [GET, PATCH, DELETE]],
+      ['/admin/posts/{postId}/draft', [PUT]],
+      ['/admin/posts/{postId}/publish', [POST]],
+      ['/admin/posts/{postId}/unpublish', [POST]],
+      ['/admin/posts/{postId}/untrash', [POST]],
+      ['/admin/posts/{postId}/duplicate', [POST]],
+      ['/admin/posts/{postId}/permanent', [DELETE]],
+      ['/admin/posts/{postId}/revisions', [GET]],
+      ['/admin/posts/{postId}/revisions/{revisionId}/restore', [POST]],
+      ['/admin/categories', [GET, POST]],
+      ['/admin/categories/{categoryId}', [PATCH, DELETE]],
+    ]);
 
     // ---------------------------------------------------------------------
     // Outputs
@@ -400,6 +601,12 @@ export class HilomBackendStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'AdminApiKeySecretArn', {
       value: adminKeySecret.secretArn,
       description: 'Read the generated admin key from here; it is never printed',
+    });
+
+    new cdk.CfnOutput(this, 'MediaBucketName', { value: mediaBucket.bucketName });
+    new cdk.CfnOutput(this, 'MediaCdnDomain', {
+      value: `https://${mediaDistribution.distributionDomainName}`,
+      description: 'Base URL stored on every media_assets row',
     });
 
     new cdk.CfnOutput(this, 'EnrollmentRetryQueueUrl', { value: enrollmentRetryQueue.queueUrl });

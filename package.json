@@ -8,5 +8,8 @@
     "frontend",
     "backend",
     "infra"
-  ]
+  ],
+  "devDependencies": {
+    "tsx": "^4.23.12"
+  }
 }

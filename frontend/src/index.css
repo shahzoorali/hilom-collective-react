@@ -242,3 +242,1191 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   .card { padding: 1.1rem; }
   .price { font-size: 1.35rem; }
 }
+
+/* ---------------------------------------------------------------------------
+   Admin chrome. Deliberately separate from the public site's .site-header /
+   .nav / .section / .container classes above: the admin is a dashboard, not a
+   marketing page, and it must never show the storefront's own navigation
+   (About, Services, Courses, "Log in"…) above a page editor — that was
+   confusing to look at and wasted the vertical space a full-page editor needs.
+   --------------------------------------------------------------------------- */
+/* A fixed-height flex column, not min-height: the page editor needs a real
+   100%-height box to fill (Puck sizes itself to its parent), and a magic-number
+   `calc(100vh - <topbar px>)` on the editor would silently drift out of sync
+   the moment the topbar's height changes (e.g. it wraps onto two lines). */
+.admin-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f6f7f4;
+  color: var(--ink);
+  font-family: inherit;
+}
+
+/* Admin Auth Screen */
+.admin-auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: radial-gradient(circle at 50% 20%, #eef1ec 0%, #e1e7de 100%);
+}
+.admin-auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(43, 51, 44, 0.1);
+  padding: 2.25rem 2rem;
+  animation: fadeIn 0.3s ease-out;
+}
+.admin-auth-header {
+  text-align: center;
+  margin-bottom: 1.75rem;
+}
+.admin-auth-logo {
+  height: 48px;
+  margin: 0 auto 1rem;
+  display: block;
+}
+.admin-auth-title {
+  font-size: 1.4rem;
+  font-family: var(--serif);
+  color: var(--forest);
+  margin: 0 0 0.35rem;
+}
+.admin-auth-subtitle {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Admin Topbar */
+.admin-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.65rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  z-index: 10;
+}
+.admin-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+}
+.admin-topbar .brand-logo {
+  height: 30px;
+  width: auto;
+}
+.admin-brand-text {
+  display: flex;
+  flex-direction: column;
+}
+.admin-brand-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--forest);
+  line-height: 1.2;
+}
+.admin-brand-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--forest-light);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.admin-brand-badge::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2f5e3e;
+}
+
+/* Admin Navigation Tabs */
+.admin-tabs {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  overflow-x: auto;
+  padding: 0.1rem;
+}
+.admin-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--ink-light);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.admin-tab-btn:hover {
+  background: rgba(47, 94, 62, 0.06);
+  color: var(--forest);
+}
+.admin-tab-btn--active {
+  background: var(--forest) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(47, 94, 62, 0.25);
+}
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+.admin-view-site-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--forest);
+  text-decoration: none;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  transition: background 0.15s;
+}
+.admin-view-site-link:hover {
+  background: #e9ece4;
+}
+
+/* Admin Content Area */
+.admin-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.75rem 2rem;
+}
+.admin-content > * {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* The page editor is flush: full width, no padding, so Puck's own canvas and
+   header own the whole space below the admin topbar — the point of this
+   change is that the editor stops looking like a widget embedded in a page. */
+.admin-content--flush {
+  padding: 0 !important;
+  overflow: hidden !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.admin-content--flush > * {
+  max-width: none !important;
+  margin: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Puck Editor Canvas & Layout Scrolling Fixes (for iframe={{ enabled: false }})
+   --------------------------------------------------------------------------- */
+/* Puck's own outermost wrapper (`<div class="Puck _Puck_xxxxx_19">`) sits between
+   BlockEditor's bounded flex child and _PuckLayout_, and ships with `height: auto`.
+   Left unbounded it grows to the full height of the block list inside a parent that
+   is only the viewport tall, and — because every rule below sizes with `height: 100%`
+   — each descendant then resolves 100% against *that* overgrown number. The result
+   is that nothing is ever taller than its own content, so _PuckCanvas_ never
+   overflows and never shows a scrollbar: the canvas simply spills off-screen and
+   blocks past the fold are unreachable. Bounding this element is what makes every
+   `height: 100%` below it mean "the space actually available". */
+.Puck,
+div[class*="_Puck_"],
+[class*="_Puck_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Root Puck container strictly bounded to remaining screen height */
+div[class*="_PuckLayout_"],
+[class*="_PuckLayout_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Force CSS Grid second row to minmax(0, 1fr) so editor area stays strictly bounded */
+div[class*="_PuckLayout-inner_"],
+[class*="_PuckLayout-inner_"],
+[class*="_PuckLayout-inner_"][class*="_PuckLayout-inner_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  grid-template-rows: min-content minmax(0, 1fr) !important;
+  overflow: hidden !important;
+}
+
+@media (min-width: 638px) {
+  div[class*="_PuckLayout-inner_"],
+  [class*="_PuckLayout-inner_"],
+  [class*="_PuckLayout-inner_"][class*="_PuckLayout-inner_"] {
+    grid-template-rows: min-content minmax(0, 1fr) !important;
+  }
+}
+
+/* Bounded scrollable canvas column with explicit overflow-y: auto */
+div[class*="_PuckCanvas_"],
+[class*="_PuckCanvas_"],
+[class*="_PuckCanvas_"][class*="_PuckCanvas_"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+/* The inner wrapper and root inside the canvas must expand freely with content */
+div[class*="_PuckCanvas-inner_"],
+[class*="_PuckCanvas-inner_"] {
+  min-height: 100% !important;
+  height: auto !important;
+  display: block !important;
+  position: relative !important;
+  width: 100% !important;
+}
+
+#puck-canvas-root,
+div[class*="_PuckCanvas-root_"],
+[class*="_PuckCanvas-root_"] {
+  position: relative !important;
+  top: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  right: auto !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 100% !important;
+  max-height: none !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  overflow: visible !important;
+}
+
+/* Preview and Frame wrappers: Expand to full block height */
+#puck-preview,
+[class*="_PuckPreview_"],
+#preview-frame,
+[class*="_PuckPreview-frame_"] {
+  height: auto !important;
+  min-height: 100% !important;
+  max-height: none !important;
+  position: relative !important;
+  display: block !important;
+  overflow: visible !important;
+}
+
+#frame-root {
+  height: auto !important;
+  min-height: 100% !important;
+  overflow: visible !important;
+}
+
+/* Generous bottom padding for dropzone so editors can easily add more blocks */
+[data-puck-dropzone],
+[class*="_DropZone_"] {
+  height: auto !important;
+  min-height: 350px !important;
+  max-height: none !important;
+  position: relative !important;
+  display: block !important;
+  padding-bottom: 250px !important;
+  overflow: visible !important;
+}
+
+/* ---------------------------------------------------------------------------
+   Admin › Commerce › Products & pricing
+   Card-per-product, replacing the two-rows-joined-by-colSpan table. The table
+   could not express "one product = a name, a price, a description and a
+   visibility flag" without splitting each product across two <tr>s, which read
+   as ten unrelated rows rather than five products.
+   --------------------------------------------------------------------------- */
+.prod-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.prod-list { display: flex; flex-direction: column; gap: 0.85rem; }
+
+.prod-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 1rem 1.1rem;
+  /* The left edge is the product's status stripe: it turns ochre the moment
+     there are unsaved edits, so a dirty card is findable in a long list. */
+  border-left: 3px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.prod-card:hover { box-shadow: var(--shadow); }
+.prod-card--hidden { background: #fbfaf6; }
+.prod-card--hidden .prod-card__name { color: var(--muted); }
+.prod-card--dirty { border-left-color: var(--ochre); }
+
+.prod-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.prod-card__name { font-size: 1rem; margin: 0 0 0.2rem; color: var(--forest); }
+.prod-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+.prod-card__slug {
+  font-family: 'Courier New', monospace;
+  color: var(--muted);
+  background: var(--page);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.08rem 0.35rem;
+}
+.prod-card__courses { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
+/* Bare comma-joined Moodle ids ("10, 15, 16") read as prose; as chips they read
+   as the set of things this product actually grants. */
+.prod-chip {
+  background: #eaf3e4;
+  color: var(--forest-dark);
+  border-radius: 5px;
+  padding: 0.08rem 0.4rem;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+
+/* Visibility control. Previously a .pill that happened to be a <button>, which
+   gave no affordance at all that the catalog could be changed by clicking it. */
+.prod-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: 0;
+  padding: 0.25rem;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.prod-toggle:disabled { opacity: 0.55; cursor: not-allowed; }
+.prod-toggle__track {
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: #cfd4cb;
+  position: relative;
+  transition: background 0.15s ease;
+  flex: none;
+}
+.prod-toggle__thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+.prod-toggle.is-on { color: var(--forest-dark); }
+.prod-toggle.is-on .prod-toggle__track { background: var(--forest); }
+.prod-toggle.is-on .prod-toggle__thumb { transform: translateX(15px); }
+.prod-toggle:focus-visible { outline: 2px solid var(--forest); outline-offset: 2px; border-radius: 6px; }
+
+.prod-card__body {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+  margin: 0.9rem 0 0.75rem;
+}
+@media (max-width: 720px) {
+  .prod-card__body { grid-template-columns: minmax(0, 1fr); }
+}
+
+.prod-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+
+/* Currency lives inside the field, so the number reads as money rather than as
+   an anonymous quantity that happens to sit under a "(PHP)" column header. */
+.prod-price {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.prod-price:focus-within { outline: 2px solid var(--forest); outline-offset: 1px; border-color: var(--forest); }
+.prod-price.is-invalid { border-color: var(--danger-line); background: var(--danger-bg); }
+.prod-price__symbol {
+  padding: 0 0.15rem 0 0.7rem;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.prod-price input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-left: 0.25rem;
+}
+.prod-price input:focus { outline: none; }
+
+.prod-hint { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
+.prod-hint--bad { color: var(--danger-fg); font-weight: 600; }
+
+.prod-field--desc textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  resize: vertical;
+}
+.prod-field--desc textarea:focus {
+  outline: 2px solid var(--forest);
+  outline-offset: 1px;
+  border-color: var(--forest);
+}
+
+.prod-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+.prod-status { display: flex; align-items: center; gap: 0.4rem; margin-right: auto; color: #8a5a11; }
+.prod-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ochre); flex: none; }
+
+/* ---------------------------------------------------------------------------
+   Admin › Commerce › Orders — support detail
+   The row stays the scan view; everything support needs that does not fit in a
+   row lives in an expandable panel underneath it.
+   --------------------------------------------------------------------------- */
+.ord-search {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.ord-search input { max-width: 420px; }
+
+.ord-table th:first-child, .ord-table td:first-child { width: 1%; padding-right: 0; }
+.ord-row.is-open > td { background: var(--page); border-bottom-color: transparent; }
+.ord-row:hover > td { background: #fbfaf6; }
+/* The row preview stays clipped; the panel below carries the full text. */
+.ord-problem { max-width: 320px; }
+
+.ord-expand {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0.2rem 0.35rem;
+  color: var(--muted);
+  line-height: 1;
+}
+.ord-expand:hover { color: var(--forest); }
+.ord-expand:focus-visible { outline: 2px solid var(--forest); outline-offset: 1px; border-radius: 4px; }
+.ord-caret { display: inline-block; transition: transform 0.15s ease; font-size: 0.8rem; }
+.ord-caret.is-open { transform: rotate(90deg); }
+
+.ord-detail-row > td { background: var(--page); padding: 0 0 1rem; }
+
+.ord-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+  padding: 1.1rem 1.25rem;
+  margin: 0 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.ord-head {
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 0.6rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+/* Marks the one block that is not our own data, so a stale or missing value
+   there is read as "PayMongo said so" rather than as a bug in the admin. */
+.ord-source {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: var(--leaf);
+}
+.ord-subhead { font-size: 0.8rem; margin: 0.75rem 0 0.35rem; color: var(--forest); }
+
+.ord-grid { margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.ord-detail { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 0.6rem; align-items: baseline; }
+.ord-detail dt { font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+.ord-detail dd {
+  margin: 0;
+  font-size: 0.83rem;
+  /* Ids are long and unbroken; without this they force the panel wider than
+     the table and reintroduce horizontal scrolling. */
+  overflow-wrap: anywhere;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.ord-slug { font-family: 'Courier New', monospace; font-size: 0.76rem; color: var(--muted); }
+.ord-age { font-size: 0.72rem; color: var(--muted); }
+.ord-chips { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
+.ord-method {
+  background: var(--cream);
+  color: #8a5a11;
+  border-radius: 5px;
+  padding: 0.05rem 0.4rem;
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+.ord-fee { color: var(--danger-fg); }
+/* A missing Moodle id or Cognito sub is the answer to "why can't they get in",
+   so it reads as a finding rather than as an empty cell. */
+.ord-missing { color: var(--danger-fg); font-weight: 600; font-size: 0.78rem; }
+
+.ord-copy {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 0.68rem;
+  font-family: var(--sans);
+  color: var(--muted);
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+}
+.ord-copy:hover { border-color: var(--forest); color: var(--forest); }
+.ord-link { font-size: 0.72rem; font-family: var(--sans); white-space: nowrap; }
+
+.ord-error {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
+  border-radius: 8px;
+  color: var(--danger-fg);
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ord-unavailable { color: #8a5a11; margin: 0; }
+.ord-refunds ul { margin: 0; padding-left: 1.1rem; font-size: 0.78rem; }
+.ord-refunds li { margin-bottom: 0.25rem; }
+
+/* ---------------------------------------------------------------------------
+   Admin UI / UX Enhancements: Drawers, Modals, Toasts, Previews & Stats
+   --------------------------------------------------------------------------- */
+
+/* Floating Toast Notifications */
+.admin-toast-container {
+  position: fixed;
+  top: 1rem;
+  right: 1.5rem;
+  z-index: 11000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.admin-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1.1rem;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  animation: toastSlide 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+.admin-toast--success {
+  background: var(--forest);
+  color: #ffffff;
+  border: 1px solid var(--forest-dark);
+}
+.admin-toast--error {
+  background: #8c2f1d;
+  color: #ffffff;
+  border: 1px solid #6b2416;
+}
+@keyframes toastSlide {
+  from { transform: translateY(-16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Slide-over Drawer for Post Settings & Metadata */
+.admin-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 51, 44, 0.45);
+  backdrop-filter: blur(2px);
+  z-index: 9999;
+  display: flex;
+  justify-content: flex-end;
+  animation: fadeIn 0.15s ease-out;
+}
+.admin-drawer {
+  width: min(580px, 94vw);
+  height: 100%;
+  background: var(--surface);
+  box-shadow: -6px 0 28px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.admin-drawer-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--page);
+  flex: none;
+}
+.admin-drawer-header h2 {
+  font-size: 1.15rem;
+  margin: 0;
+  color: var(--forest);
+}
+.admin-drawer-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1.25rem;
+  background: var(--page);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  overflow-x: auto;
+}
+.admin-drawer-tab {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.admin-drawer-tab:hover {
+  background: rgba(47, 94, 62, 0.08);
+  color: var(--forest);
+}
+.admin-drawer-tab--active {
+  background: var(--forest);
+  color: #ffffff !important;
+}
+.admin-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+.admin-drawer-footer {
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--line);
+  background: var(--page);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex: none;
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Modal Dialog for Revision History */
+.admin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(43, 51, 44, 0.5);
+  backdrop-filter: blur(3px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  animation: fadeIn 0.15s ease-out;
+}
+.admin-modal {
+  width: min(540px, 95vw);
+  max-height: 85vh;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.admin-modal-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--page);
+}
+.admin-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.admin-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+
+/* SERP Google Search Preview */
+.serp-preview {
+  background: #ffffff;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  font-family: Arial, sans-serif;
+  margin-top: 0.5rem;
+}
+.serp-preview__url {
+  font-size: 0.78rem;
+  color: #202124;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.25rem;
+  word-break: break-all;
+}
+.serp-preview__title {
+  font-size: 1.1rem;
+  color: #1a0dab;
+  text-decoration: none;
+  font-weight: 400;
+  line-height: 1.3;
+  display: block;
+  margin-bottom: 0.3rem;
+}
+.serp-preview__desc {
+  font-size: 0.84rem;
+  color: #4d5156;
+  line-height: 1.45;
+}
+
+/* Social Share Preview Card (OG Mockup) */
+.social-preview {
+  background: #f0f2f5;
+  border: 1px solid #dcdfe3;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+.social-preview__image {
+  width: 100%;
+  height: 160px;
+  background: #e4e6eb;
+  object-fit: cover;
+  display: block;
+}
+.social-preview__placeholder {
+  width: 100%;
+  height: 140px;
+  background: #e4e6eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.social-preview__body {
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+}
+.social-preview__domain {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #65676b;
+  margin-bottom: 0.25rem;
+}
+.social-preview__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #050505;
+  line-height: 1.25;
+  margin-bottom: 0.25rem;
+}
+.social-preview__desc {
+  font-size: 0.82rem;
+  color: #65676b;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Interactive Tag Chips */
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  min-height: 42px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--cream);
+  color: var(--forest);
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.tag-chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+.tag-chip button:hover { opacity: 1; }
+.tag-chip-input {
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  padding: 0.2rem 0.4rem !important;
+  font-size: 0.85rem !important;
+  flex: 1;
+  min-width: 100px;
+  box-shadow: none !important;
+}
+
+/* Dashboard Stats Overview */
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.admin-stat-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+.admin-stat-card__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.admin-stat-card__value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-family: var(--serif);
+  color: var(--forest);
+  margin-top: 0.2rem;
+}
+
+/* Active/Trash toggle above the Pages and Posts tables — a plain tab pair,
+   not a full nav component, since there are only ever exactly two views. */
+.admin-view-toggle {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.admin-view-toggle__btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.55rem 0.2rem;
+  margin-bottom: -1px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.admin-view-toggle__btn:hover { color: var(--ink); }
+.admin-view-toggle__btn.is-active { color: var(--forest); border-bottom-color: var(--forest); }
+
+/* Scheduling popover on the editor's header — anchored to the Schedule
+   button's wrapper (position: relative), not a modal, since it is one date
+   field and two buttons: a full overlay would be more chrome than content. */
+.admin-schedule-popover {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.85rem;
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+}
+.admin-schedule-popover input[type='datetime-local'] {
+  width: 100%;
+}
+
+/* Search and Filter Toolbar */
+.admin-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+.admin-toolbar .search-input {
+  flex: 1;
+  min-width: 200px;
+}
+.admin-toolbar select {
+  width: auto;
+  min-width: 140px;
+}
+
+/* -----------------------------------------------------------------------
+   Blog
+   ----------------------------------------------------------------------- */
+.blog-heading { margin-bottom: 0.5rem; }
+
+.blog-categories { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.blog-categories .pill { text-decoration: none; cursor: pointer; }
+
+.blog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+.blog-grid--related {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.blog-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: var(--ink);
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.blog-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 4px 16px rgba(47, 94, 62, 0.13);
+}
+.blog-card__image {
+  aspect-ratio: 16/9;
+  overflow: hidden;
+}
+.blog-card__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s;
+}
+.blog-card:hover .blog-card__image img {
+  transform: scale(1.04);
+}
+.blog-card__body { padding: 1rem 1.25rem; display: flex; flex-direction: column; flex: 1; }
+.blog-card__category {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--leaf);
+  margin-bottom: 0.35rem;
+}
+.blog-card__title {
+  font-family: var(--serif);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--forest);
+  margin: 0 0 0.5rem;
+  line-height: 1.3;
+}
+.blog-card__excerpt {
+  font-size: 0.9rem;
+  color: var(--muted);
+  line-height: 1.5;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.blog-card__meta {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.blog-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 1rem 0 2rem;
+}
+
+/* Single post */
+.blog-post__cover {
+  width: 100%;
+  max-height: 480px;
+  overflow: hidden;
+  margin-bottom: 2rem;
+}
+.blog-post__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.blog-post__container { max-width: 760px; }
+.blog-post__category {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--leaf);
+  text-decoration: none;
+}
+.blog-post__category:hover { text-decoration: underline; }
+.blog-post__title {
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  margin: 0.35rem 0 1rem;
+}
+.blog-post__byline {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.blog-post__author-photo {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.blog-post__author-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  display: block;
+}
+.blog-post__date {
+  font-size: 0.85rem;
+  color: var(--muted);
+  display: block;
+}
+.blog-post__body { margin-bottom: 2rem; }
+.blog-post__tags {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+.blog-post__tags .pill { text-decoration: none; }
+
+.blog-related { background: var(--cream); }
+.blog-related__heading {
+  font-size: 1.3rem;
+  margin-bottom: 1rem;
+}

@@ -13,6 +13,13 @@ live at **https://www.hilomcollective.com** (Amplify Hosting, connected to this 
 `https://main.d2hx75l7mk7woi.amplifyapp.com`. The apex `hilomcollective.com` is mid-cutover
 to Amplify — DNS for it still points at the old host pending a manual GoDaddy record swap.
 
+A block-based CMS has also shipped: `/admin` now edits pages, the nav/footer menus, a
+media library, and custom forms, with a [Puck](https://puckeditor.com)-powered visual
+editor. The five original marketing pages (Home, About, Services, Events, Community) are
+seeded into the CMS as **drafts** — `CmsOrFallback` keeps serving the original hardcoded
+React pages until each is reviewed and published from `/admin`, so this shipped with zero
+visible change to the live site.
+
 ---
 
 ## Architecture
@@ -31,6 +38,7 @@ flowchart TB
             RCatalog["GET /products, /products/{slug}<br/>GET /courses"]
             RAdmin["POST /admin/sync-courses<br/>POST /admin/retry-enrollment/{id}"]
             RWebhook["POST /webhooks/paymongo"]
+            RCms["GET /pages, /pages/{slug}, /menus<br/>GET/POST /forms/{slug}<br/>/admin/pages, /admin/menus,<br/>/admin/media, /admin/forms"]
         end
 
         subgraph Lambdas["Lambda (Node 24, ARM64)"]
@@ -38,6 +46,7 @@ flowchart TB
             FnAdmin["admin.ts"]
             FnWebhook["paymongo-webhook.ts"]
             FnRetry["enrollment-retry-consumer.ts"]
+            FnCms["pages.ts, menus.ts, forms.ts<br/>admin-pages.ts, admin-menus.ts,<br/>admin-media.ts, admin-forms.ts"]
         end
 
         SQS["SQS: hilom-enrollment-retry"]
@@ -45,10 +54,13 @@ flowchart TB
         Alarm["CloudWatch Alarm"]
         SNS["SNS: hilom-enrollment-alerts"]
         Secrets["Secrets Manager<br/>hilom/supabase, hilom/moodle,<br/>hilom/paymongo/test, hilom/cognito,<br/>hilom/admin-api-key"]
+        MediaBucket["S3: CMS media bucket<br/>(private, OAC)"]
+        CDN["CloudFront<br/>d3krjxfbid1bdd.cloudfront.net"]
     end
 
     subgraph Supabase["Supabase Postgres — ap-southeast-1"]
         DB[("products, courses,<br/>product_courses, orders")]
+        CmsDB[("pages, page_revisions,<br/>menus, menu_items,<br/>media_assets, forms,<br/>form_submissions")]
     end
 
     subgraph External["External services"]
@@ -72,6 +84,11 @@ flowchart TB
     RAdmin --> FnAdmin --> DB
     FnAdmin --> Moodle
 
+    UI -- "/admin: pages, menus,<br/>media, forms" --> RCms --> FnCms --> CmsDB
+    UI -- "public page/menu/form reads" --> RCms
+    FnCms -- "presigned PUT, HeadObject" --> MediaBucket
+    UI -- "renders images from" --> CDN --> MediaBucket
+
     Lambdas -. "read secrets" .-> Secrets
 
     UI -. "SSO session" .-> Moodle
@@ -88,7 +105,9 @@ full list of hard rules this build follows.
 | Service | Purpose |
 |---|---|
 | **API Gateway** (HTTP API) | Public + admin REST surface at `api.hilomcollective.com` |
-| **Lambda** (Node 24, ARM64) | All backend handlers — catalog reads, admin actions, PayMongo webhook, enrollment retry consumer |
+| **Lambda** (Node 24, ARM64) | All backend handlers — catalog reads, admin actions, PayMongo webhook, enrollment retry consumer, CMS pages/menus/media/forms |
+| **S3** (CMS media bucket) | Private, uploaded to via presigned PUT from `/admin/media/upload-url`; block-public-access, read only through CloudFront |
+| **CloudFront** | Serves CMS-uploaded images from the private media bucket via Origin Access Control — the bucket itself returns 403 on direct access |
 | **Cognito** | User pool + Hosted UI; the shared identity between the storefront and Moodle SSO |
 | **Secrets Manager** | Every credential (Supabase, Moodle, PayMongo, Cognito app client, admin API key) — nothing secret lives in code, env vars, or the repo |
 | **SQS** | `hilom-enrollment-retry` queue + `hilom-enrollment-retry-dlq` dead-letter queue for failed enrollments |
@@ -126,6 +145,8 @@ Non-secret identifiers only — every credential lives in Secrets Manager, never
 | Enrollment retry queue | `hilom-enrollment-retry` |
 | Enrollment retry DLQ | `hilom-enrollment-retry-dlq` |
 | SNS alert topic | `hilom-enrollment-alerts` |
+| CMS media bucket | `hilombackendstack-mediabucketbcbb02ba-tw1ga526rpxa` (private; read only via CloudFront) |
+| CMS media CDN domain | `https://d3krjxfbid1bdd.cloudfront.net` |
 
 Secrets Manager entries (values never appear in the repo):
 
@@ -147,10 +168,17 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 ## Layout
 
 - `frontend/` — React (Vite + TS), deployed via **Amplify Hosting**
-- `backend/` — Lambda handlers (Node 24 / TS) behind API Gateway
+  - `src/cms/` — block catalog (`blocks.ts`), renderer (`BlockRenderer.tsx`) shared by both
+    the public site and the admin editor's live preview
+  - `src/pages/admin/` — admin UI: `PageEditor.tsx` (Puck-based visual editor,
+    `puckConfig.tsx` maps the block catalog onto Puck fields), plus Media/Menus/Forms tabs
+- `backend/` — Lambda handlers (Node 24 / TS) behind API Gateway, incl. CMS
+  (`pages.ts`, `menus.ts`, `forms.ts`, `admin-pages.ts`, `admin-menus.ts`, `admin-media.ts`,
+  `admin-forms.ts`) and `lib/cms-blocks.ts` (the block schema + server-side validator)
 - `infra/` — AWS CDK (TypeScript) — `HilomBackendStack`
-- `db/` — Supabase SQL migrations, RLS policies, seed data
-- `scripts/` — operational scripts (Moodle WS probes, PayMongo test-mode checkout harness)
+- `db/` — Supabase SQL migrations, RLS policies, seed data (`0006_cms.sql` is the CMS schema)
+- `scripts/` — operational scripts (Moodle WS probes, PayMongo test-mode checkout harness,
+  `seed-cms.ts` — uploads bundled page images and writes today's copy into the CMS as drafts)
 - `docs/` — build plan, SSO runbook, backend runbook, admin handoff docs
 
 ## Progress
@@ -166,6 +194,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 | 6 — Payment + enrollment | ✅ done, verified end-to-end (single course, bundle, forced-failure recovery) against production |
 | 7 — Frontend storefront | ✅ done — storefront, on-site checkout, Cognito login, admin panel; live on Amplify |
 | 8 — Manual refunds | ✅ done — admin revoke-access, verified incl. the overlapping-products case |
+| CMS — page builder | ✅ backend + schema deployed and verified on production (RLS, media pipeline via CloudFront, seed data written as drafts). Pages not yet published — publishing each one from `/admin` is the remaining cutover step |
 | 9 — Launch cutover | not started |
 
 ## Local development
