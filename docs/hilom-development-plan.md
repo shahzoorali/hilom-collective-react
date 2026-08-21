@@ -296,6 +296,60 @@ confidence instead of fixing anything. Both the processing screen and the
 confirmation email instead set expectations up front — "choose Hilom Collective,"
 and a note that a first-time bounce-and-retry is normal, not an error.
 
+### As built: merged with a parallel CMS/admin overhaul and a colliding welcome-email feature
+The sign-in-first checkout and confirmation-email work above landed on `main` at
+the same time a teammate independently shipped a large CMS/blog/admin overhaul
+plus their own account-creation welcome email (`backend/src/lib/email.ts`,
+`sendAccountCreatedEmail`) — built in parallel, unaware of each other. Merged
+2026-08-21: their welcome email stays as the priority implementation on the
+admin-created-account path; the fulfillment-confirmation email above is
+additive on top (different trigger — every fulfillment vs. only new-account
+creation — different purpose — course access vs. password setup). One
+duplicate-key bug from the auto-merge (`MessageAction: 'SUPPRESS'` appearing
+twice in the same object literal, because the two insertions landed on
+non-adjacent lines and git didn't flag it as a conflict) was caught and fixed
+during review, not by tooling.
+
+### As built: production deploy caught two bugs that local testing didn't
+`cdk deploy` (2026-08-21) shipped the merged backend. Amplify had already
+auto-deployed the new frontend on push — CDK is manual, so for a window
+**production checkout was fully broken**: the new frontend sent
+`{slug, name}` + a bearer token, the not-yet-deployed backend still required
+`body.email`, every request 400'd. Confirmed against the live site, not
+assumed. Fixed by running the deploy; verified after with live `curl` calls
+against `api.hilomcollective.com` that all three shapes now behave correctly
+(no token → 401, forged token → 401, the pre-fix email-in-body attack → 401).
+**Lesson: Amplify's auto-deploy and CDK's manual deploy can silently drift
+out of sync — check both are current before trusting a merge is "live."**
+
+Second bug, caught by checking the actual Moodle login page rather than
+trusting the docs: the OAuth2 button is labelled **"Hilom Collective"**, but
+`docs/prod-moodle-request-email.md` had specified `Hilom Account`, and the app
+copy (processing screen, confirmation email) had copied that same wrong name.
+Docs and production had silently drifted apart since setup. Fixed in
+`Processing.tsx`, `enrollment-email.ts`, and the docs; that doc now warns the
+issuer's Name field is user-facing copy that must change in lockstep with it.
+
+### As built: enrollment email verified against live infrastructure, not just code review
+Confirmed via CloudWatch (`AWS/SES` namespace, ap-south-1): flipping a real
+fulfilled order back to `paid_pending_enrollment` and calling
+`POST /admin/retry-enrollment/{id}` produced `Send: 1, Delivery: 1, Bounce: 0`
+in the metric window — an actual send through the deployed Lambda's own IAM
+role, not a simulation. The order was restored to its exact prior state
+afterward (idempotent Moodle re-enrol, no duplicate row). Also confirmed
+directly against the SES API: `hilomcollective.com` in **ap-south-1** is
+verified, **DKIM: SUCCESS**, **ProductionAccess: true**, 74k/day quota — the
+region choice documented in Phase 6 is proven, not just argued. ap-southeast-1
+separately confirmed `ProductionAccess: false`, which is why Cognito's own
+built-in email (see "Open items" below) still needs its own access request if
+that path ever gets prioritized.
+
+**Not yet proven:** this exercised the *retry* entry point into
+`fulfillOrder()`. The PayMongo webhook is a separate entry point into the same
+function, and hasn't been exercised by the new code — a real PayMongo
+test-mode purchase (QR scan required, so needs a human) is the only thing that
+closes that gap. See Phase 9's exit criteria.
+
 ### Tasks — hosting
 - 🔧 **MANUAL** Request an **ACM cert in `us-east-1`** for the site domain(s) (`hilomcollective.com`, `www`) — CloudFront requires `us-east-1`. Validate via CNAME at GoDaddy.
 - Deploy the React app via **Amplify Hosting** (or S3 + CloudFront directly). If using S3+CloudFront manually: S3 bucket (private) + CloudFront distribution with the `us-east-1` cert.
@@ -327,6 +381,7 @@ and a note that a first-time bounce-and-retry is normal, not an error.
 **Goal:** Go live and retire WordPress.
 
 ### Tasks
+- 🔧 **MANUAL** A real PayMongo **test-mode** purchase through the QR flow, end to end — still open as of 2026-08-21. Everything downstream of the webhook (fulfillment, both emails, the Moodle handoff) has been verified by other means (see Phase 7's "as built" notes), but the webhook's own entry point — signature verification → order insert → `fulfillOrder` — has not been exercised against the current code. Needs a human at the QR scanner.
 - 🔧 **MANUAL** Switch PayMongo to **live keys** (in Secrets Manager). Update webhook to live mode.
 - 🔧 **MANUAL** Move Supabase to a **paid tier** (free tier pauses on inactivity — unacceptable once real payments flow).
 - Full live-mode smoke test: one real (small) purchase end-to-end, confirm enrollment, then refund it via the Phase 8 runbook.
@@ -359,22 +414,23 @@ At pre-launch/early scale, **new** monthly AWS spend is roughly **$20–40** on 
 - Add expiry/cohort support if you introduce time-limited products.
 
 ### Cognito production-readiness — pending, not launch-blocking after the SES fix above
-The buyer-facing confirmation email is already production-ready (ap-south-1, see
-Phase 6). What's left is narrower than it first looked, because the sign-in-first
-checkout change made Cognito's own admin-created-account path a rare fallback
-rather than the norm:
+The buyer-facing confirmation email is deployed and **verified production-ready**
+(ap-south-1: DKIM SUCCESS, ProductionAccess true, 74k/day quota, one real send
+confirmed delivered via CloudWatch — see Phase 7). What's left is narrower than
+it first looked, because the sign-in-first checkout change made Cognito's own
+admin-created-account path a rare fallback rather than the norm:
 - **Cognito's own built-in email** (invites/MFA codes/password resets, as opposed
   to the fulfillment confirmation email) is still on Cognito's default sender,
   sandboxed to ~50/day. Wiring it to SES requires the **ap-southeast-1** identity
   specifically — Cognito's `EmailConfiguration.SourceArn` must be in the same
-  region as the user pool, unlike a Lambda's own SES calls. `scripts/configure-cognito-ses.ts`
-  does this; not run yet, since it mutates a live shared auth resource. Low
-  urgency now that the temp-password invite is suppressed and the fallback path
-  rarely fires — worth doing before relying on any other Cognito-sent email
+  region as the user pool, unlike a Lambda's own SES calls. Confirmed via the SES
+  API: ap-southeast-1 is `ProductionAccess: false` as of 2026-08-21, so this item
+  also needs its own access request before it'd be launch-ready, separate from
+  the one ap-south-1 already has. `scripts/configure-cognito-ses.ts` does the
+  Cognito-side wiring; not run yet, since it mutates a live shared auth resource.
+  Low urgency now that the temp-password invite is suppressed and the fallback
+  path rarely fires — worth doing before relying on any other Cognito-sent email
   (e.g. self-service password reset).
-- **SES production access for ap-southeast-1** is only needed if the item above
-  gets prioritized. Not needed for the confirmation email (ap-south-1 already has
-  production access).
 - **Bring the `hilom-users` user pool into CDK.** It was created by hand; the
   stack only references its id as a hardcoded default
   (`infra/lib/hilom-backend-stack.ts`). Not reproducible as-is — losing it means
@@ -382,9 +438,9 @@ rather than the norm:
 - **Custom Hosted UI domain** (e.g. `auth.hilomcollective.com`) instead of the raw
   `hilom-auth.auth.ap-southeast-1.amazoncognito.com`. Buyers now hit Hosted UI
   moments before paying; an unfamiliar AWS domain at that moment costs conversions.
-- **DKIM/SPF/DMARC** — the ap-south-1 identity is already DKIM-signed
-  (`community.ts`); SPF/DMARC status on the sending domain hasn't been verified
-  from this codebase and is worth confirming directly in Route 53/GoDaddy + SES.
+- **SPF/DMARC on the sending domain** — DKIM is confirmed (`SUCCESS`, verified
+  directly via the SES API, not just inferred from a code comment); SPF/DMARC
+  status hasn't been checked and needs a direct look at Route 53/GoDaddy + SES.
 - **Refresh tokens** instead of session-storage-only auth — a returning buyer
   currently re-authenticates every visit since tokens die with the tab. Deliberate
   for now; revisit once accounts carry more standing value (e.g. a "my courses"
@@ -392,3 +448,8 @@ rather than the norm:
 - **Alarm on `AdminCreateUser` failures** in the fallback path — the SNS alert
   topic already exists (Phase 6); a buyer who pays and can't be given an identity
   should page someone, not just sit in `error_detail` waiting to be noticed.
+- **Keep Amplify's auto-deploy and CDK's manual deploy in sync going forward.**
+  The frontend/backend deploy-ordering gap that broke production checkout for a
+  window (see Phase 7) will recur on any future change that touches both sides
+  of the contract, unless deploys are checked together rather than assumed to
+  track each other.
