@@ -12,6 +12,8 @@ import { getSupabase } from './supabase.js';
 import { getMoodleSecret } from './secrets.js';
 import { MoodleClient } from './moodle.js';
 import { ensureCognitoUser } from './cognito.js';
+import { sendEnrollmentEmail } from './enrollment-email.js';
+import { accessUrl } from './access-url.js';
 
 export interface FulfillResult {
   orderId: string;
@@ -26,6 +28,10 @@ interface OrderRow {
   product_id: string;
   buyer_email: string;
   status: string;
+}
+
+interface ProductRow {
+  name: string;
 }
 
 function splitName(email: string, name?: string | null): { firstname: string; lastname: string } {
@@ -135,6 +141,21 @@ export async function fulfillOrder(orderId: string, billingName?: string | null)
       })
       .eq('id', orderId);
     if (updateError) throw updateError;
+
+    // Best-effort, and deliberately after the order is already durably marked
+    // `fulfilled`: the buyer's course access is real either way, and an SES
+    // hiccup (the ap-southeast-1 identity is still sandboxed as of writing)
+    // must not turn a successful enrollment into a retried/failed order.
+    const { data: product } = await supabase
+      .from('products')
+      .select('name')
+      .eq('id', order.product_id)
+      .single<ProductRow>();
+    await sendEnrollmentEmail({
+      buyerEmail: order.buyer_email,
+      productName: product?.name ?? 'your course',
+      accessUrl: accessUrl(courseIds),
+    });
 
     return { orderId, status: 'fulfilled', moodleUserId: moodleUser.id, cognitoUserSub, courseIds };
   } catch (err) {

@@ -19,22 +19,27 @@
  * for programmatic checkout.
  *
  * The price is read from the database here and never taken from the request —
- * otherwise anyone could POST their own amount and buy a bundle for ₱1.
+ * otherwise anyone could POST their own amount and buy a bundle for ₱1. The
+ * buyer's email is treated the same way, and for the same reason: it comes from
+ * a verified Cognito id_token, never from the request body. Course access is
+ * permanent and keyed to that address, so letting the caller name it freely
+ * would be a way to provision access on somebody else's account.
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
 import { getPayMongoSecret } from '../lib/secrets.js';
-import { ok, badRequest, notFound, serverError } from '../lib/http.js';
+import { ok, badRequest, notFound, serverError, unauthorized } from '../lib/http.js';
+import { requireBuyer, UnauthorizedError } from '../lib/auth.js';
 
 interface CreateSessionBody {
   slug?: string;
-  email?: string;
+  /**
+   * Display name for the PayMongo receipt only. Unlike email this is cosmetic —
+   * nothing is keyed to it — so accepting it from the body is fine. It falls
+   * back to the token's name claims when absent.
+   */
   name?: string;
 }
-
-// Deliberately loose: PayMongo will reject anything genuinely invalid, and an
-// over-strict regex here would reject valid addresses for no benefit.
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * Which methods the hosted page offers. Env-driven so that enabling GCash or
@@ -48,6 +53,14 @@ const PAYMENT_METHODS = (process.env.CHECKOUT_PAYMENT_METHODS ?? 'qrph')
   .filter(Boolean);
 
 export async function createSession(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  let buyer;
+  try {
+    buyer = await requireBuyer(event);
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return unauthorized(err.message);
+    return serverError('checkout.createSession', err);
+  }
+
   let body: CreateSessionBody;
   try {
     body = JSON.parse(event.body ?? '{}') as CreateSessionBody;
@@ -56,10 +69,11 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
   }
 
   const slug = body.slug?.trim();
-  const email = body.email?.trim().toLowerCase();
-  const name = body.name?.trim();
   if (!slug) return badRequest('Missing slug');
-  if (!email || !EMAIL_RE.test(email)) return badRequest('A valid email is required');
+
+  const email = buyer.email;
+  const name =
+    body.name?.trim() || [buyer.givenName, buyer.familyName].filter(Boolean).join(' ') || undefined;
 
   // Deliberately not derived from CORS_ORIGIN (which is '*' in this env): the
   // bare apex domain only 301s "/" to www — every other path, including this

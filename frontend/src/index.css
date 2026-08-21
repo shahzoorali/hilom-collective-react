@@ -46,6 +46,18 @@ h3 { font-size: 1.1rem; }
 p { margin: 0 0 1rem; }
 a { color: var(--forest); }
 
+/* A button that has to read as a link — used where the action is a real state
+   change (signing out) rather than navigation, so an <a> would be wrong. */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--forest);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .container { width: min(1120px, 92vw); margin: 0 auto; }
 
 /* header */

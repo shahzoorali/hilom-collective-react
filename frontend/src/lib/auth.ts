@@ -115,6 +115,29 @@ export function currentUser(): HilomUser | null {
   }
 }
 
+/**
+ * The raw id_token, for sending to our own API as a bearer credential.
+ *
+ * The id token rather than the access token because the backend needs the
+ * `email` claim, which Cognito puts only on the id token. Returns null once
+ * expired, so a caller gets a clean "signed out" rather than a 401 round trip.
+ */
+export function idToken(): string | null {
+  const raw = sessionStorage.getItem(TOKENS_KEY);
+  if (!raw) return null;
+  try {
+    const tokens = JSON.parse(raw) as StoredTokens;
+    if (Date.now() >= tokens.expiresAt) {
+      sessionStorage.removeItem(TOKENS_KEY);
+      return null;
+    }
+    return tokens.idToken;
+  } catch {
+    sessionStorage.removeItem(TOKENS_KEY);
+    return null;
+  }
+}
+
 export function logout(): void {
   sessionStorage.removeItem(TOKENS_KEY);
   const params = new URLSearchParams({

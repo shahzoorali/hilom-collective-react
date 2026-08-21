@@ -14,6 +14,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { getSupabase } from '../lib/supabase.js';
 import { getPayMongoSecret } from '../lib/secrets.js';
 import { ok, badRequest, serverError, unauthorized, isAuthorizedAdmin } from '../lib/http.js';
+import { accessUrl } from '../lib/access-url.js';
 
 /** Shared shape for both lookup routes. */
 async function statusForPaymentId(paymentId: string) {
@@ -25,7 +26,7 @@ async function statusForPaymentId(paymentId: string) {
     .maybeSingle<{ id: string; status: string; product_id: string }>();
 
   if (error) throw error;
-  if (!order) return { status: 'pending', productName: null, productSlug: null };
+  if (!order) return { status: 'pending', productName: null, productSlug: null, accessUrl: null };
 
   const { data: product } = await supabase
     .from('products')
@@ -33,10 +34,22 @@ async function statusForPaymentId(paymentId: string) {
     .eq('id', order.product_id)
     .maybeSingle<{ name: string; slug: string }>();
 
+  // Only computed once there's something to send them to — a pending order has
+  // no enrolled courses yet, so there is no link worth showing.
+  let url: string | null = null;
+  if (order.status === 'fulfilled') {
+    const { data: productCourses } = await supabase
+      .from('product_courses')
+      .select('moodle_course_id')
+      .eq('product_id', order.product_id);
+    url = accessUrl((productCourses ?? []).map((r) => r.moodle_course_id as number));
+  }
+
   return {
     status: order.status,
     productName: product?.name ?? null,
     productSlug: product?.slug ?? null,
+    accessUrl: url,
   };
 }
 
@@ -78,7 +91,7 @@ export async function statusByIntent(event: APIGatewayProxyEventV2): Promise<API
 
     if (!res.ok) {
       // An unknown or invalid intent id is a client mistake, not a server fault.
-      if (res.status === 404) return ok({ status: 'pending', productName: null, productSlug: null });
+      if (res.status === 404) return ok({ status: 'pending', productName: null, productSlug: null, accessUrl: null });
       throw new Error(`PayMongo intent lookup failed (${res.status})`);
     }
 
@@ -88,7 +101,7 @@ export async function statusByIntent(event: APIGatewayProxyEventV2): Promise<API
     const paymentId = json.data?.attributes?.payments?.[0]?.id;
 
     // No payment recorded yet — the card may still be mid-authorization.
-    if (!paymentId) return ok({ status: 'pending', productName: null, productSlug: null });
+    if (!paymentId) return ok({ status: 'pending', productName: null, productSlug: null, accessUrl: null });
 
     return ok(await statusForPaymentId(paymentId));
   } catch (err) {
@@ -120,7 +133,7 @@ export async function statusBySession(event: APIGatewayProxyEventV2): Promise<AP
 
     if (!res.ok) {
       // An unknown or invalid session id is a client mistake, not a server fault.
-      if (res.status === 404) return ok({ status: 'pending', productName: null, productSlug: null });
+      if (res.status === 404) return ok({ status: 'pending', productName: null, productSlug: null, accessUrl: null });
       throw new Error(`PayMongo session lookup failed (${res.status})`);
     }
 
@@ -131,7 +144,7 @@ export async function statusBySession(event: APIGatewayProxyEventV2): Promise<AP
 
     // No payment recorded yet — with QRPh this is the normal state for as long
     // as the buyer has the QR open but has not completed the scan.
-    if (!paymentId) return ok({ status: 'pending', productName: null, productSlug: null });
+    if (!paymentId) return ok({ status: 'pending', productName: null, productSlug: null, accessUrl: null });
 
     return ok(await statusForPaymentId(paymentId));
   } catch (err) {

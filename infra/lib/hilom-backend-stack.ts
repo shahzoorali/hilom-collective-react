@@ -42,6 +42,14 @@ export interface HilomBackendStackProps extends cdk.StackProps {
    */
   readonly cognitoUserPoolId?: string;
 
+  /**
+   * Public SPA app client id (the PKCE one the browser uses) — the audience
+   * checkout validates buyer id_tokens against. Deliberately not the
+   * `hilom-moodle` client, which holds a secret and is only used server-side by
+   * Moodle's `auth_oauth2`. Public by nature: it ships in the JS bundle.
+   */
+  readonly cognitoSpaClientId?: string;
+
   /** Where the DLQ CloudWatch alarm sends its SNS notification. */
   readonly alertEmail?: string;
 
@@ -61,6 +69,7 @@ export interface HilomBackendStackProps extends cdk.StackProps {
 }
 
 const DEFAULT_COGNITO_USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
+const DEFAULT_COGNITO_SPA_CLIENT_ID = '29bo0gpj7j9u7ofbcii22emj8l';
 const DEFAULT_ALERT_EMAIL = 'don.poky@gmail.com';
 
 export class HilomBackendStack extends cdk.Stack {
@@ -77,6 +86,7 @@ export class HilomBackendStack extends cdk.Stack {
     const cognitoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'CognitoSecret', 'hilom/cognito');
 
     const cognitoUserPoolId = props.cognitoUserPoolId ?? DEFAULT_COGNITO_USER_POOL_ID;
+    const cognitoSpaClientId = props.cognitoSpaClientId ?? DEFAULT_COGNITO_SPA_CLIENT_ID;
     const cognitoUserPoolArn = `arn:aws:cognito-idp:${this.region}:${this.account}:userpool/${cognitoUserPoolId}`;
 
     // The admin key has no external source of truth, so CDK generates it. It is
@@ -214,6 +224,12 @@ export class HilomBackendStack extends cdk.Stack {
       'FRONTEND_URL',
       props.frontendUrl ?? 'https://www.hilomcollective.com',
     );
+    // Checkout verifies the buyer's Cognito id_token so `buyer_email` comes from
+    // a signed claim rather than the request body. Neither value is secret —
+    // both already ship inside the public frontend bundle — so they are plain
+    // env vars, not a Secrets Manager fetch on every checkout.
+    checkoutSession.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
+    checkoutSession.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
     const adminOrders = makeFn('AdminOrdersFn', 'handlers/orders.ts', 'adminList');
     const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');
     const adminProductsUpdate = makeFn('AdminProductsUpdateFn', 'handlers/admin-products.ts', 'update');
@@ -272,7 +288,8 @@ export class HilomBackendStack extends cdk.Stack {
 
     // Every path that can fulfill an order needs the full fulfillment
     // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
-    // identity).
+    // identity), SES (the enrollment-confirmation email fulfillOrder sends on
+    // success).
     for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
       supabaseSecret.grantRead(fn);
       moodleSecret.grantRead(fn);
@@ -281,6 +298,23 @@ export class HilomBackendStack extends cdk.Stack {
         new iam.PolicyStatement({
           actions: ['cognito-idp:AdminGetUser', 'cognito-idp:AdminCreateUser'],
           resources: [cognitoUserPoolArn],
+        }),
+      );
+      // Same ap-south-1 identity the community form uses (below), not the
+      // newer ap-southeast-1 one — see enrollment-email.ts for why: a Lambda
+      // calling the SES API isn't region-locked to its own region, and
+      // ap-south-1 already has production access while ap-southeast-1 is
+      // still sandboxed. The configuration-set resource is required for the
+      // same reason the community form's grant needs it — the domain identity
+      // has a default configuration set attached, so SES checks permission on
+      // that resource too, not just the identity.
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail'],
+          resources: [
+            `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
+            `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
+          ],
         }),
       );
     }

@@ -216,10 +216,37 @@ Students" mirrored on our React course/product pages, but **not** the other thre
    - Ensure a Cognito user exists for `buyer_email` (create if new); capture `cognito_user_sub`.
    - Ensure a Moodle user exists (`core_user_get_users_by_field` by email; `core_user_create_users` if new).
    - For **each** course ID, call `enrol_manual_enrol_users` (no `timeend` = permanent).
-   - On full success → set order `fulfilled`.
+   - On full success → set order `fulfilled`, then send a branded "your course is ready" email via SES (see below) with a deep link into the course.
    - On any failure → leave order `paid_pending_enrollment`, record `error_detail`, push to **SQS retry queue**.
 3. **SQS retry consumer** (Lambda): retries enrollment a few times for transient Moodle failures. On exhaustion → **dead-letter queue** + **SNS alert** to you (email).
 4. **`POST /admin/retry-enrollment/{orderId}`**: admin-triggered re-run of fulfillment for a stuck order (button in admin panel).
+
+### As built: sign-in happens before payment, not "create if new" at fulfillment
+The buyer now authenticates via Cognito Hosted UI as the *first* step of checkout, not
+as a side effect of fulfillment — `ensureCognitoUser` (called from the webhook) is a
+lookup on the happy path, and only falls back to admin-creating an account for an
+order that somehow reaches fulfillment without one already existing. Two reasons:
+
+- The checkout email becomes a verified id_token claim the backend re-checks
+  (`backend/src/lib/auth.ts`), not a value the client can name freely — closes the
+  gap where a typo or a deliberately wrong email could provision access to the
+  wrong Cognito/Moodle account.
+- A live Cognito session in the browser is a precondition for the Moodle handoff
+  below actually landing the buyer in class without a second login prompt.
+
+The admin-created fallback path suppresses Cognito's default "temporary password"
+email (`MessageAction: 'SUPPRESS'`) — a buyer meant to sign in via SSO has no use
+for a password that arrives out of nowhere.
+
+### Confirmation email — SES from ap-south-1, not ap-southeast-1
+The fulfillment email sends from the **ap-south-1** SES identity — the same one
+`community.ts` already uses with production access — not the newer ap-southeast-1
+identity verified 2026-08-21. A Lambda calling the SES API has no region tie to its
+own region, so there's no reason to route this through a still-sandboxed identity
+when a production-ready one already exists. (Cognito's own *built-in* email sending
+is the one thing that genuinely is region-locked to the user pool's region — see
+"Open items to revisit" below.) Best-effort: a send failure is logged and swallowed,
+never allowed to turn a successful enrollment into a retried order.
 
 ### Payment-state nuance
 - PayMongo supports methods that are **instant** (cards) and some that can be **pending** before confirming (e.g. certain e-wallet/bank flows). Handle a `pending` state explicitly — don't treat "not yet paid" as failure. Only enroll on a **confirmed paid** event.
@@ -247,8 +274,27 @@ Students" mirrored on our React course/product pages, but **not** the other thre
 - Build the React app (product homepage, course/product listing, product detail, bundle pages), reading from `GET /products`.
 - Integrate **Cognito Hosted UI** for signup/login (accept the brief visual hand-off to Cognito's pages; theme with logo/colors).
 - Implement PayMongo checkout on-site; on payment success, show the "setting up access" state, then confirm fulfillment.
-- Post-purchase: a "Go to my courses" link into Moodle (SSO means one login). Because Cognito is shared, the user is recognized on the Moodle side.
+- Post-purchase: a "Start learning" link straight into the purchased course (or `/my/` for a bundle) — the order-status endpoint returns `accessUrl`, computed from the same `product_courses` mapping fulfillment enrolls against, so the email and the processing screen never disagree on where it points.
 - Build a minimal **admin panel** (can be gated routes): list products, trigger course sync (with `last_synced_at`), view stuck orders, retry enrollment, and manual refund-revoke (see Phase 8).
+
+### As built: checkout requires sign-in first
+Checkout requires signing in via Cognito Hosted UI *before* the buyer reaches the
+payment step — framed as "create your Hilom account" rather than a login wall,
+since they need the account regardless. See Phase 6's "as built" note for why.
+The checkout form has no email field at all now: the backend takes it from the
+verified token.
+
+### As built: the Moodle SSO handoff has a known quirk, mitigated with copy, not code
+Moodle's `auth_oauth2` callback occasionally bounces the *first* SSO attempt in a
+browser back to the login page ("your session has most likely timed out") before
+succeeding immediately on retry — a documented sesskey/session-timing issue
+(`docs/sso-runbook.md`), not a broken account. A cross-origin iframe "pre-warm" to
+establish a Moodle session cookie before the buyer clicks through was considered
+and rejected: Safari's ITP and Chrome's third-party-cookie phase-out would likely
+block it silently in exactly the browsers where it'd matter, giving false
+confidence instead of fixing anything. Both the processing screen and the
+confirmation email instead set expectations up front — "choose Hilom Account,"
+and a note that a first-time bounce-and-retry is normal, not an error.
 
 ### Tasks — hosting
 - 🔧 **MANUAL** Request an **ACM cert in `us-east-1`** for the site domain(s) (`hilomcollective.com`, `www`) — CloudFront requires `us-east-1`. Validate via CNAME at GoDaddy.
@@ -311,3 +357,38 @@ At pre-launch/early scale, **new** monthly AWS spend is roughly **$20–40** on 
 - Re-evaluate Supabase vs. RDS once volume and access patterns are known.
 - Add scheduled sync if manual becomes error-prone.
 - Add expiry/cohort support if you introduce time-limited products.
+
+### Cognito production-readiness — pending, not launch-blocking after the SES fix above
+The buyer-facing confirmation email is already production-ready (ap-south-1, see
+Phase 6). What's left is narrower than it first looked, because the sign-in-first
+checkout change made Cognito's own admin-created-account path a rare fallback
+rather than the norm:
+- **Cognito's own built-in email** (invites/MFA codes/password resets, as opposed
+  to the fulfillment confirmation email) is still on Cognito's default sender,
+  sandboxed to ~50/day. Wiring it to SES requires the **ap-southeast-1** identity
+  specifically — Cognito's `EmailConfiguration.SourceArn` must be in the same
+  region as the user pool, unlike a Lambda's own SES calls. `scripts/configure-cognito-ses.ts`
+  does this; not run yet, since it mutates a live shared auth resource. Low
+  urgency now that the temp-password invite is suppressed and the fallback path
+  rarely fires — worth doing before relying on any other Cognito-sent email
+  (e.g. self-service password reset).
+- **SES production access for ap-southeast-1** is only needed if the item above
+  gets prioritized. Not needed for the confirmation email (ap-south-1 already has
+  production access).
+- **Bring the `hilom-users` user pool into CDK.** It was created by hand; the
+  stack only references its id as a hardcoded default
+  (`infra/lib/hilom-backend-stack.ts`). Not reproducible as-is — losing it means
+  losing every buyer's identity and, through the email match, their Moodle access.
+- **Custom Hosted UI domain** (e.g. `auth.hilomcollective.com`) instead of the raw
+  `hilom-auth.auth.ap-southeast-1.amazoncognito.com`. Buyers now hit Hosted UI
+  moments before paying; an unfamiliar AWS domain at that moment costs conversions.
+- **DKIM/SPF/DMARC** — the ap-south-1 identity is already DKIM-signed
+  (`community.ts`); SPF/DMARC status on the sending domain hasn't been verified
+  from this codebase and is worth confirming directly in Route 53/GoDaddy + SES.
+- **Refresh tokens** instead of session-storage-only auth — a returning buyer
+  currently re-authenticates every visit since tokens die with the tab. Deliberate
+  for now; revisit once accounts carry more standing value (e.g. a "my courses"
+  dashboard on our own site).
+- **Alarm on `AdminCreateUser` failures** in the fallback path — the SNS alert
+  topic already exists (Phase 6); a buyer who pays and can't be given an identity
+  should page someone, not just sit in `error_detail` waiting to be noticed.

@@ -16,11 +16,18 @@ export default function Processing() {
   // string of ours, so the session id comes from what Checkout stashed before
   // redirecting. The `intent` path is the legacy card flow, kept so any order
   // still mid-flight on the old checkout resolves rather than hanging.
-  const sessionId = params.get('session') ?? sessionStorage.getItem('hilom.pendingSession');
-  const intentId = params.get('intent') ?? sessionStorage.getItem('hilom.pendingIntent');
+  //
+  // Read once via useState's lazy initializer, not on every render: the poller
+  // below clears these sessionStorage keys the moment status reaches a final
+  // state, and re-reading afterward would make `trackingId` go from a real id
+  // back to null mid-page-life — which flipped this component back into its
+  // "waiting for payment confirmation" empty state even after showing success.
+  const [sessionId] = useState(() => params.get('session') ?? sessionStorage.getItem('hilom.pendingSession'));
+  const [intentId] = useState(() => params.get('intent') ?? sessionStorage.getItem('hilom.pendingIntent'));
   const trackingId = sessionId ?? intentId;
   const [status, setStatus] = useState<OrderStatus['status'] | 'unknown'>('pending');
   const [productName, setProductName] = useState<string | null>(null);
+  const [accessLink, setAccessLink] = useState<string | null>(null);
   const [slow, setSlow] = useState(false);
   const started = useRef(Date.now());
 
@@ -36,6 +43,7 @@ export default function Processing() {
         if (cancelled) return;
         setStatus(s.status);
         if (s.productName) setProductName(s.productName);
+        if (s.accessUrl) setAccessLink(s.accessUrl);
         if (s.status === 'fulfilled' || s.status === 'failed') {
           sessionStorage.removeItem('hilom.pendingSession');
           sessionStorage.removeItem('hilom.pendingIntent');
@@ -75,11 +83,25 @@ export default function Processing() {
                 {productName ? <strong>{productName}</strong> : 'Your course'} is now available in your
                 account.
               </p>
-              <a className="btn btn-accent" href={MOODLE_URL} target="_blank" rel="noreferrer">
-                Go to my courses
+              <a className="btn btn-accent" href={accessLink ?? MOODLE_URL} target="_blank" rel="noreferrer">
+                Start learning
               </a>
               <p className="small muted" style={{ marginTop: '1rem', marginBottom: 0 }}>
-                Log in with the same email you used at checkout.
+                On the sign-in page, choose <strong>Hilom Account</strong> and use the same email you
+                checked out with.
+              </p>
+              {/*
+                Moodle's oauth2 callback occasionally bounces the very first SSO
+                attempt in a browser back to the login page ("your session has
+                most likely timed out") before succeeding immediately on retry —
+                a documented sesskey/session-timing quirk, not a broken account
+                (docs/sso-runbook.md). Saying so here, before it can happen,
+                turns it from "the site is broken" into "oh, right" if a buyer
+                hits it.
+              */}
+              <p className="small muted" style={{ marginTop: '0.4rem', marginBottom: 0 }}>
+                First time signing in may bounce you back once — if that happens, just click{' '}
+                <strong>Hilom Account</strong> again.
               </p>
             </>
           ) : status === 'failed' ? (

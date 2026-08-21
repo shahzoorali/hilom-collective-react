@@ -1,4 +1,5 @@
 import { API_BASE } from '../config';
+import { idToken } from './auth';
 
 export interface Product {
   id: string;
@@ -61,17 +62,27 @@ export interface CheckoutSession {
   productName: string;
 }
 
-export const createCheckoutSession = (slug: string, email: string, name?: string) =>
-  get<CheckoutSession>('/checkout/create-session', {
+/**
+ * Note there is no `email` parameter: the backend takes the buyer's address
+ * from the verified id_token, so the browser cannot name who is being enrolled.
+ * `name` is cosmetic — it only labels the PayMongo receipt.
+ */
+export const createCheckoutSession = (slug: string, name?: string) => {
+  const token = idToken();
+  if (!token) throw new Error('Sign in to continue');
+  return get<CheckoutSession>('/checkout/create-session', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, email, name }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ slug, name }),
   });
+};
 
 export interface OrderStatus {
   status: 'pending' | 'paid_pending_enrollment' | 'fulfilled' | 'failed' | 'refunded';
   productName: string | null;
   productSlug: string | null;
+  /** Deep link to the purchased course (or /my/ for a bundle). Null until fulfilled. */
+  accessUrl: string | null;
 }
 
 export const getOrderStatus = (paymentId: string) =>
