@@ -27,4 +27,9 @@ new HilomBackendStack(app, 'HilomBackendStack', {
   cognitoUserPoolId: (app.node.tryGetContext('cognitoUserPoolId') as string | undefined) ?? 'ap-southeast-1_AA9IeeZ2z',
   // Where DLQ alerts go. Override with: cdk deploy -c alertEmail=someone@else.com
   alertEmail: (app.node.tryGetContext('alertEmail') as string | undefined) ?? 'don.poky@gmail.com',
+  // Which PayMongo credential set checkout/webhook/order-status read. Defaults
+  // to test inside the stack itself — see HilomBackendStackProps'
+  // paymongoSecretId doc comment. Going live:
+  //   cdk deploy -c paymongoSecretId=hilom/paymongo/live
+  paymongoSecretId: app.node.tryGetContext('paymongoSecretId') as string | undefined,
 });
