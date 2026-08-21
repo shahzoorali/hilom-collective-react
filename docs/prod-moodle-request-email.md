@@ -75,9 +75,19 @@ that's the existing admin login and must not be turned off.
 ### 2. Create a new OAuth2 issuer
 Site administration → Server → OAuth 2 services → **Create new custom service**
 
+> ⚠️ **The Name field is user-facing copy, not just a label.** Whatever goes
+> here is the exact text Moodle renders on the login page button, and the
+> post-purchase screen and enrollment email both instruct buyers to click it
+> by name (`frontend/src/pages/Processing.tsx`,
+> `backend/src/lib/enrollment-email.ts`). Production is currently
+> `Hilom Collective` — verified by reading the live login page, after an
+> earlier revision of this doc said `Hilom Account` and the two silently
+> drifted apart. **Renaming the issuer means updating that copy in the same
+> change**, or buyers are told to look for a button that does not exist.
+
 | Field | Value |
 |---|---|
-| Name | `Hilom Account` |
+| Name | `Hilom Collective` |
 | Client ID | *(shared separately)* |
 | Client secret | *(shared separately)* |
 | Authentication endpoint | `https://hilom-auth.auth.ap-southeast-1.amazoncognito.com/oauth2/authorize` |
@@ -123,7 +133,7 @@ it's working, then report back.
 
 **One known quirk to expect and ignore:** the very first login attempt after
 someone signs in with Cognito for the first time may bounce back to the Moodle
-login page with a "session timed out" message. Trying the same "Hilom Account"
+login page with a "session timed out" message. Trying the same "Hilom Collective"
 button a second time immediately succeeds. We've reproduced and confirmed this
 is a harmless, self-resolving session-timing thing on Moodle's side (not
 specific to your server) — not a sign anything is misconfigured.

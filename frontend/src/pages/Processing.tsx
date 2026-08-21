@@ -86,9 +86,16 @@ export default function Processing() {
               <a className="btn btn-accent" href={accessLink ?? MOODLE_URL} target="_blank" rel="noreferrer">
                 Start learning
               </a>
+              {/*
+                "Hilom Collective" is the literal label Moodle renders for the
+                OAuth2 identity provider on its login page — verified against
+                production, not assumed. If that issuer is ever renamed in
+                Moodle admin, this copy has to change with it, or it sends
+                buyers looking for a button that isn't there.
+              */}
               <p className="small muted" style={{ marginTop: '1rem', marginBottom: 0 }}>
-                On the sign-in page, choose <strong>Hilom Account</strong> and use the same email you
-                checked out with.
+                On the sign-in page, choose <strong>Hilom Collective</strong> and use the same email
+                you checked out with.
               </p>
               {/*
                 Moodle's oauth2 callback occasionally bounces the very first SSO
@@ -101,7 +108,7 @@ export default function Processing() {
               */}
               <p className="small muted" style={{ marginTop: '0.4rem', marginBottom: 0 }}>
                 First time signing in may bounce you back once — if that happens, just click{' '}
-                <strong>Hilom Account</strong> again.
+                <strong>Hilom Collective</strong> again.
               </p>
             </>
           ) : status === 'failed' ? (

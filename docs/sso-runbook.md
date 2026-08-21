@@ -61,7 +61,7 @@ was reproduced consistently; a real fix would mean patching Moodle core's
 
 **Given decision:** ship with this known behavior rather than patch core.
 Mitigation is one line in the login flow: *if you're bounced back to the login
-page after signing in, click "Hilom Account" again.* Worth a small note on the
+page after signing in, click "Hilom Collective" again.* Worth a small note on the
 login page copy in Phase 7 if it comes up in user feedback.
 
 ## Verified on the test box

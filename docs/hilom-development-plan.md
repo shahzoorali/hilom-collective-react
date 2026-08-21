@@ -293,7 +293,7 @@ establish a Moodle session cookie before the buyer clicks through was considered
 and rejected: Safari's ITP and Chrome's third-party-cookie phase-out would likely
 block it silently in exactly the browsers where it'd matter, giving false
 confidence instead of fixing anything. Both the processing screen and the
-confirmation email instead set expectations up front — "choose Hilom Account,"
+confirmation email instead set expectations up front — "choose Hilom Collective,"
 and a note that a first-time bounce-and-retry is normal, not an error.
 
 ### Tasks — hosting
