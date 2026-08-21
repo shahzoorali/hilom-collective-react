@@ -70,6 +70,22 @@ export interface HilomBackendStackProps extends cdk.StackProps {
    * path via a separate redirect microservice rather than reaching the app.
    */
   readonly frontendUrl?: string;
+
+  /**
+   * Which PayMongo credential set the checkout/webhook/order-status functions
+   * read — `hilom/paymongo/test` or `hilom/paymongo/live`. Defaults to test so
+   * a bare `cdk deploy` can never accidentally start taking real payments;
+   * going live is an explicit, deliberate context flag
+   * (`-c paymongoSecretId=hilom/paymongo/live`), not a default that silently
+   * flips once the live secret happens to exist.
+   *
+   * This also fixes a real gap: before this prop existed, no function ever set
+   * `PAYMONGO_SECRET_ID`, so `getPayMongoSecret()`'s env-var override
+   * (backend/src/lib/secrets.ts) was dead code — every function always read
+   * the literal fallback `hilom/paymongo/test` regardless of what this
+   * construct pointed the IAM grant at.
+   */
+  readonly paymongoSecretId?: string;
 }
 
 const DEFAULT_COGNITO_USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
@@ -86,7 +102,8 @@ export class HilomBackendStack extends cdk.Stack {
     // ---------------------------------------------------------------------
     const supabaseSecret = secretsmanager.Secret.fromSecretNameV2(this, 'SupabaseSecret', 'hilom/supabase');
     const moodleSecret = secretsmanager.Secret.fromSecretNameV2(this, 'MoodleSecret', 'hilom/moodle');
-    const paymongoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'PayMongoSecret', 'hilom/paymongo/test');
+    const paymongoSecretId = props.paymongoSecretId ?? 'hilom/paymongo/test';
+    const paymongoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'PayMongoSecret', paymongoSecretId);
     const cognitoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'CognitoSecret', 'hilom/cognito');
 
     const cognitoUserPoolId = props.cognitoUserPoolId ?? DEFAULT_COGNITO_USER_POOL_ID;
@@ -374,17 +391,19 @@ export class HilomBackendStack extends cdk.Stack {
     // the buyer's identity is deliberately left intact on refund.
     moodleSecret.grantRead(revokeAccess);
     adminKeySecret.grantRead(revokeAccess);
-    paymongoSecret.grantRead(paymongoWebhook);
-    paymongoSecret.grantRead(checkoutSession);
-    paymongoSecret.grantRead(orderStatusByIntent);
-    paymongoSecret.grantRead(orderStatusBySession);
+    // Grant + env var both point at paymongoSecretId together: the grant alone
+    // controls nothing at runtime — see the prop's doc comment above for the
+    // bug this closes (PAYMONGO_SECRET_ID was never actually set anywhere).
+    for (const fn of [paymongoWebhook, checkoutSession, orderStatusByIntent, orderStatusBySession, adminOrderPayment]) {
+      paymongoSecret.grantRead(fn);
+      fn.addEnvironment('PAYMONGO_SECRET_ID', paymongoSecretId);
+    }
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
     adminKeySecret.grantRead(adminOrders);
     // Reads the transaction behind an order straight from PayMongo, so it needs
     // both the admin key (to authorize the caller) and the PayMongo secret key.
     adminKeySecret.grantRead(adminOrderPayment);
-    paymongoSecret.grantRead(adminOrderPayment);
     adminKeySecret.grantRead(adminProductsList);
     adminKeySecret.grantRead(adminProductsUpdate);
 
