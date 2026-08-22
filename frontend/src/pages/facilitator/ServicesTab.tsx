@@ -1,0 +1,406 @@
+/**
+ * Facilitator → Services.
+ *
+ * List + slide-over editor, following `admin/EventsTab.tsx` — the house pattern
+ * for this shape of CRUD screen.
+ *
+ * Prices are edited in pesos and stored in centavos. The conversion happens at
+ * the edges here so nothing downstream ever sees a fractional centavo; the fee
+ * split is integer arithmetic and a float leaking in would show up as a
+ * one-centavo discrepancy in a payout batch.
+ */
+import { useEffect, useState } from 'react';
+import { money } from '../../components/Layout';
+import {
+  createMyService,
+  deactivateMyService,
+  formatDuration,
+  listMyServices,
+  updateMyService,
+  type FacilitatorService,
+  type ServiceKind,
+} from '../../lib/booking';
+
+interface Draft {
+  kind: ServiceKind;
+  title: string;
+  description: string;
+  duration_minutes: number;
+  pricePesos: string;
+  sessions_count: number;
+  delivery_mode: 'online' | 'in_person' | 'both';
+  meeting_url: string;
+  buffer_minutes: number;
+  min_notice_minutes: number;
+  max_advance_days: number;
+  max_per_day: string;
+  cancellation_policy: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+const blankDraft = (): Draft => ({
+  kind: 'standard',
+  title: '',
+  description: '',
+  duration_minutes: 60,
+  pricePesos: '',
+  sessions_count: 1,
+  delivery_mode: 'online',
+  meeting_url: '',
+  buffer_minutes: 0,
+  min_notice_minutes: 720,
+  max_advance_days: 60,
+  max_per_day: '',
+  cancellation_policy: '',
+  is_active: true,
+  sort_order: 0,
+});
+
+function toDraft(s: FacilitatorService): Draft {
+  return {
+    kind: s.kind,
+    title: s.title,
+    description: s.description ?? '',
+    duration_minutes: s.duration_minutes,
+    pricePesos: s.price_centavos ? String(s.price_centavos / 100) : '',
+    sessions_count: s.sessions_count,
+    delivery_mode: s.delivery_mode,
+    meeting_url: s.meeting_url ?? '',
+    buffer_minutes: s.buffer_minutes,
+    min_notice_minutes: s.min_notice_minutes,
+    max_advance_days: s.max_advance_days,
+    max_per_day: s.max_per_day === null ? '' : String(s.max_per_day),
+    cancellation_policy: s.cancellation_policy ?? '',
+    is_active: s.is_active,
+    sort_order: s.sort_order,
+  };
+}
+
+function toInput(d: Draft): Record<string, unknown> {
+  return {
+    kind: d.kind,
+    title: d.title,
+    description: d.description || null,
+    duration_minutes: d.duration_minutes,
+    // Rounded, not truncated: 1500.005 pesos is a typo, not an instruction to
+    // discard half a centavo.
+    price_centavos: d.kind === 'exploratory' ? 0 : Math.round(Number(d.pricePesos || 0) * 100),
+    sessions_count: d.sessions_count,
+    delivery_mode: d.delivery_mode,
+    meeting_url: d.meeting_url || null,
+    buffer_minutes: d.buffer_minutes,
+    min_notice_minutes: d.min_notice_minutes,
+    max_advance_days: d.max_advance_days,
+    max_per_day: d.max_per_day === '' ? null : Number(d.max_per_day),
+    cancellation_policy: d.cancellation_policy || null,
+    is_active: d.is_active,
+    sort_order: d.sort_order,
+  };
+}
+
+export default function ServicesTab() {
+  const [services, setServices] = useState<FacilitatorService[] | null>(null);
+  const [openId, setOpenId] = useState<string | 'new' | null>(null);
+  const [draft, setDraft] = useState<Draft>(blankDraft());
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  function reload() {
+    listMyServices()
+      .then(setServices)
+      .catch((err: Error) => setError(err.message));
+  }
+
+  useEffect(() => reload(), []);
+
+  function open(service?: FacilitatorService) {
+    setError(null);
+    if (service) {
+      setDraft(toDraft(service));
+      setOpenId(service.id);
+    } else {
+      setDraft(blankDraft());
+      setOpenId('new');
+    }
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (openId === 'new') await createMyService(toInput(draft));
+      else if (openId) await updateMyService(openId, toInput(draft));
+      setOpenId(null);
+      setNotice('Saved');
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deactivate(service: FacilitatorService) {
+    if (
+      !window.confirm(
+        `Remove "${service.title}" from your profile?\n\nSessions already booked are unaffected and stay in your calendar.`,
+      )
+    )
+      return;
+    try {
+      await deactivateMyService(service.id);
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not remove');
+    }
+  }
+
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
+    setDraft((d) => ({ ...d, [key]: value }));
+
+  return (
+    <>
+      <div className="admin-toolbar">
+        <h2 style={{ margin: 0 }}>Services</h2>
+        <button type="button" className="btn btn-accent small" onClick={() => open()}>
+          Add a service
+        </button>
+      </div>
+
+      {error && !openId && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
+      {services === null && <div className="spinner" aria-label="Loading" />}
+
+      {services !== null && services.length === 0 && (
+        <div className="panel">
+          <p style={{ marginTop: 0 }}>
+            You haven't added a service yet. Most facilitators start with a free 20-minute intro
+            call and one paid session.
+          </p>
+          <button type="button" className="btn btn-accent" onClick={() => open()}>
+            Add your first service
+          </button>
+        </div>
+      )}
+
+      {(services ?? []).map((s) => (
+        <div key={s.id} className="card" style={{ marginBottom: '0.75rem', opacity: s.is_active ? 1 : 0.55 }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <strong>{s.title}</strong>
+            <span>{s.price_centavos === 0 ? 'Free' : money(s.price_centavos, s.currency)}</span>
+          </div>
+          <p className="small muted" style={{ margin: '0.25rem 0 0.6rem' }}>
+            {formatDuration(s.duration_minutes)}
+            {s.kind === 'exploratory' && ' · complimentary intro call'}
+            {s.kind === 'package' && ` · ${s.sessions_count} sessions`}
+            {!s.is_active && ' · not shown on your profile'}
+            {!s.meeting_url && s.delivery_mode !== 'in_person' && ' · no meeting link set'}
+          </p>
+          <div className="row" style={{ gap: '0.5rem' }}>
+            <button type="button" className="btn btn-ghost small" onClick={() => open(s)}>
+              Edit
+            </button>
+            {s.is_active && (
+              <button type="button" className="btn btn-ghost small" onClick={() => void deactivate(s)}>
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {openId && (
+        <div className="admin-drawer-overlay" role="dialog" aria-modal="true">
+          <div className="admin-drawer">
+            <header className="admin-drawer-header">
+              <h3 style={{ margin: 0 }}>{openId === 'new' ? 'New service' : 'Edit service'}</h3>
+              <button type="button" className="btn btn-ghost small" onClick={() => setOpenId(null)}>
+                Close
+              </button>
+            </header>
+
+            <div className="admin-drawer-body">
+              {error && <div className="alert alert-error">{error}</div>}
+
+              <label className="field">
+                <span>Type</span>
+                <select value={draft.kind} onChange={(e) => set('kind', e.target.value as ServiceKind)}>
+                  <option value="standard">Single session</option>
+                  <option value="exploratory">Complimentary intro call</option>
+                  <option value="package">Package of sessions</option>
+                </select>
+              </label>
+
+              {draft.kind === 'exploratory' && (
+                <p className="small muted">
+                  Always free, and each client can book one per facilitator. You can only have one
+                  active intro call.
+                </p>
+              )}
+
+              <label className="field">
+                <span>Title</span>
+                <input value={draft.title} onChange={(e) => set('title', e.target.value)} maxLength={160} />
+              </label>
+
+              <label className="field">
+                <span>Description</span>
+                <textarea
+                  rows={4}
+                  value={draft.description}
+                  onChange={(e) => set('description', e.target.value)}
+                />
+              </label>
+
+              <div className="two-col">
+                <label className="field">
+                  <span>Length (minutes)</span>
+                  <input
+                    type="number"
+                    min={5}
+                    max={480}
+                    value={draft.duration_minutes}
+                    onChange={(e) => set('duration_minutes', Number(e.target.value))}
+                  />
+                </label>
+
+                {draft.kind !== 'exploratory' && (
+                  <label className="field">
+                    <span>Price (₱)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={draft.pricePesos}
+                      onChange={(e) => set('pricePesos', e.target.value)}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {draft.kind === 'package' && (
+                <label className="field">
+                  <span>Number of sessions</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={draft.sessions_count}
+                    onChange={(e) => set('sessions_count', Number(e.target.value))}
+                  />
+                </label>
+              )}
+
+              <label className="field">
+                <span>Delivered</span>
+                <select
+                  value={draft.delivery_mode}
+                  onChange={(e) => set('delivery_mode', e.target.value as Draft['delivery_mode'])}
+                >
+                  <option value="online">Online</option>
+                  <option value="in_person">In person</option>
+                  <option value="both">Either</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span>Meeting link</span>
+                <input
+                  value={draft.meeting_url}
+                  onChange={(e) => set('meeting_url', e.target.value)}
+                  placeholder="https://zoom.us/j/..."
+                />
+                {/* Only reaches the client on a confirmed booking — never on
+                    the public profile. */}
+                <small className="muted">
+                  Your standing room. Sent to the client once their booking is confirmed, never shown
+                  publicly.
+                </small>
+              </label>
+
+              <h4>Scheduling rules</h4>
+
+              <div className="two-col">
+                <label className="field">
+                  <span>Gap after each session (minutes)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={240}
+                    value={draft.buffer_minutes}
+                    onChange={(e) => set('buffer_minutes', Number(e.target.value))}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Minimum notice (hours)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={draft.min_notice_minutes / 60}
+                    onChange={(e) => set('min_notice_minutes', Math.round(Number(e.target.value) * 60))}
+                  />
+                </label>
+              </div>
+
+              <div className="two-col">
+                <label className="field">
+                  <span>Bookable up to (days ahead)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={draft.max_advance_days}
+                    onChange={(e) => set('max_advance_days', Number(e.target.value))}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Max per day</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={draft.max_per_day}
+                    placeholder="No limit"
+                    onChange={(e) => set('max_per_day', e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <label className="field">
+                <span>Cancellation note (optional)</span>
+                <input
+                  value={draft.cancellation_policy}
+                  onChange={(e) => set('cancellation_policy', e.target.value)}
+                  placeholder="Free cancellation up to 24 hours before."
+                />
+              </label>
+
+              <label className="field row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={draft.is_active}
+                  onChange={(e) => set('is_active', e.target.checked)}
+                />
+                <span>Show this on my profile</span>
+              </label>
+            </div>
+
+            <footer className="admin-drawer-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setOpenId(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-accent" disabled={busy} onClick={() => void save()}>
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

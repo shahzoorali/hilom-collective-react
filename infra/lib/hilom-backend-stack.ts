@@ -12,6 +12,7 @@ import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -110,6 +111,35 @@ export class HilomBackendStack extends cdk.Stack {
     const cognitoUserPoolId = props.cognitoUserPoolId ?? DEFAULT_COGNITO_USER_POOL_ID;
     const cognitoSpaClientId = props.cognitoSpaClientId ?? DEFAULT_COGNITO_SPA_CLIENT_ID;
     const cognitoUserPoolArn = `arn:aws:cognito-idp:${this.region}:${this.account}:userpool/${cognitoUserPoolId}`;
+
+    // ---------------------------------------------------------------------
+    // Roles.
+    //
+    // The user pool itself is not managed by this stack (it predates it and is
+    // imported by id), but groups are additive and safe to declare here: a
+    // CfnUserPoolGroup creates only the group, and removing it removes only the
+    // group, never the pool or its users.
+    //
+    // Groups rather than a `role` column because the check has to happen on
+    // every request anyway, and Cognito already signs the claim — a database
+    // role would mean a lookup per call and a second source of truth to keep in
+    // sync with the token. `backend/src/lib/auth.ts` reads `cognito:groups`
+    // straight off the verified id token.
+    //
+    // Membership is assigned out-of-band (admin approving a facilitator calls
+    // AdminAddUserToGroup); nothing here grants anyone anything.
+    // ---------------------------------------------------------------------
+    new cognito.CfnUserPoolGroup(this, 'FacilitatorGroup', {
+      userPoolId: cognitoUserPoolId,
+      groupName: 'facilitator',
+      description: 'Approved facilitators — access to the facilitator dashboard',
+    });
+
+    new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: cognitoUserPoolId,
+      groupName: 'admin',
+      description: 'Hilom staff — access to /admin without the shared key',
+    });
 
     // The admin key has no external source of truth, so CDK generates it. It is
     // never rendered into the template — only the generated secret's ARN is.
@@ -327,6 +357,23 @@ export class HilomBackendStack extends cdk.Stack {
     const adminEvents = makeFn('AdminEventsFn', 'handlers/admin-events.ts', 'handler');
     const postsPublic = makeFn('PostsPublicFn', 'handlers/posts.ts', 'handler');
     const adminPosts = makeFn('AdminPostsFn', 'handlers/admin-posts.ts', 'handler');
+    // ---------------------------------------------------------------------
+    // Facilitator marketplace.
+    //
+    // Four request-backed functions, split by *audience* rather than by
+    // resource: public directory, the client's own bookings, the facilitator's
+    // dashboard, and admin. That split is the authorization boundary — each
+    // function has exactly one way of establishing who is calling — so a route
+    // wired to the wrong function fails closed rather than leaking a calendar.
+    // ---------------------------------------------------------------------
+    const facilitatorsPublic = makeFn('FacilitatorsPublicFn', 'handlers/facilitators.ts', 'handler');
+    const bookings = makeFn('BookingsFn', 'handlers/bookings.ts', 'handler');
+    const facilitatorPortal = makeFn('FacilitatorPortalFn', 'handlers/facilitator-portal.ts', 'handler');
+    const adminFacilitators = makeFn('AdminFacilitatorsFn', 'handlers/admin-facilitators.ts', 'handler');
+    // Scheduled, not routed: releases lapsed slot holds and marks delivered
+    // sessions completed so they become payable.
+    const bookingSweep = makeFn('BookingSweepFn', 'handlers/booking-sweep.ts', 'handler');
+
     // Not behind API Gateway — invoked on a schedule (below), not by a
     // request. Publishes posts/pages whose scheduled_at has arrived.
     const scheduledPublishSweep = makeFn(
@@ -385,6 +432,14 @@ export class HilomBackendStack extends cdk.Stack {
       targets: [new eventsTargets.LambdaFunction(scheduledPublishSweep)],
     });
 
+    // Same cadence as the publish sweep. Five minutes bounds how long an
+    // abandoned checkout can keep a slot past its 20-minute hold, which is the
+    // number that actually matters to someone watching for an opening.
+    new events.Rule(this, 'BookingSweepRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+      targets: [new eventsTargets.LambdaFunction(bookingSweep)],
+    });
+
     // Least privilege: only the functions that read a given secret can read it.
     for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate, meOwnedCourses]) {
       supabaseSecret.grantRead(fn);
@@ -431,6 +486,65 @@ export class HilomBackendStack extends cdk.Stack {
     // The public form endpoint salts its IP hashes with the admin key, which is
     // the one high-entropy secret this function already has a reason to reach.
     adminKeySecret.grantRead(formsPublic);
+
+    // ---------------------------------------------------------------------
+    // Facilitator marketplace grants.
+    // ---------------------------------------------------------------------
+    for (const fn of [facilitatorsPublic, bookings, facilitatorPortal, adminFacilitators, bookingSweep]) {
+      supabaseSecret.grantRead(fn);
+    }
+
+    // Booking creation opens a PayMongo checkout session, exactly as course
+    // checkout does.
+    paymongoSecret.grantRead(bookings);
+
+    // Both accept an admin-group token *or* the legacy shared key, so both
+    // need to be able to read the key to compare against.
+    adminKeySecret.grantRead(adminFacilitators);
+
+    // Every function that authenticates a caller from a Cognito id token needs
+    // the pool id and SPA client id to build the verifier.
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators]) {
+      fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
+      fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
+    }
+
+    // Approving or suspending a facilitator moves their Cognito group
+    // membership, which is what actually grants or revokes dashboard access.
+    adminFacilitators.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cognito-idp:AdminAddUserToGroup', 'cognito-idp:AdminRemoveUserFromGroup'],
+        resources: [cognitoUserPoolArn],
+      }),
+    );
+    cognitoSecret.grantRead(adminFacilitators);
+
+    // Booking confirmations, cancellations, reschedules and the facilitator
+    // approval email. Same ap-south-1 identity as every other send — IAM here
+    // is granted per function, so omitting one of these is a silent runtime
+    // failure rather than a deploy error.
+    //
+    // paymongoWebhook and enrollmentRetryConsumer are absent because the
+    // fulfillOrder loop above already grants them this exact statement; both
+    // now also send booking confirmations through the same identity.
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators]) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail'],
+          resources: [
+            `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
+            `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
+          ],
+        }),
+      );
+    }
+
+    // The booking flow needs the same www-qualified origin as course checkout
+    // for its PayMongo success/cancel URLs — see the note in checkout.ts about
+    // why the apex domain breaks the return path — and the same activated
+    // payment methods, since it opens sessions on the same account.
+    bookings.addEnvironment('FRONTEND_URL', props.frontendUrl ?? 'https://www.hilomcollective.com');
+    bookings.addEnvironment('CHECKOUT_PAYMENT_METHODS', props.checkoutPaymentMethods ?? 'qrph');
 
     // Presigning can only sign what the signing role is itself allowed to do,
     // so these grants are what make the upload URL work — and what bound it.
@@ -551,6 +665,51 @@ export class HilomBackendStack extends cdk.Stack {
       ['/pages/{slug}', [GET]],
     ]);
     cmsRoutes(menusPublic, 'MenusPublicInt', [['/menus', [GET]]]);
+
+    // -----------------------------------------------------------------
+    // Facilitator marketplace.
+    //
+    // Ordering matters in the same way it does for /admin/pages/trash: the
+    // literal `/facilitators/apply` must be registered before
+    // `/facilitators/{slug}`, or an application POST would be routed to the
+    // public directory as a facilitator whose slug is "apply". API Gateway
+    // prefers the exact match, but only if it exists.
+    // -----------------------------------------------------------------
+    cmsRoutes(facilitatorPortal, 'FacilitatorPortalInt', [
+      ['/facilitators/apply', [POST]],
+      ['/facilitator/me', [GET, PUT]],
+      ['/facilitator/services', [GET, POST]],
+      ['/facilitator/services/{serviceId}', [PUT, DELETE]],
+      ['/facilitator/availability', [GET, PUT]],
+      ['/facilitator/blackouts', [GET, POST]],
+      ['/facilitator/blackouts/{blackoutId}', [DELETE]],
+      ['/facilitator/bookings', [GET]],
+      ['/facilitator/bookings/{bookingId}/cancel', [POST]],
+      ['/facilitator/bookings/{bookingId}/no-show', [POST]],
+      ['/facilitator/earnings', [GET]],
+    ]);
+
+    cmsRoutes(facilitatorsPublic, 'FacilitatorsPublicInt', [
+      ['/facilitators', [GET]],
+      ['/facilitators/{slug}', [GET]],
+      ['/facilitators/{slug}/availability', [GET]],
+    ]);
+
+    cmsRoutes(bookings, 'BookingsInt', [
+      ['/bookings', [POST]],
+      ['/bookings/{bookingId}/status', [GET]],
+      ['/bookings/{bookingId}/cancel', [POST]],
+      ['/bookings/{bookingId}/reschedule', [POST]],
+      ['/me/bookings', [GET]],
+    ]);
+
+    cmsRoutes(adminFacilitators, 'AdminFacilitatorsInt', [
+      ['/admin/facilitators', [GET]],
+      ['/admin/facilitators/{facilitatorId}', [GET, PATCH]],
+      ['/admin/bookings', [GET]],
+      ['/admin/payouts', [GET, POST]],
+      ['/admin/payouts/{payoutId}', [PATCH]],
+    ]);
     cmsRoutes(formsPublic, 'FormsPublicInt', [
       ['/forms/{slug}', [GET]],
       ['/forms/{slug}/submissions', [POST]],

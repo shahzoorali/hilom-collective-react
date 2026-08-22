@@ -16,6 +16,15 @@ export const RESERVED_SLUGS = new Set([
   'orders',
   'webhooks',
   'community-submit',
+  // Facilitator marketplace routes. Same hazard as `courses`: these sit above
+  // the CMS catch-all in App.tsx, so a page created at one of these slugs would
+  // be silently unreachable.
+  'facilitators',
+  'facilitator',
+  'book',
+  'booking',
+  'bookings',
+  'account',
 ]);
 
 export class SlugError extends Error {}

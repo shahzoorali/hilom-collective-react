@@ -1,8 +1,9 @@
 /**
  * Shared HTTP helpers for API Gateway HTTP API (payload format 2.0).
  */
-import type { APIGatewayProxyResultV2 } from 'aws-lambda';
+import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSecret } from './secrets.js';
+import { requireUser } from './auth.js';
 
 /**
  * CORS is also configured on the HTTP API itself. It is repeated here because
@@ -64,4 +65,34 @@ export async function isAuthorizedAdmin(
     diff |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
   }
   return diff === 0;
+}
+
+/**
+ * Admin authorization for endpoints added from the facilitator marketplace on.
+ *
+ * Accepts either credential:
+ *   * a Cognito id_token whose `cognito:groups` contains `admin` — the real
+ *     model, where an action is attributable to a person; or
+ *   * the legacy `x-admin-key` shared secret.
+ *
+ * Both are accepted rather than cutting over because the existing admin tabs
+ * (pages, posts, events, media, menus, forms, commerce) all send the key from
+ * sessionStorage, and swapping their auth out is a separate, riskier change
+ * than adding new screens. New endpoints should use this; migrating the old
+ * ones is follow-up work, at which point the key branch can be deleted.
+ *
+ * The group is checked first so a request carrying both credentials is
+ * attributed to the person rather than to the shared secret.
+ */
+export async function isAdminCaller(event: APIGatewayProxyEventV2): Promise<boolean> {
+  try {
+    const user = await requireUser(event);
+    if (user.groups.includes('admin')) return true;
+  } catch {
+    // No token, or not a valid one — fall through to the shared key. This is
+    // not an error path: most current admin traffic carries no Authorization
+    // header at all.
+  }
+
+  return isAuthorizedAdmin(event.headers ?? {});
 }

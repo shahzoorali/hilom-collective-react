@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/lib/slots.test.ts",
     "probe:moodle": "tsx ../scripts/probe-moodle.ts"
   },
   "dependencies": {

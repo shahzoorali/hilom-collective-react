@@ -62,14 +62,25 @@ function getVerifier() {
  * email at all.
  */
 export async function requireBuyer(event: APIGatewayProxyEventV2): Promise<VerifiedBuyer> {
+  return toBuyer(await verifyIdToken(event));
+}
+
+/**
+ * Verifies the bearer id_token and returns its raw claims.
+ *
+ * Split out from `requireBuyer` so that callers needing claims beyond the buyer
+ * fields — `requireUser`, for the `cognito:groups` role claim — can read them
+ * off the same verified payload instead of verifying the token twice or, worse,
+ * decoding it unverified.
+ */
+async function verifyIdToken(event: APIGatewayProxyEventV2): Promise<Record<string, unknown>> {
   // API Gateway lowercases header names, but a direct/test invoke may not.
   const header = event.headers?.authorization ?? event.headers?.Authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : undefined;
   if (!token) throw new UnauthorizedError('Sign in to continue');
 
-  let payload: Record<string, unknown>;
   try {
-    payload = (await getVerifier().verify(token)) as unknown as Record<string, unknown>;
+    return (await getVerifier().verify(token)) as unknown as Record<string, unknown>;
   } catch (err) {
     // Deliberately not echoed to the caller: the reason a token failed is
     // useful to an attacker probing the endpoint and useless to a real buyer,
@@ -77,7 +88,10 @@ export async function requireBuyer(event: APIGatewayProxyEventV2): Promise<Verif
     console.warn('[auth.requireBuyer] token rejected:', err instanceof Error ? err.message : err);
     throw new UnauthorizedError('Your session has expired — sign in again');
   }
+}
 
+/** Applies the buyer-identity rules to an already-verified payload. */
+function toBuyer(payload: Record<string, unknown>): VerifiedBuyer {
   const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : undefined;
   const sub = typeof payload.sub === 'string' ? payload.sub : undefined;
   if (!sub) throw new UnauthorizedError('Token has no subject');
@@ -96,4 +110,55 @@ export async function requireBuyer(event: APIGatewayProxyEventV2): Promise<Verif
     givenName: typeof payload.given_name === 'string' ? payload.given_name : undefined,
     familyName: typeof payload.family_name === 'string' ? payload.family_name : undefined,
   };
+}
+
+/**
+ * A verified caller plus their Cognito group memberships.
+ *
+ * Groups are the role model for the facilitator marketplace: `facilitator` and
+ * `admin` are `CfnUserPoolGroup`s on the same pool that already issues buyer
+ * tokens, so a facilitator is not a second identity system — it is the same
+ * account with a claim on it. Cognito puts group names in `cognito:groups` on
+ * the id token, which means the check costs nothing extra: the signature and
+ * expiry were already verified above, and reading one more claim off the same
+ * payload adds no call and no new failure mode.
+ *
+ * The claim is absent (not empty) for a user in no groups, which is the common
+ * case for buyers — hence the defensive normalisation rather than a cast.
+ */
+export interface VerifiedUser extends VerifiedBuyer {
+  groups: string[];
+}
+
+/**
+ * `requireBuyer` with group claims attached.
+ *
+ * Deliberately additive: `requireBuyer` keeps its exact signature and behaviour
+ * because checkout, ownership and every existing caller depend on it, and this
+ * file is the one place where a subtle change becomes an access-control bug.
+ */
+export async function requireUser(event: APIGatewayProxyEventV2): Promise<VerifiedUser> {
+  const payload = await verifyIdToken(event);
+  const raw = payload['cognito:groups'];
+  const groups = Array.isArray(raw) ? raw.filter((g): g is string => typeof g === 'string') : [];
+  return { ...toBuyer(payload), groups };
+}
+
+/**
+ * Returns the caller only if they are in `group`, otherwise throws.
+ *
+ * The message is deliberately the same shape as an unauthenticated one: whether
+ * a given account happens to hold the `admin` group is not something an
+ * arbitrary caller should be able to probe for.
+ */
+export async function requireGroup(
+  event: APIGatewayProxyEventV2,
+  group: string,
+): Promise<VerifiedUser> {
+  const user = await requireUser(event);
+  if (!user.groups.includes(group)) {
+    console.warn(`[auth.requireGroup] ${user.sub} lacks group ${group}`);
+    throw new UnauthorizedError('You do not have access to this area');
+  }
+  return user;
 }
