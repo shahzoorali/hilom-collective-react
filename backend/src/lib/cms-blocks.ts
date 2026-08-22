@@ -224,6 +224,12 @@ export const BLOCK_CATALOG = {
       'The existing signup form, which emails the team via SES. Its fields are fixed in code; only the surrounding copy is editable.',
     fields: {},
   },
+  facilitatorApplyForm: {
+    label: 'Facilitator application form',
+    description:
+      'The facilitator application form — sign-in gate, then the application itself. Its fields are fixed in code; only the surrounding copy is editable.',
+    fields: {},
+  },
   form: {
     label: 'Custom form',
     description: 'Renders a form defined under Admin → Forms.',

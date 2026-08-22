@@ -94,7 +94,10 @@ export default function App() {
                     segments over params regardless of order, but the ordering
                     here matches the same rule on the API side (see the
                     facilitator marketplace routes in the CDK stack). */}
-                <Route path="/facilitators/apply" element={<FacilitatorApply />} />
+                <Route
+                  path="/facilitators/apply"
+                  element={<CmsOrFallback slug="facilitators-apply" fallback={<FacilitatorApply />} />}
+                />
                 <Route path="/facilitators/:slug" element={<FacilitatorProfile />} />
                 <Route path="/book/:slug/:serviceId" element={<BookingFlow />} />
                 <Route path="/booking/processing" element={<BookingProcessing />} />

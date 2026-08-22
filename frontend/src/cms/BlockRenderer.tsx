@@ -17,6 +17,7 @@ import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { money } from '../components/Layout';
 import type { Block, Cta, MediaRef } from './blocks';
 import CommunityForm from './CommunityForm';
+import FacilitatorApplyForm from './FacilitatorApplyForm';
 import FormBlock from './FormBlock';
 
 type Props = Record<string, unknown>;
@@ -496,6 +497,16 @@ function CommunityFormBlock() {
   );
 }
 
+function FacilitatorApplyFormBlock() {
+  return (
+    <section className="section" style={{ paddingTop: 0 }}>
+      <div className="container" style={{ maxWidth: 640 }}>
+        <FacilitatorApplyForm />
+      </div>
+    </section>
+  );
+}
+
 /**
  * type -> component. Exported so the Puck editor renders the same components
  * the live site does, rather than an editor-only approximation of them.
@@ -582,6 +593,7 @@ export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode
   facilitatorGrid: FacilitatorGrid,
   ctaBanner: CtaBanner,
   communityForm: CommunityFormBlock,
+  facilitatorApplyForm: FacilitatorApplyFormBlock,
   form: ({ props }) => <FormBlock slug={str(props.formSlug)} heading={str(props.heading)} />,
   spotifyEmbed: SpotifyEmbed,
 };
