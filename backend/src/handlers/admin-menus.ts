@@ -27,8 +27,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
   const key = event.pathParameters?.key;
   try {
-    if (!key) return list();
-    return replace(key, event);
+    if (!key) return await list();
+    return await replace(key, event);
   } catch (err) {
     return serverError('adminMenus', err);
   }

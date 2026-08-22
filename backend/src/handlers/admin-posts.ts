@@ -75,39 +75,39 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // --- Categories ---
     if (path.startsWith('/admin/categories')) {
       if (!categoryId) {
-        if (method === 'GET') return listCategories();
-        if (method === 'POST') return createCategory(parseBody(event));
+        if (method === 'GET') return await listCategories();
+        if (method === 'POST') return await createCategory(parseBody(event));
         return badRequest(`Unsupported method ${method}`);
       }
-      if (method === 'PATCH') return updateCategory(categoryId, parseBody(event));
-      if (method === 'DELETE') return deleteCategory(categoryId);
+      if (method === 'PATCH') return await updateCategory(categoryId, parseBody(event));
+      if (method === 'DELETE') return await deleteCategory(categoryId);
       return badRequest(`Unsupported method ${method}`);
     }
 
     // --- Posts: trash list is a static route, not a {postId} — check first. ---
     if (path === '/admin/posts/trash') {
-      if (method === 'GET') return listTrash();
+      if (method === 'GET') return await listTrash();
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (!postId) {
-      if (method === 'GET') return listPosts();
-      if (method === 'POST') return createPost(parseBody(event));
+      if (method === 'GET') return await listPosts();
+      if (method === 'POST') return await createPost(parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
 
-    if (path.endsWith('/draft')) return saveDraft(postId, parseBody(event));
-    if (path.endsWith('/publish')) return publish(postId, parseBody(event));
-    if (path.endsWith('/unpublish')) return unpublish(postId);
-    if (path.endsWith('/untrash')) return untrashPost(postId);
-    if (path.endsWith('/duplicate')) return duplicatePost(postId);
-    if (path.endsWith('/permanent')) return permanentlyDeletePost(postId);
-    if (path.endsWith('/restore') && revisionId) return restore(postId, revisionId);
-    if (path.endsWith('/revisions')) return revisions(postId);
+    if (path.endsWith('/draft')) return await saveDraft(postId, parseBody(event));
+    if (path.endsWith('/publish')) return await publish(postId, parseBody(event));
+    if (path.endsWith('/unpublish')) return await unpublish(postId);
+    if (path.endsWith('/untrash')) return await untrashPost(postId);
+    if (path.endsWith('/duplicate')) return await duplicatePost(postId);
+    if (path.endsWith('/permanent')) return await permanentlyDeletePost(postId);
+    if (path.endsWith('/restore') && revisionId) return await restore(postId, revisionId);
+    if (path.endsWith('/revisions')) return await revisions(postId);
 
-    if (method === 'GET') return getPost(postId);
-    if (method === 'PATCH') return updateMeta(postId, parseBody(event));
-    if (method === 'DELETE') return trashPost(postId);
+    if (method === 'GET') return await getPost(postId);
+    if (method === 'PATCH') return await updateMeta(postId, parseBody(event));
+    if (method === 'DELETE') return await trashPost(postId);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     if (

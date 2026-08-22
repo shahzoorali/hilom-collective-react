@@ -62,28 +62,28 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     // Trash list is a static route, not a {pageId} — check first.
     if (path === '/admin/pages/trash') {
-      if (method === 'GET') return listTrash();
+      if (method === 'GET') return await listTrash();
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (!pageId) {
-      if (method === 'GET') return list();
-      if (method === 'POST') return create(parseBody(event));
+      if (method === 'GET') return await list();
+      if (method === 'POST') return await create(parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
 
-    if (path.endsWith('/draft')) return saveDraft(pageId, parseBody(event));
-    if (path.endsWith('/publish')) return publish(pageId, parseBody(event));
-    if (path.endsWith('/unpublish')) return unpublish(pageId);
-    if (path.endsWith('/untrash')) return untrashPage(pageId);
-    if (path.endsWith('/duplicate')) return duplicatePage(pageId);
-    if (path.endsWith('/permanent')) return permanentlyDeletePage(pageId);
-    if (path.endsWith('/restore') && revisionId) return restore(pageId, revisionId);
-    if (path.endsWith('/revisions')) return revisions(pageId);
+    if (path.endsWith('/draft')) return await saveDraft(pageId, parseBody(event));
+    if (path.endsWith('/publish')) return await publish(pageId, parseBody(event));
+    if (path.endsWith('/unpublish')) return await unpublish(pageId);
+    if (path.endsWith('/untrash')) return await untrashPage(pageId);
+    if (path.endsWith('/duplicate')) return await duplicatePage(pageId);
+    if (path.endsWith('/permanent')) return await permanentlyDeletePage(pageId);
+    if (path.endsWith('/restore') && revisionId) return await restore(pageId, revisionId);
+    if (path.endsWith('/revisions')) return await revisions(pageId);
 
-    if (method === 'GET') return get(pageId);
-    if (method === 'PATCH') return updateMeta(pageId, parseBody(event));
-    if (method === 'DELETE') return trashPage(pageId);
+    if (method === 'GET') return await get(pageId);
+    if (method === 'PATCH') return await updateMeta(pageId, parseBody(event));
+    if (method === 'DELETE') return await trashPage(pageId);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     // Validation failures are the caller's fault and must say what was wrong;

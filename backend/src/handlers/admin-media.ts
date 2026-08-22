@@ -42,14 +42,14 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const mediaId = event.pathParameters?.mediaId;
 
   try {
-    if (path.endsWith('/upload-url')) return createUploadUrl(parseBody(event));
+    if (path.endsWith('/upload-url')) return await createUploadUrl(parseBody(event));
     if (mediaId) {
-      if (method === 'PATCH') return update(mediaId, parseBody(event));
-      if (method === 'DELETE') return remove(mediaId);
+      if (method === 'PATCH') return await update(mediaId, parseBody(event));
+      if (method === 'DELETE') return await remove(mediaId);
       return badRequest(`Unsupported method ${method}`);
     }
-    if (method === 'POST') return confirm(parseBody(event));
-    return list(event.queryStringParameters?.q);
+    if (method === 'POST') return await confirm(parseBody(event));
+    return await list(event.queryStringParameters?.q);
   } catch (err) {
     return serverError('adminMedia', err);
   }

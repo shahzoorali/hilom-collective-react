@@ -63,15 +63,24 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const path = event.requestContext.http.path;
   const bookingId = event.pathParameters?.bookingId;
 
+  // Every branch is `await`ed deliberately, not just returned: a bare
+  // `return asyncFn()` inside a try hands back a *pending* promise before it
+  // has rejected, so an inner throw (a Supabase error, a failed insert)
+  // surfaces after this try block has already exited and the catch below
+  // never runs. The rejection then reaches Lambda uncaught — the caller sees
+  // the same 500 either way, but `serverError` never logs it, so a booking
+  // that failed in production leaves no `[bookings]` line to debug from.
+  // See the identical note in admin-facilitators.ts, where the equivalent bug
+  // was caught turning a validation error into an opaque 500.
   try {
-    if (path.endsWith('/me/bookings')) return listMine(user.email);
+    if (path.endsWith('/me/bookings')) return await listMine(user.email);
     if (!bookingId) {
-      if (method === 'POST') return create(event, user);
+      if (method === 'POST') return await create(event, user);
       return badRequest(`Unsupported method ${method}`);
     }
-    if (path.endsWith('/status')) return status(bookingId, user.email);
-    if (path.endsWith('/cancel')) return cancel(bookingId, user.email);
-    if (path.endsWith('/reschedule')) return reschedule(bookingId, user.email, event);
+    if (path.endsWith('/status')) return await status(bookingId, user.email);
+    if (path.endsWith('/cancel')) return await cancel(bookingId, user.email);
+    if (path.endsWith('/reschedule')) return await reschedule(bookingId, user.email, event);
     return notFound();
   } catch (err) {
     return serverError('bookings', err);

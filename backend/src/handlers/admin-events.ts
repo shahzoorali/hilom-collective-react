@@ -28,13 +28,13 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     if (!eventId) {
-      if (method === 'GET') return list();
-      if (method === 'POST') return create(parseBody(event));
+      if (method === 'GET') return await list();
+      if (method === 'POST') return await create(parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
-    if (method === 'GET') return get(eventId);
-    if (method === 'PUT') return update(eventId, parseBody(event));
-    if (method === 'DELETE') return remove(eventId);
+    if (method === 'GET') return await get(eventId);
+    if (method === 'PUT') return await update(eventId, parseBody(event));
+    if (method === 'DELETE') return await remove(eventId);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     if (err instanceof BlockValidationError) return badRequest(err.message);

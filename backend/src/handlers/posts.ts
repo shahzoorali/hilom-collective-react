@@ -27,9 +27,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const slug = event.pathParameters?.slug;
 
   try {
-    if (path === '/categories') return listCategories();
-    if (slug) return getPost(slug);
-    return listPosts(event);
+    if (path === '/categories') return await listCategories();
+    if (slug) return await getPost(slug);
+    return await listPosts(event);
   } catch (err) {
     return serverError('posts', err);
   }

@@ -32,16 +32,16 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const submissionId = event.pathParameters?.submissionId;
 
   try {
-    if (formId && submissionId) return removeSubmission(formId, submissionId);
-    if (formId && path.includes('/submissions')) return listSubmissions(formId);
+    if (formId && submissionId) return await removeSubmission(formId, submissionId);
+    if (formId && path.includes('/submissions')) return await listSubmissions(formId);
     if (formId) {
-      if (method === 'GET') return get(formId);
-      if (method === 'PUT') return update(formId, parseBody(event));
-      if (method === 'DELETE') return remove(formId, event.queryStringParameters?.force === '1');
+      if (method === 'GET') return await get(formId);
+      if (method === 'PUT') return await update(formId, parseBody(event));
+      if (method === 'DELETE') return await remove(formId, event.queryStringParameters?.force === '1');
       return badRequest(`Unsupported method ${method}`);
     }
-    if (method === 'POST') return create(parseBody(event));
-    return list();
+    if (method === 'POST') return await create(parseBody(event));
+    return await list();
   } catch (err) {
     if (err instanceof BlockValidationError || err instanceof SlugError) return badRequest(err.message);
     return serverError('adminForms', err);

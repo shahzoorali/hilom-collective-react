@@ -29,10 +29,13 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const slug = event.pathParameters?.slug;
   const path = event.requestContext.http.path;
 
+  // `await`ed rather than returned bare — see the note in bookings.ts. An
+  // unawaited rejection here would escape this try entirely, costing the
+  // `[facilitators]` log line that says why the directory failed to load.
   try {
-    if (!slug) return list(event);
-    if (path.endsWith('/availability')) return availability(slug, event);
-    return detail(slug);
+    if (!slug) return await list(event);
+    if (path.endsWith('/availability')) return await availability(slug, event);
+    return await detail(slug);
   } catch (err) {
     return serverError('facilitators', err);
   }
