@@ -97,7 +97,8 @@ export default function FacilitatorDashboard() {
           Sign in again
         </button>
         <p className="small muted" style={{ marginBottom: 0 }}>
-          Not a facilitator yet? <Link to="/facilitators">See who's on Hilom</Link>.
+          Not a facilitator yet? <Link to="/facilitators/apply">Apply to facilitate</Link>, or{' '}
+          <Link to="/facilitators">see who's already on Hilom</Link>.
         </p>
       </Gate>
     );

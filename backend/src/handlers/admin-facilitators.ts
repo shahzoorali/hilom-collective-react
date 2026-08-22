@@ -2,6 +2,7 @@
  * Admin management of facilitators, bookings and payouts.
  *
  *   GET    /admin/facilitators
+ *   POST   /admin/facilitators
  *   GET    /admin/facilitators/{facilitatorId}
  *   PATCH  /admin/facilitators/{facilitatorId}
  *   GET    /admin/bookings
@@ -21,10 +22,11 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../lib/supabase.js';
-import { ok, notFound, badRequest, unauthorized, serverError, isAdminCaller } from '../lib/http.js';
+import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
 import { sendFacilitatorApproved } from '../lib/booking-email.js';
-import { FacilitatorInputError } from '../lib/facilitator-input.js';
+import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
+import { normalizeSlug, slugify, findAvailableSlug, SlugError } from '../lib/slug.js';
 
 const ADMIN_FACILITATOR_COLUMNS =
   'id, slug, email, cognito_sub, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at';
@@ -49,13 +51,14 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     const facilitatorId = event.pathParameters?.facilitatorId;
     if (!facilitatorId) {
       if (method === 'GET') return listFacilitators(supabase, event);
+      if (method === 'POST') return createFacilitator(supabase, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
     if (method === 'GET') return getFacilitator(supabase, facilitatorId);
     if (method === 'PATCH') return patchFacilitator(supabase, facilitatorId, parseBody(event));
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
-    if (err instanceof FacilitatorInputError) return badRequest(err.message);
+    if (err instanceof FacilitatorInputError || err instanceof SlugError) return badRequest(err.message);
     return serverError('adminFacilitators', err);
   }
 }
@@ -85,6 +88,61 @@ async function listFacilitators(
   const { data, error } = await query;
   if (error) throw error;
   return ok({ facilitators: data ?? [] });
+}
+
+/**
+ * Enters a facilitator Hilom has already vetted outside the app (a referral,
+ * someone recruited directly) — the walk-in equivalent of the self-service
+ * `/facilitators/apply`.
+ *
+ * Always lands in `applied`, exactly where a self-submitted application
+ * lands, rather than accepting a status from the caller: approving is what
+ * grants the Cognito `facilitator` group, and that grant requires a real
+ * Cognito user to already exist for the email, which is not guaranteed here.
+ * Routing every row through the same Approve button means that check only
+ * has to be correct in one place (`patchFacilitator`, below) instead of two.
+ *
+ * `cognito_sub` is left null, same as an application submitted before the
+ * person's first sign-in — see the note on `me()` in facilitator-portal.ts
+ * for how that gets linked up automatically the first time they do sign in.
+ */
+async function createFacilitator(
+  supabase: SupabaseClient,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const email = String(body.email ?? '').trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return badRequest('A valid email is required');
+  }
+
+  const profile = validateProfile(body);
+
+  const base = slugify(profile.display_name) || 'facilitator';
+  const slug = await findAvailableSlug(normalizeSlug(base), async (candidate) => {
+    const { data } = await supabase.from('facilitators').select('id').eq('slug', candidate).maybeSingle();
+    return Boolean(data);
+  });
+
+  const { data, error } = await supabase
+    .from('facilitators')
+    .insert({
+      ...profile,
+      slug,
+      email,
+      legal_name: typeof body.legal_name === 'string' ? body.legal_name.trim().slice(0, 160) : null,
+      phone: typeof body.phone === 'string' ? body.phone.trim().slice(0, 40) : null,
+      admin_notes: typeof body.admin_notes === 'string' ? body.admin_notes.trim().slice(0, 4000) || null : null,
+      status: 'applied',
+    })
+    .select(ADMIN_FACILITATOR_COLUMNS)
+    .maybeSingle();
+
+  // The email-lower unique index is the same one `/facilitators/apply` can
+  // hit — one person, one row, regardless of which door they came through.
+  if (error?.code === '23505') return json(409, { error: `A facilitator already exists for ${email}` });
+  if (error) throw error;
+
+  return ok({ facilitator: data });
 }
 
 async function getFacilitator(

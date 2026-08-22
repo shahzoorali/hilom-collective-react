@@ -71,14 +71,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     const user = await requireGroup(event, 'facilitator');
     const supabase = await getSupabase();
-
-    const { data: facilitator, error } = await supabase
-      .from('facilitators')
-      .select(OWN_COLUMNS)
-      .eq('cognito_sub', user.sub)
-      .maybeSingle<FacilitatorRow & Record<string, unknown>>();
-
-    if (error) throw error;
+    const facilitator = await me(supabase, user);
     if (!facilitator) {
       // In the group but with no row: the group was granted without an
       // approved application. Fail closed rather than inventing a profile.
@@ -120,6 +113,41 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (err instanceof SlugError) return badRequest(err.message);
     return serverError('facilitatorPortal', err);
   }
+}
+
+/**
+ * Resolves the caller's own facilitator row, linking it to their Cognito
+ * identity on the way if it isn't yet.
+ *
+ * `cognito_sub` is null on any row created before its owner's first sign-in —
+ * both a self-submitted application (never signed in until now) and one an
+ * admin entered directly (never had a Cognito account to reference at all).
+ * The first lookup covers the common case; the fallback is what makes an
+ * admin-added facilitator's dashboard actually open rather than 404ing
+ * forever, by claiming the matching `email` row the first time its owner
+ * signs in and is found to be in the `facilitator` group.
+ */
+async function me(
+  supabase: SupabaseClient,
+  user: { email: string; sub: string },
+): Promise<(FacilitatorRow & Record<string, unknown>) | null> {
+  const { data: bySub, error: subError } = await supabase
+    .from('facilitators')
+    .select(OWN_COLUMNS)
+    .eq('cognito_sub', user.sub)
+    .maybeSingle<FacilitatorRow & Record<string, unknown>>();
+  if (subError) throw subError;
+  if (bySub) return bySub;
+
+  const { data: linked, error: linkError } = await supabase
+    .from('facilitators')
+    .update({ cognito_sub: user.sub })
+    .is('cognito_sub', null)
+    .eq('email', user.email)
+    .select(OWN_COLUMNS)
+    .maybeSingle<FacilitatorRow & Record<string, unknown>>();
+  if (linkError) throw linkError;
+  return linked;
 }
 
 function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {

@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import Facilitators from './pages/Facilitators';
+import FacilitatorApply from './pages/FacilitatorApply';
 import FacilitatorProfile from './pages/FacilitatorProfile';
 import BookingFlow from './pages/BookingFlow';
 import BookingProcessing from './pages/BookingProcessing';
@@ -88,6 +89,12 @@ export default function App() {
                 {/* Above the /:slug CMS catch-all, and mirrored in
                     RESERVED_SLUGS server-side so no CMS page can shadow them. */}
                 <Route path="/facilitators" element={<Facilitators />} />
+                {/* Above /facilitators/:slug — a literal "apply" must never be
+                    read as a facilitator's slug. React Router ranks static
+                    segments over params regardless of order, but the ordering
+                    here matches the same rule on the API side (see the
+                    facilitator marketplace routes in the CDK stack). */}
+                <Route path="/facilitators/apply" element={<FacilitatorApply />} />
                 <Route path="/facilitators/:slug" element={<FacilitatorProfile />} />
                 <Route path="/book/:slug/:serviceId" element={<BookingFlow />} />
                 <Route path="/booking/processing" element={<BookingProcessing />} />

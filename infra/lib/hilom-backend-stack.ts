@@ -704,7 +704,7 @@ export class HilomBackendStack extends cdk.Stack {
     ]);
 
     cmsRoutes(adminFacilitators, 'AdminFacilitatorsInt', [
-      ['/admin/facilitators', [GET]],
+      ['/admin/facilitators', [GET, POST]],
       ['/admin/facilitators/{facilitatorId}', [GET, PATCH]],
       ['/admin/bookings', [GET]],
       ['/admin/payouts', [GET, POST]],

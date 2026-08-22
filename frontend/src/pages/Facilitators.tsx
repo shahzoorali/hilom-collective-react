@@ -89,6 +89,17 @@ export default function Facilitators() {
             <FacilitatorCardView key={f.id} facilitator={f} />
           ))}
         </div>
+
+        <div className="panel" style={{ marginTop: '2.5rem' }}>
+          <h2 style={{ fontSize: '1.1rem', marginTop: 0 }}>Are you a practitioner?</h2>
+          <p className="small muted" style={{ marginBottom: '0.9rem' }}>
+            Offer your coaching, breathwork, or wellness practice through Hilom — you set your own
+            hours and prices, and we handle booking and payment.
+          </p>
+          <Link className="btn btn-ghost" to="/facilitators/apply">
+            Apply to facilitate
+          </Link>
+        </div>
       </div>
     </section>
   );

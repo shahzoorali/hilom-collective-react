@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { money } from '../../components/Layout';
 import {
+  adminCreateFacilitator,
   adminGetFacilitator,
   adminListFacilitators,
   adminPatchFacilitator,
@@ -51,6 +52,19 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addDraft, setAddDraft] = useState({
+    email: '',
+    display_name: '',
+    headline: '',
+    credentials: '',
+    specialties: '',
+    scope_note: '',
+    admin_notes: '',
+  });
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     adminListFacilitators(adminKey, filter || undefined)
@@ -124,6 +138,46 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  const lines = (value: string) =>
+    value.split('\n').map((s) => s.trim()).filter(Boolean);
+
+  async function createFacilitator() {
+    if (!addDraft.email.trim() || !addDraft.display_name.trim()) {
+      setAddError('Email and name are required');
+      return;
+    }
+    setAddBusy(true);
+    setAddError(null);
+    try {
+      const created = await adminCreateFacilitator(adminKey, {
+        email: addDraft.email.trim(),
+        display_name: addDraft.display_name.trim(),
+        headline: addDraft.headline.trim() || undefined,
+        credentials: lines(addDraft.credentials),
+        specialties: lines(addDraft.specialties),
+        scope_note: addDraft.scope_note.trim() || undefined,
+        admin_notes: addDraft.admin_notes.trim() || undefined,
+      });
+      setAddOpen(false);
+      setAddDraft({
+        email: '',
+        display_name: '',
+        headline: '',
+        credentials: '',
+        specialties: '',
+        scope_note: '',
+        admin_notes: '',
+      });
+      setNotice(`${created.display_name} added — review and approve when ready.`);
+      setFilter('applied');
+      reload();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Could not add facilitator');
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="admin-toolbar">
@@ -133,7 +187,97 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
         </select>
+        <button
+          type="button"
+          className="btn btn-accent small"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setAddOpen((o) => !o)}
+        >
+          {addOpen ? 'Cancel' : '+ Add facilitator'}
+        </button>
       </div>
+
+      {addOpen && (
+        <div className="panel" style={{ marginBottom: '1rem' }}>
+          <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Add a facilitator directly</h3>
+          <p className="small muted" style={{ marginTop: 0 }}>
+            For someone Hilom has already vetted elsewhere — a referral, someone recruited directly.
+            This lands them in "Needs review" like a normal application, so you still Approve and
+            Publish separately below.
+          </p>
+
+          {addError && <div className="alert alert-error">{addError}</div>}
+
+          <div className="two-col">
+            <label className="field">
+              <span>Email</span>
+              <input
+                type="email"
+                value={addDraft.email}
+                onChange={(e) => setAddDraft((d) => ({ ...d, email: e.target.value }))}
+              />
+              <small className="muted">Must match the email they'll sign in with.</small>
+            </label>
+            <label className="field">
+              <span>Name shown to clients</span>
+              <input
+                value={addDraft.display_name}
+                onChange={(e) => setAddDraft((d) => ({ ...d, display_name: e.target.value }))}
+              />
+            </label>
+          </div>
+
+          <label className="field">
+            <span>Headline</span>
+            <input
+              value={addDraft.headline}
+              onChange={(e) => setAddDraft((d) => ({ ...d, headline: e.target.value }))}
+              placeholder="Somatic coach for people in career transitions"
+            />
+          </label>
+
+          <label className="field">
+            <span>Credentials — one per line</span>
+            <textarea
+              rows={3}
+              value={addDraft.credentials}
+              onChange={(e) => setAddDraft((d) => ({ ...d, credentials: e.target.value }))}
+            />
+          </label>
+
+          <label className="field">
+            <span>What they help with — one per line</span>
+            <textarea
+              rows={3}
+              value={addDraft.specialties}
+              onChange={(e) => setAddDraft((d) => ({ ...d, specialties: e.target.value }))}
+            />
+          </label>
+
+          <label className="field">
+            <span>Scope of practice</span>
+            <textarea
+              rows={2}
+              value={addDraft.scope_note}
+              onChange={(e) => setAddDraft((d) => ({ ...d, scope_note: e.target.value }))}
+            />
+          </label>
+
+          <label className="field">
+            <span>Admin notes (internal — never shown publicly)</span>
+            <textarea
+              rows={2}
+              value={addDraft.admin_notes}
+              onChange={(e) => setAddDraft((d) => ({ ...d, admin_notes: e.target.value }))}
+              placeholder="Where this referral came from, anything worth remembering at review time."
+            />
+          </label>
+
+          <button type="button" className="btn btn-accent small" disabled={addBusy} onClick={() => void createFacilitator()}>
+            {addBusy ? 'Adding…' : 'Add facilitator'}
+          </button>
+        </div>
+      )}
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}

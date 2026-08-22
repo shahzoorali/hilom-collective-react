@@ -379,6 +379,29 @@ export const adminListFacilitators = (adminKey: string, status?: string) =>
     { headers: { 'x-admin-key': adminKey } },
   ).then((r) => r.facilitators);
 
+/**
+ * Enters a facilitator Hilom has already vetted elsewhere — always lands in
+ * `applied`, same as a self-submitted application, so it goes through the
+ * same Approve / Publish buttons as everyone else.
+ */
+export const adminCreateFacilitator = (
+  adminKey: string,
+  body: {
+    email: string;
+    display_name: string;
+    headline?: string;
+    credentials?: string[];
+    specialties?: string[];
+    scope_note?: string;
+    admin_notes?: string;
+  },
+) =>
+  apiFetch<{ facilitator: AdminFacilitator }>('/admin/facilitators', {
+    method: 'POST',
+    headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.facilitator);
+
 export const adminGetFacilitator = (adminKey: string, facilitatorId: string) =>
   apiFetch<{ facilitator: AdminFacilitator; services: FacilitatorService[]; bookings: Booking[] }>(
     `/admin/facilitators/${encodeURIComponent(facilitatorId)}`,
