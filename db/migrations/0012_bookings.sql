@@ -115,14 +115,18 @@ create table if not exists public.bookings (
 -- and abandoned bookings must not block the slot from being sold again.
 --
 -- ALTER TABLE ADD CONSTRAINT has no IF NOT EXISTS, so this is guarded by hand
--- to keep the migration re-runnable like every other file here.
+-- to keep the migration re-runnable like every other file here. A duplicate
+-- constraint *name* raises duplicate_table (42P07), not duplicate_object
+-- (42710) — confirmed against a real re-run; the enum idiom elsewhere in this
+-- file catches duplicate_object because a duplicate *type* name is what that
+-- actually is.
 do $$ begin
   alter table public.bookings add constraint bookings_no_overlap
     exclude using gist (
       facilitator_id with =,
       tstzrange(starts_at, ends_at, '[)') with &&
     ) where (status in ('pending_payment', 'confirmed'));
-exception when duplicate_object then null;
+exception when duplicate_table then null;
 end $$;
 
 -- One free exploratory call per client per facilitator, ever. Without this the
