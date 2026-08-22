@@ -453,6 +453,39 @@ function CtaBanner({ props }: { props: Props }) {
   );
 }
 
+/**
+ * Spotify's own embed only needs the show id out of the full URL a marketer
+ * would actually paste (e.g. one with a `?si=` share token) — everything
+ * else is generated. Returns null on anything that isn't a recognizable show
+ * link, so a bad paste renders nothing rather than a broken iframe.
+ */
+function spotifyShowId(url: string): string | null {
+  const match = url.match(/open\.spotify\.com\/show\/([a-zA-Z0-9]+)/);
+  return match ? match[1] : null;
+}
+
+function SpotifyEmbed({ props }: { props: Props }) {
+  const showId = spotifyShowId(str(props.showUrl));
+  if (!showId) return null;
+
+  return (
+    <section className="section" style={sectionStyle(props)}>
+      <div className="container" style={{ maxWidth: 640 }}>
+        {props.heading ? <h2>{str(props.heading)}</h2> : null}
+        <iframe
+          title="Spotify podcast player"
+          src={`https://open.spotify.com/embed/show/${showId}?utm_source=generator`}
+          width="100%"
+          height="352"
+          style={{ borderRadius: 'var(--radius)', border: 0 }}
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          loading="lazy"
+        />
+      </div>
+    </section>
+  );
+}
+
 function CommunityFormBlock() {
   return (
     <section className="section" style={{ paddingTop: 0 }}>
@@ -550,6 +583,7 @@ export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode
   ctaBanner: CtaBanner,
   communityForm: CommunityFormBlock,
   form: ({ props }) => <FormBlock slug={str(props.formSlug)} heading={str(props.heading)} />,
+  spotifyEmbed: SpotifyEmbed,
 };
 
 export default function BlockRenderer({ blocks }: { blocks: Block[] }) {

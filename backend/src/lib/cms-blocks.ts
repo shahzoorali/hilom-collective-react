@@ -232,6 +232,14 @@ export const BLOCK_CATALOG = {
       heading: { kind: 'text', label: 'Heading' },
     },
   },
+  spotifyEmbed: {
+    label: 'Spotify podcast player',
+    description: 'Embeds a Spotify show as a playable widget.',
+    fields: {
+      heading: { kind: 'text', label: 'Heading' },
+      showUrl: { kind: 'href', label: 'Spotify show URL', required: true },
+    },
+  },
 } as const satisfies Record<string, BlockSpec>;
 
 export type BlockType = keyof typeof BLOCK_CATALOG;
