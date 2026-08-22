@@ -10,6 +10,7 @@ export interface Product {
   currency: string;
   thumbnail_url: string | null;
   image_url: string | null;
+  moodle_course_ids: number[];
 }
 
 export interface CourseSummary {
@@ -241,3 +242,17 @@ export const adminRevokeAccess = (adminKey: string, orderId: string) =>
 
 export const listCourses = () =>
   apiFetch<{ courses: CourseSummary[]; last_synced_at: string | null }>('/courses');
+
+/**
+ * Which Moodle course ids the signed-in buyer already has permanent access
+ * to — drives the "already own it" ribbon/CTA on the catalog and product
+ * pages. Resolves to an empty list when signed out rather than throwing:
+ * there is nothing to own yet, and the storefront should render normally.
+ */
+export const getMyOwnedCourses = (): Promise<number[]> => {
+  const token = idToken();
+  if (!token) return Promise.resolve([]);
+  return apiFetch<{ courseIds: number[] }>('/me/owned-courses', {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((r) => r.courseIds);
+};

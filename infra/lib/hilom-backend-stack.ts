@@ -278,6 +278,11 @@ export class HilomBackendStack extends cdk.Stack {
     const orderStatus = makeFn('OrderStatusFn', 'handlers/orders.ts', 'status');
     const orderStatusByIntent = makeFn('OrderStatusByIntentFn', 'handlers/orders.ts', 'statusByIntent');
     const orderStatusBySession = makeFn('OrderStatusBySessionFn', 'handlers/orders.ts', 'statusBySession');
+    const meOwnedCourses = makeFn('MeOwnedCoursesFn', 'handlers/me.ts', 'ownedCourses');
+    // Same reasoning as checkoutSession below: verifies the buyer's id_token,
+    // so it needs the same (non-secret) pool/client ids.
+    meOwnedCourses.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
+    meOwnedCourses.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
 
     // Only QRPh is activated on the PayMongo account today. Adding GCash or
     // card later is a config change here, not a code change — but every value
@@ -380,7 +385,7 @@ export class HilomBackendStack extends cdk.Stack {
     });
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate, meOwnedCourses]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -509,6 +514,7 @@ export class HilomBackendStack extends cdk.Stack {
     route('/orders/status/{paymentId}', apigw.HttpMethod.GET, orderStatus, 'OrderStatusInt');
     route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
     route('/orders/status-by-session/{sessionId}', apigw.HttpMethod.GET, orderStatusBySession, 'OrderStatusBySessionInt');
+    route('/me/owned-courses', apigw.HttpMethod.GET, meOwnedCourses, 'MeOwnedCoursesInt');
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
     route('/admin/orders/{orderId}/payment', apigw.HttpMethod.GET, adminOrderPayment, 'AdminOrderPaymentInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');

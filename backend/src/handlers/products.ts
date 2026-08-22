@@ -39,13 +39,22 @@ export async function list(): Promise<APIGatewayProxyResultV2> {
 
     const imageByCourseId = new Map((courseImages ?? []).map((c) => [c.moodle_course_id, c.image_url]));
     const firstImageByProductId = new Map<string, string | null>();
+    const courseIdsByProductId = new Map<string, number[]>();
     for (const link of links ?? []) {
-      if (firstImageByProductId.has(link.product_id)) continue;
-      firstImageByProductId.set(link.product_id, imageByCourseId.get(link.moodle_course_id) ?? null);
+      if (!firstImageByProductId.has(link.product_id)) {
+        firstImageByProductId.set(link.product_id, imageByCourseId.get(link.moodle_course_id) ?? null);
+      }
+      const ids = courseIdsByProductId.get(link.product_id) ?? [];
+      ids.push(link.moodle_course_id);
+      courseIdsByProductId.set(link.product_id, ids);
     }
 
     return ok({
-      products: products.map((p) => ({ ...p, image_url: firstImageByProductId.get(p.id) ?? null })),
+      products: products.map((p) => ({
+        ...p,
+        image_url: firstImageByProductId.get(p.id) ?? null,
+        moodle_course_ids: courseIdsByProductId.get(p.id) ?? [],
+      })),
     });
   } catch (err) {
     return serverError('products.list', err);

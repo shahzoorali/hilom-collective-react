@@ -1,17 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { getProduct, type ProductDetail as Detail } from '../lib/api';
+import { getProduct, getMyOwnedCourses, type ProductDetail as Detail } from '../lib/api';
 import { money } from '../components/Layout';
+import { currentUser } from '../lib/auth';
+import { moodleAccessUrl } from '../config';
 
 export default function ProductDetail() {
   const { slug = '' } = useParams();
   const [product, setProduct] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ownedCourseIds, setOwnedCourseIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     setProduct(null);
     setError(null);
     getProduct(slug).then(setProduct).catch((e: Error) => setError(e.message));
+    // A failed lookup just means the page renders as if nothing is owned —
+    // the product page itself must never fail to load over this.
+    if (currentUser()) getMyOwnedCourses().then((ids) => setOwnedCourseIds(new Set(ids))).catch(() => {});
   }, [slug]);
 
   if (error) {
@@ -38,12 +44,22 @@ export default function ProductDetail() {
   }
 
   const isBundle = product.moodle_course_ids.length > 1;
+  const ownedIds = product.moodle_course_ids.filter((id) => ownedCourseIds.has(id));
+  const owned = ownedIds.length > 0;
 
   return (
     <section className="section">
       <div className="container split split-narrow" style={{ alignItems: 'start' }}>
         <div>
           {isBundle && <span className="badge">Bundle · {product.moodle_course_ids.length} courses</span>}
+          {owned && (
+            <span
+              className="badge"
+              style={{ marginLeft: isBundle ? '0.5rem' : 0, background: 'var(--accent, #2f7d4f)', color: '#fff' }}
+            >
+              ✓ You're enrolled
+            </span>
+          )}
           <h1>{product.name}</h1>
           {product.description && <p>{product.description}</p>}
 
@@ -88,16 +104,28 @@ export default function ProductDetail() {
 
         <aside>
           <div className="panel" style={{ position: 'sticky', top: '5.5rem' }}>
-            <div className="price" style={{ marginTop: 0 }}>
-              {money(product.price_centavos, product.currency)}
-            </div>
-            <p className="small muted">Permanent access. One payment.</p>
-            <Link className="btn btn-accent btn-block" to={`/checkout/${product.slug}`}>
-              Buy now
-            </Link>
-            <p className="small muted" style={{ marginTop: '0.9rem', marginBottom: 0 }}>
-              You'll get access on learn.hilomcollective.com right after payment.
-            </p>
+            {owned ? (
+              <>
+                <p style={{ marginTop: 0, fontWeight: 600 }}>You already own this course.</p>
+                <p className="small muted">No need to pay again — jump straight in.</p>
+                <a className="btn btn-accent btn-block" href={moodleAccessUrl(ownedIds)}>
+                  Continue learning
+                </a>
+              </>
+            ) : (
+              <>
+                <div className="price" style={{ marginTop: 0 }}>
+                  {money(product.price_centavos, product.currency)}
+                </div>
+                <p className="small muted">Permanent access. One payment.</p>
+                <Link className="btn btn-accent btn-block" to={`/checkout/${product.slug}`}>
+                  Buy now
+                </Link>
+                <p className="small muted" style={{ marginTop: '0.9rem', marginBottom: 0 }}>
+                  You'll get access on learn.hilomcollective.com right after payment.
+                </p>
+              </>
+            )}
           </div>
         </aside>
       </div>

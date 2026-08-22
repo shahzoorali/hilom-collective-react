@@ -20,4 +20,14 @@ export const COGNITO = {
 
 export const MOODLE_URL = 'https://www.learn.hilomcollective.com';
 
+/**
+ * Mirrors backend/src/lib/access-url.ts: a single owned course deep-links
+ * straight to it, a bundle (or multiple owned courses) has no one "right"
+ * course to land on, so it goes to the dashboard.
+ */
+export function moodleAccessUrl(courseIds: number[]): string {
+  if (courseIds.length === 1) return `${MOODLE_URL}/course/view.php?id=${courseIds[0]}`;
+  return `${MOODLE_URL}/my/`;
+}
+
 export const redirectUri = () => `${window.location.origin}/auth/callback`;
