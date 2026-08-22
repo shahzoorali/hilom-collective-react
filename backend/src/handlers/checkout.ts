@@ -30,6 +30,7 @@ import { getSupabase } from '../lib/supabase.js';
 import { getPayMongoSecret } from '../lib/secrets.js';
 import { ok, badRequest, notFound, serverError, unauthorized } from '../lib/http.js';
 import { requireBuyer, UnauthorizedError } from '../lib/auth.js';
+import { accessUrl } from '../lib/access-url.js';
 
 interface CreateSessionBody {
   slug?: string;
@@ -99,6 +100,36 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
 
     if (error) throw error;
     if (!product) return notFound('Product not found');
+
+    // Block repurchase of anything the buyer already owns (fulfilled order,
+    // any course overlap — catches "bought the bundle, now tries a course in
+    // it" as well as an exact repeat) rather than sending them through PayMongo
+    // to pay again for access they already have.
+    const { data: thisProductCourses } = await supabase
+      .from('product_courses')
+      .select('moodle_course_id')
+      .eq('product_id', product.id);
+    const thisCourseIds = (thisProductCourses ?? []).map((r) => r.moodle_course_id as number);
+
+    const { data: ownedOrders } = await supabase
+      .from('orders')
+      .select('product_id')
+      .eq('buyer_email', email)
+      .eq('status', 'fulfilled');
+    const ownedProductIds = [...new Set((ownedOrders ?? []).map((r) => r.product_id as string))];
+
+    if (ownedProductIds.length > 0 && thisCourseIds.length > 0) {
+      const { data: ownedCourseRows } = await supabase
+        .from('product_courses')
+        .select('moodle_course_id')
+        .in('product_id', ownedProductIds);
+      const ownedCourseIds = new Set((ownedCourseRows ?? []).map((r) => r.moodle_course_id as number));
+      const overlap = thisCourseIds.filter((id) => ownedCourseIds.has(id));
+
+      if (overlap.length > 0) {
+        return ok({ alreadyOwned: true, accessUrl: accessUrl(overlap) });
+      }
+    }
 
     const { secretKey } = await getPayMongoSecret();
 

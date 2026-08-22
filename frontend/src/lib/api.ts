@@ -115,6 +115,17 @@ export interface CheckoutSession {
 }
 
 /**
+ * Returned instead of a CheckoutSession when the buyer's account already has a
+ * fulfilled order covering this product (or an overlapping course, e.g. they
+ * bought the bundle and are now looking at one of its courses) — nothing to
+ * pay for, just send them to the course.
+ */
+export interface AlreadyOwned {
+  alreadyOwned: true;
+  accessUrl: string;
+}
+
+/**
  * Note there is no `email` parameter: the backend takes the buyer's address
  * from the verified id_token, so the browser cannot name who is being enrolled.
  * `name` is cosmetic — it only labels the PayMongo receipt.
@@ -122,7 +133,7 @@ export interface CheckoutSession {
 export const createCheckoutSession = (slug: string, name?: string) => {
   const token = idToken();
   if (!token) throw new Error('Sign in to continue');
-  return apiFetch<CheckoutSession>('/checkout/create-session', {
+  return apiFetch<CheckoutSession | AlreadyOwned>('/checkout/create-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ slug, name }),

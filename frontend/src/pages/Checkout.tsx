@@ -31,6 +31,7 @@ export default function Checkout() {
   const [name, setName] = useState([user?.givenName, user?.familyName].filter(Boolean).join(' '));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ownedAccessUrl, setOwnedAccessUrl] = useState<string | null>(null);
 
   useEffect(() => {
     getProduct(slug).then(setProduct).catch((e: Error) => setError(e.message));
@@ -51,6 +52,15 @@ export default function Checkout() {
       // the price from the database and the buyer from the id_token, so
       // neither can be tampered with.
       const session = await createCheckoutSession(slug, name.trim() || undefined);
+
+      // Already owns this (or an overlapping course, e.g. bought the bundle
+      // already) — nothing to pay for. Tell them rather than silently
+      // bouncing them to PayMongo-and-back for a purchase that never happens.
+      if ('alreadyOwned' in session) {
+        setOwnedAccessUrl(session.accessUrl);
+        setBusy(false);
+        return;
+      }
 
       // PayMongo can't template the session id into its success_url, so the
       // id has to survive the round trip through the hosted page for the
@@ -114,6 +124,27 @@ export default function Checkout() {
               New here? You'll create your account on the same screen. We'll bring you right back to
               finish your purchase.
             </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (ownedAccessUrl) {
+    return (
+      <section className="section">
+        <div className="container" style={{ maxWidth: 560 }}>
+          <h1>Checkout</h1>
+          {summary}
+          <div className="panel">
+            <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>You already have this</h2>
+            <p>
+              {user?.email} already has access to this course — no need to buy it again. Jump
+              straight in.
+            </p>
+            <a className="btn btn-accent btn-block" href={ownedAccessUrl}>
+              Start learning
+            </a>
           </div>
         </div>
       </section>
