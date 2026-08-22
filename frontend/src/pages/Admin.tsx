@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useParams, Link } fr
 import { adminListPages } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
+import FacilitatorsTab from './admin/FacilitatorsTab';
+import PayoutsTab from './admin/PayoutsTab';
 import PagesTab from './admin/PagesTab';
 import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
@@ -22,6 +24,8 @@ const TABS = [
   { label: 'Menus', path: 'menus', icon: '🧭' },
   { label: 'Forms', path: 'forms', icon: '📋' },
   { label: 'Commerce', path: 'commerce', icon: '💳' },
+  { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
+  { label: 'Payouts', path: 'payouts', icon: '🏦' },
 ] as const;
 
 function PageEditorRoute({ adminKey }: { adminKey: string }) {
@@ -231,6 +235,8 @@ export default function Admin() {
           <Route path="menus" element={<MenusTab adminKey={adminKey} />} />
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
+          <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
+          <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>
       </main>

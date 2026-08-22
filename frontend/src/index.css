@@ -1430,3 +1430,148 @@ div[class*="_PuckCanvas-root_"],
   font-size: 1.3rem;
   margin-bottom: 1rem;
 }
+
+/* ==========================================================================
+   Facilitator marketplace
+   ========================================================================== */
+
+/* --- Directory cards ---------------------------------------------------- */
+
+.facilitator-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.facilitator-card:hover,
+.facilitator-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.facilitator-card__photo {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+}
+
+.facilitator-card__body {
+  padding: 1rem;
+}
+
+/* A monogram rather than a stock silhouette: an obviously generic stand-in
+   photo makes a real practitioner's profile read as a fake listing. */
+.facilitator-card__monogram {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--forest);
+  color: var(--cream);
+  font-family: var(--serif);
+  font-size: 2.5rem;
+  line-height: 1;
+}
+
+.facilitator-photo {
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+}
+
+/* --- Slot picker -------------------------------------------------------- */
+
+/* A horizontal week strip. Scrolls rather than wraps on narrow screens so the
+   seven days always read as one row — a wrapped 4+3 grid loses the sense of a
+   week, which is the whole point of showing seven at once. */
+.slot-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(56px, 1fr));
+  gap: 0.4rem;
+  margin: 1rem 0 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.slot-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.6rem 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.slot-day:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.slot-day:not(:disabled):hover {
+  border-color: var(--forest);
+}
+
+.slot-day--active {
+  background: var(--forest);
+  border-color: var(--forest);
+  color: var(--cream);
+}
+
+.slot-day__dow {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.slot-day__num {
+  font-size: 1.15rem;
+  font-family: var(--serif);
+}
+
+.slot-day__count {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.slot-times {
+  display: grid;
+  /* auto-fill rather than auto-fit so a day with two free times does not
+     stretch them across the full width like a pair of banners. */
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.slot-time {
+  /* Comfortably past the 44px touch target minimum — this is the control the
+     entire booking flow funnels through, and on a phone. */
+  min-height: 46px;
+  padding: 0.5rem 0.25rem;
+  text-align: center;
+}
+
+/* --- Specialty filter chips --------------------------------------------- */
+
+.tag-chip-active {
+  background: var(--forest);
+  border-color: var(--forest);
+  color: var(--cream);
+}
+
+@media (max-width: 640px) {
+  .slot-days {
+    grid-template-columns: repeat(7, 60px);
+  }
+}

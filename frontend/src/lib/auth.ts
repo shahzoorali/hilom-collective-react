@@ -18,6 +18,16 @@ export interface HilomUser {
   email: string;
   givenName?: string;
   familyName?: string;
+  /**
+   * Cognito group memberships from the `cognito:groups` claim — `facilitator`,
+   * `admin`, or neither for an ordinary buyer.
+   *
+   * Used only to decide what to *render* (whether to show the facilitator
+   * dashboard link, which tabs to draw). Every endpoint behind those screens
+   * re-checks the group on the verified token server-side, so editing this
+   * array in devtools buys nothing but a broken-looking page.
+   */
+  groups: string[];
 }
 
 interface StoredTokens {
@@ -106,9 +116,16 @@ export function currentUser(): HilomUser | null {
       email?: string;
       given_name?: string;
       family_name?: string;
+      'cognito:groups'?: string[];
     };
     if (!payload.email) return null;
-    return { email: payload.email, givenName: payload.given_name, familyName: payload.family_name };
+    return {
+      email: payload.email,
+      givenName: payload.given_name,
+      familyName: payload.family_name,
+      // Absent, not empty, for a user in no groups — which is every buyer.
+      groups: Array.isArray(payload['cognito:groups']) ? payload['cognito:groups'] : [],
+    };
   } catch {
     sessionStorage.removeItem(TOKENS_KEY);
     return null;
@@ -145,4 +162,12 @@ export function logout(): void {
     logout_uri: `${window.location.origin}/`,
   });
   window.location.href = `https://${COGNITO.domain}/logout?${params}`;
+}
+
+/**
+ * Whether the signed-in user holds a Cognito group. Display-level only — see
+ * the note on `HilomUser.groups`.
+ */
+export function hasGroup(group: string): boolean {
+  return currentUser()?.groups.includes(group) ?? false;
 }

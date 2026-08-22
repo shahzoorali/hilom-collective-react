@@ -21,6 +21,7 @@ import { getPayMongoSecret } from '../lib/secrets.js';
 import { verifyWebhookSignature, parseWebhookEvent, SignatureVerificationError } from '../lib/paymongo.js';
 import { getSupabase } from '../lib/supabase.js';
 import { fulfillOrder } from '../lib/fulfillment.js';
+import { confirmBooking } from '../lib/booking-fulfillment.js';
 import { enqueueRetry } from '../lib/retry-queue.js';
 import { ok, badRequest, serverError } from '../lib/http.js';
 
@@ -126,6 +127,18 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     paymentData,
   );
 
+  // Two things are sold through this endpoint now: courses and facilitator
+  // sessions. `kind` is set in the checkout session's metadata by whichever
+  // flow created it.
+  //
+  // Its *absence* means a course order. That is not a fallback for tidiness —
+  // `checkout.ts` writes no `kind` at all, so treating missing as 'product' is
+  // what keeps course checkout working unchanged, including sessions already
+  // in flight when this deployed.
+  if (metadata.kind === 'booking') {
+    return handleBooking(paymentId, metadata.booking_id, eventType);
+  }
+
   const productId = metadata.product_id;
   const buyerEmail = metadata.buyer_email ?? billingEmail;
 
@@ -187,5 +200,42 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
   } catch (err) {
     return serverError('paymongo-webhook', err);
+  }
+}
+
+/**
+ * Confirms a facilitator session that has just been paid for.
+ *
+ * Structurally simpler than the course path because the row already exists:
+ * `POST /bookings` inserted it — holding the slot — before the buyer was ever
+ * sent to PayMongo. So there is nothing to insert here and no dedupe to do
+ * beyond what `confirmBooking` already handles, and "paid but not booked" is
+ * not a reachable state.
+ *
+ * Shares the course path's contract with PayMongo: once the signature verifies,
+ * always 200. Redelivering the same event would only re-run the same failing
+ * code, so recovery belongs on the retry queue, not in PayMongo's backoff.
+ */
+async function handleBooking(
+  paymentId: string | undefined,
+  bookingId: string | undefined,
+  eventType: string,
+): Promise<APIGatewayProxyResultV2> {
+  if (!bookingId) {
+    // Expected for the sibling `payment.paid` event: metadata lives on the
+    // checkout session, so only `checkout_session.payment.paid` carries it.
+    // Missing metadata never becomes present on redelivery, so no retry.
+    console.warn('[paymongo-webhook] booking event without booking_id, skipping', { eventType, paymentId });
+    return ok({ received: true, handled: false, error: 'missing_booking_id' });
+  }
+
+  try {
+    const result = await confirmBooking(bookingId, paymentId);
+    return ok({ received: true, handled: true, status: result.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[paymongo-webhook] booking confirmation failed, queuing retry', { bookingId, message });
+    await enqueueRetry(bookingId, message, 'booking');
+    return ok({ received: true, handled: true, status: 'queued_for_retry' });
   }
 }

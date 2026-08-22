@@ -12,6 +12,8 @@ import {
   CognitoIdentityProviderClient,
   AdminGetUserCommand,
   AdminCreateUserCommand,
+  AdminAddUserToGroupCommand,
+  AdminRemoveUserFromGroupCommand,
   UserNotFoundException,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { getCognitoSecret } from './secrets.js';
@@ -85,4 +87,56 @@ export async function ensureCognitoUser(
   }
 
   return sub;
+}
+
+/**
+ * Adds a user to a Cognito group, creating nothing.
+ *
+ * This is how a facilitator actually gains access to their dashboard: the
+ * `facilitators` row records the approval, but until the group lands on their
+ * token, `requireGroup` keeps refusing them. The two have to happen together,
+ * which is why admin approval calls this rather than only writing the row.
+ *
+ * Idempotent in Cognito — re-adding a member is a no-op, not an error.
+ *
+ * The group only appears in a token when one is *issued*, so someone approved
+ * mid-session keeps a group-less token until they sign in again. That is why
+ * the approval email tells them to sign in rather than linking them straight
+ * into a dashboard that would bounce them.
+ */
+export async function addUserToGroup(email: string, groupName: string): Promise<void> {
+  const { client: cognito, userPoolId } = await getClient();
+  await cognito.send(
+    new AdminAddUserToGroupCommand({
+      UserPoolId: userPoolId,
+      Username: email,
+      GroupName: groupName,
+    }),
+  );
+}
+
+/**
+ * Removes a user from a group — the access half of suspending a facilitator.
+ *
+ * Tolerates a missing user: a facilitator row can exist without a Cognito
+ * account (an application entered by staff before the person ever signed in),
+ * and suspending one of those should not 500.
+ */
+export async function removeUserFromGroup(email: string, groupName: string): Promise<void> {
+  const { client: cognito, userPoolId } = await getClient();
+  try {
+    await cognito.send(
+      new AdminRemoveUserFromGroupCommand({
+        UserPoolId: userPoolId,
+        Username: email,
+        GroupName: groupName,
+      }),
+    );
+  } catch (err) {
+    if (err instanceof UserNotFoundException) {
+      console.warn('[cognito.removeUserFromGroup] no Cognito user for', email);
+      return;
+    }
+    throw err;
+  }
 }

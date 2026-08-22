@@ -185,6 +185,20 @@ export const BLOCK_CATALOG: Record<string, BlockSpec> = {
       background: backgroundField,
     },
   },
+  facilitatorGrid: {
+    label: 'Facilitator directory',
+    description:
+      'The live list of published facilitators (Admin → Facilitators). Individual facilitators are not edited here.',
+    fields: {
+      heading: { kind: 'text', label: 'Heading' },
+      subheading: { kind: 'text', label: 'Subheading' },
+      specialty: {
+        kind: 'text',
+        label: 'Only show this specialty (optional)',
+      },
+      background: backgroundField,
+    },
+  },
   eventGrid: {
     label: 'Events list',
     description:

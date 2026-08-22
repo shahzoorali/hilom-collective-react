@@ -10,8 +10,13 @@
  */
 import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { fulfillOrder } from '../lib/fulfillment.js';
+import { confirmBooking } from '../lib/booking-fulfillment.js';
+import type { RetryKind } from '../lib/retry-queue.js';
 
 interface RetryMessage {
+  /** Absent on messages enqueued before bookings existed — those are orders. */
+  kind?: RetryKind;
+  /** The order id or the booking id, per `kind`. */
   orderId: string;
   reason: string;
 }
@@ -28,12 +33,19 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
       continue; // Not retriable — a malformed message will never parse differently.
     }
 
+    const kind = message.kind ?? 'order';
+
     try {
-      const result = await fulfillOrder(message.orderId);
-      console.log(`[enrollment-retry-consumer] order ${message.orderId} -> ${result.status}`);
+      if (kind === 'booking') {
+        const result = await confirmBooking(message.orderId);
+        console.log(`[enrollment-retry-consumer] booking ${message.orderId} -> ${result.status}`);
+      } else {
+        const result = await fulfillOrder(message.orderId);
+        console.log(`[enrollment-retry-consumer] order ${message.orderId} -> ${result.status}`);
+      }
     } catch (err) {
       const errMessage = err instanceof Error ? err.message : String(err);
-      console.error(`[enrollment-retry-consumer] order ${message.orderId} failed again: ${errMessage}`);
+      console.error(`[enrollment-retry-consumer] ${kind} ${message.orderId} failed again: ${errMessage}`);
       failures.push({ itemIdentifier: record.messageId });
     }
   }

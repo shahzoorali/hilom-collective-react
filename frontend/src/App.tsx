@@ -1,4 +1,9 @@
 import { lazy, Suspense } from 'react';
+import Facilitators from './pages/Facilitators';
+import FacilitatorProfile from './pages/FacilitatorProfile';
+import BookingFlow from './pages/BookingFlow';
+import BookingProcessing from './pages/BookingProcessing';
+import AccountBookings from './pages/AccountBookings';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import CmsOrFallback from './components/CmsOrFallback';
@@ -18,6 +23,9 @@ import BlogPost from './pages/BlogPost';
  * bundle and made every visitor download a page editor they will never open.
  */
 const Admin = lazy(() => import('./pages/Admin'));
+// Lazy for the same reason as the admin: its own chrome, its own tabs, and
+// nobody browsing the public site should download it.
+const FacilitatorDashboard = lazy(() => import('./pages/FacilitatorDashboard'));
 import About from './pages/About';
 import Services from './pages/Services';
 import Events from './pages/Events';
@@ -52,6 +60,16 @@ export default function App() {
             </Suspense>
           }
         />
+        {/* Outside <Layout> like the admin — a facilitator managing their
+            calendar is working, not browsing the marketing site. */}
+        <Route
+          path="/facilitator/*"
+          element={
+            <Suspense fallback={<p className="muted" style={{ padding: '2rem' }}>Loading…</p>}>
+              <FacilitatorDashboard />
+            </Suspense>
+          }
+        />
         <Route
           path="*"
           element={
@@ -67,6 +85,13 @@ export default function App() {
                 <Route path="/checkout/processing" element={<Processing />} />
                 <Route path="/checkout/:slug" element={<Checkout />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
+                {/* Above the /:slug CMS catch-all, and mirrored in
+                    RESERVED_SLUGS server-side so no CMS page can shadow them. */}
+                <Route path="/facilitators" element={<Facilitators />} />
+                <Route path="/facilitators/:slug" element={<FacilitatorProfile />} />
+                <Route path="/book/:slug/:serviceId" element={<BookingFlow />} />
+                <Route path="/booking/processing" element={<BookingProcessing />} />
+                <Route path="/account/bookings" element={<AccountBookings />} />
                 <Route path="/blog" element={<Blog />} />
                 <Route path="/blog/category/:categorySlug" element={<Blog />} />
                 <Route path="/blog/:slug" element={<BlogPost />} />

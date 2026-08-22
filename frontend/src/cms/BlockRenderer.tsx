@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Link } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
 import { getEvents, type CmsEvent } from '../lib/cms';
+import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { money } from '../components/Layout';
 import type { Block, Cta, MediaRef } from './blocks';
 import CommunityForm from './CommunityForm';
@@ -466,6 +467,74 @@ function CommunityFormBlock() {
  * type -> component. Exported so the Puck editor renders the same components
  * the live site does, rather than an editor-only approximation of them.
  */
+/**
+ * The facilitator directory, for marketing pages.
+ *
+ * Live data like `productGrid` and `eventGrid` — the block carries only
+ * presentation props and fetches the roster itself, so a page never holds a
+ * stale copy of who is currently published.
+ *
+ * Links through to the full directory rather than trying to be it: this is a
+ * teaser on a landing page, and the specialty filter lives at /facilitators.
+ */
+function FacilitatorGrid({ props }: { props: Props }) {
+  const [facilitators, setFacilitators] = useState<FacilitatorCard[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const specialty = str(props.specialty);
+
+  useEffect(() => {
+    listFacilitators(specialty || undefined)
+      .then(setFacilitators)
+      .catch((e: Error) => setError(e.message));
+  }, [specialty]);
+
+  return (
+    <section className="section" style={sectionStyle(props)}>
+      <div className="container">
+        {props.heading ? <h2>{str(props.heading)}</h2> : null}
+        {props.subheading ? <p className="muted">{str(props.subheading)}</p> : null}
+        {error && <div className="alert alert-error">Couldn't load facilitators: {error}</div>}
+        {!facilitators && !error && <p className="muted">Loading…</p>}
+        {facilitators && facilitators.length === 0 && (
+          <p className="muted">No facilitators are listed yet.</p>
+        )}
+        {facilitators && facilitators.length > 0 && (
+          <>
+            <div className="grid" style={{ marginTop: '1.5rem' }}>
+              {facilitators.slice(0, 6).map((f) => (
+                <Link key={f.id} to={`/facilitators/${f.slug}`} className="card facilitator-card">
+                  {f.photo_url ? (
+                    <img src={f.photo_url} alt="" className="facilitator-card__photo" loading="lazy" />
+                  ) : (
+                    <div className="facilitator-card__photo facilitator-card__monogram" aria-hidden="true">
+                      {f.display_name.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="facilitator-card__body">
+                    <h3 style={{ margin: '0 0 0.25rem' }}>{f.display_name}</h3>
+                    {f.headline && (
+                      <p className="small muted" style={{ margin: 0 }}>{f.headline}</p>
+                    )}
+                    {f.hasFreeCall && (
+                      <p style={{ margin: '0.6rem 0 0' }}>
+                        <span className="pill pill-ok">Free intro call</span>
+                      </p>
+                    )}
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <p style={{ marginTop: '1.5rem' }}>
+              <Link className="btn btn-ghost" to="/facilitators">See all facilitators</Link>
+            </p>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode> = {
   hero: Hero,
   fullWidthImage: FullWidthImage,
@@ -477,6 +546,7 @@ export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode
   imageCardGrid: ImageCardGrid,
   productGrid: ProductGrid,
   eventGrid: EventGrid,
+  facilitatorGrid: FacilitatorGrid,
   ctaBanner: CtaBanner,
   communityForm: CommunityFormBlock,
   form: ({ props }) => <FormBlock slug={str(props.formSlug)} heading={str(props.heading)} />,
