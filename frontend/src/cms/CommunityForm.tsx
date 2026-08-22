@@ -10,6 +10,7 @@
  */
 import { useState, type FormEvent } from 'react';
 import { submitCommunityForm } from '../lib/api';
+import { getRecaptchaToken } from '../lib/recaptcha';
 
 const INTERESTS = [
   'Courses & Learning Programs',
@@ -35,7 +36,8 @@ export default function CommunityForm() {
     setSubmitting(true);
     setError(null);
     try {
-      await submitCommunityForm({ ...form, interests });
+      const captchaToken = await getRecaptchaToken('community_submit');
+      await submitCommunityForm({ ...form, interests, captchaToken });
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
@@ -125,6 +127,18 @@ export default function CommunityForm() {
       <button className="btn btn-accent btn-block" type="submit" disabled={submitting}>
         {submitting ? 'Sending…' : 'Submit'}
       </button>
+
+      <p className="small muted" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+        This site is protected by reCAPTCHA and the Google{' '}
+        <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">
+          Privacy Policy
+        </a>{' '}
+        and{' '}
+        <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer">
+          Terms of Service
+        </a>{' '}
+        apply.
+      </p>
     </form>
   );
 }

@@ -19,7 +19,8 @@ import { stripTags } from '../lib/sanitize.js';
 import { validateFormFields, BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, SlugError } from '../lib/slug.js';
 
-const FORM_COLUMNS = 'id, slug, name, fields, submit_label, success_message, notify_email, updated_at';
+const FORM_COLUMNS =
+  'id, slug, name, fields, submit_label, success_message, notify_email, requires_captcha, updated_at';
 const SUBMISSION_PAGE_SIZE = 200;
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -101,7 +102,14 @@ async function create(body: Record<string, unknown>): Promise<APIGatewayProxyRes
   const supabase = await getSupabase();
   const { data, error } = await supabase
     .from('forms')
-    .insert({ name, slug, fields: validateFormFields(body.fields ?? []) })
+    .insert({
+      name,
+      slug,
+      fields: validateFormFields(body.fields ?? []),
+      // Defaults to protected — an admin has to deliberately opt a form out,
+      // rather than needing to remember to opt each new form in.
+      requires_captcha: body.requires_captcha === undefined ? true : Boolean(body.requires_captcha),
+    })
     .select(FORM_COLUMNS)
     .maybeSingle();
 
@@ -123,6 +131,7 @@ async function update(formId: string, body: Record<string, unknown>): Promise<AP
     if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return badRequest('notify_email is not valid');
     patch.notify_email = email || null;
   }
+  if (body.requires_captcha !== undefined) patch.requires_captcha = Boolean(body.requires_captcha);
   if (Object.keys(patch).length === 0) return badRequest('Nothing to update');
 
   const supabase = await getSupabase();

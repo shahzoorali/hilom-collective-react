@@ -20,6 +20,7 @@ import { ok, notFound, badRequest, serverError, json } from '../lib/http.js';
 import { getSecret } from '../lib/secrets.js';
 import { stripTags } from '../lib/sanitize.js';
 import type { FormField } from '../lib/cms-blocks.js';
+import { verifyRecaptcha } from '../lib/recaptcha.js';
 
 const MAX_TEXT_LENGTH = 5000;
 /** Submissions allowed from one IP within the window below. */
@@ -44,7 +45,9 @@ async function detail(slug: string): Promise<APIGatewayProxyResultV2> {
   const { data, error } = await supabase
     .from('forms')
     // notify_email is internal configuration and is not returned publicly.
-    .select('slug, name, fields, submit_label, success_message')
+    // requires_captcha IS returned — the page needs it to know whether to
+    // load the widget and attach a token before submitting.
+    .select('slug, name, fields, submit_label, success_message, requires_captcha')
     .eq('slug', slug)
     .maybeSingle();
 
@@ -67,12 +70,23 @@ async function submit(
   const supabase = await getSupabase();
   const { data: form, error } = await supabase
     .from('forms')
-    .select('id, fields, success_message')
+    .select('id, fields, success_message, requires_captcha')
     .eq('slug', slug)
     .maybeSingle();
 
   if (error) throw error;
   if (!form) return notFound('Form not found');
+
+  if (form.requires_captcha) {
+    // Action is derived from the form's own slug, not a fixed string: a token
+    // minted for one form must not be replayable against a different one.
+    // Google's action names allow only [a-zA-Z0-9_/] — hyphens (common in
+    // slugs) are swapped for underscores rather than rejected.
+    const action = `form_${slug.replace(/[^a-zA-Z0-9_/]/g, '_')}`;
+    if (!(await verifyRecaptcha(body.captchaToken, action))) {
+      return badRequest('Captcha check failed — please try again.');
+    }
+  }
 
   const ipHash = await hashIp(event.requestContext.http.sourceIp);
   if (await isRateLimited(ipHash)) {

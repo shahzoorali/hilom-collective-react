@@ -105,6 +105,7 @@ export class HilomBackendStack extends cdk.Stack {
     const paymongoSecretId = props.paymongoSecretId ?? 'hilom/paymongo/test';
     const paymongoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'PayMongoSecret', paymongoSecretId);
     const cognitoSecret = secretsmanager.Secret.fromSecretNameV2(this, 'CognitoSecret', 'hilom/cognito');
+    const recaptchaSecret = secretsmanager.Secret.fromSecretNameV2(this, 'RecaptchaSecret', 'hilom/recaptcha');
 
     const cognitoUserPoolId = props.cognitoUserPoolId ?? DEFAULT_COGNITO_USER_POOL_ID;
     const cognitoSpaClientId = props.cognitoSpaClientId ?? DEFAULT_COGNITO_SPA_CLIENT_ID;
@@ -418,6 +419,11 @@ export class HilomBackendStack extends cdk.Stack {
       eventsPublic, adminEvents, postsPublic, adminPosts, scheduledPublishSweep,
     ]) {
       supabaseSecret.grantRead(fn);
+    }
+    // reCAPTCHA verification: every path that accepts a public form submission
+    // needs the secret key to call Google's siteverify endpoint.
+    for (const fn of [communitySubmit, formsPublic]) {
+      recaptchaSecret.grantRead(fn);
     }
     for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
       adminKeySecret.grantRead(fn);

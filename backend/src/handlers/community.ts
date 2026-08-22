@@ -13,6 +13,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { ok, badRequest, serverError } from '../lib/http.js';
+import { verifyRecaptcha } from '../lib/recaptcha.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
@@ -29,6 +30,7 @@ interface SubmitBody {
   email?: string;
   interests?: string[];
   message?: string;
+  captchaToken?: string;
 }
 
 function escapeHtml(s: string): string {
@@ -57,6 +59,10 @@ export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayP
   if (!firstName) return badRequest('Missing firstName');
   if (!lastName) return badRequest('Missing lastName');
   if (!email || !EMAIL_RE.test(email)) return badRequest('A valid email is required');
+
+  if (!(await verifyRecaptcha(body.captchaToken, 'community_submit'))) {
+    return badRequest('Captcha check failed — please try again.');
+  }
 
   const fullName = `${firstName} ${lastName}`;
   const interestsText = interests.length > 0 ? interests.join(', ') : 'None selected';

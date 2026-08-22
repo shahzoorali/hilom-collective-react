@@ -85,6 +85,7 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
         fields: open.fields,
         submit_label: open.submit_label,
         success_message: open.success_message,
+        requires_captcha: open.requires_captcha,
       });
       setNotice('Form saved.');
       await reload();
@@ -261,7 +262,17 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
               />
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <label className="small" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 400 }}>
+              <input
+                type="checkbox"
+                style={{ width: 'auto' }}
+                checked={open.requires_captcha}
+                onChange={(e) => patchOpen({ requires_captcha: e.target.checked })}
+              />
+              Require reCAPTCHA to submit (recommended — protects against bot spam)
+            </label>
+
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
               <button
                 className="btn btn-ghost small"
                 onClick={() => patchOpen({ fields: [...open.fields, blankField()] })}

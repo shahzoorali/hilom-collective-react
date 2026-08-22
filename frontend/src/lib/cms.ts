@@ -42,6 +42,7 @@ export interface CmsForm {
   fields: FormFieldDef[];
   submit_label: string;
   success_message: string;
+  requires_captcha: boolean;
 }
 
 export interface CmsEvent {
@@ -274,6 +275,7 @@ export interface AdminForm {
   submit_label: string;
   success_message: string;
   notify_email: string | null;
+  requires_captcha: boolean;
   submission_count?: number;
 }
 

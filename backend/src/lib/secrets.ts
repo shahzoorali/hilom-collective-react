@@ -40,6 +40,11 @@ export interface CognitoSecret {
   region: string;
 }
 
+export interface RecaptchaSecret {
+  siteKey: string;
+  secretKey: string;
+}
+
 export async function getSecret<T>(secretId: string): Promise<T> {
   const cached = cache.get(secretId);
   if (cached) return cached as T;
@@ -64,6 +69,7 @@ export const getPayMongoSecret = () =>
   getSecret<PayMongoSecret>(process.env.PAYMONGO_SECRET_ID ?? 'hilom/paymongo/test');
 
 export const getCognitoSecret = () => getSecret<CognitoSecret>('hilom/cognito');
+export const getRecaptchaSecret = () => getSecret<RecaptchaSecret>('hilom/recaptcha');
 
 export function clearSecretCache(): void {
   cache.clear();

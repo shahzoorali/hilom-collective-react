@@ -8,6 +8,7 @@
  */
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import { getForm, submitForm, type CmsForm, type FormFieldDef } from '../lib/cms';
+import { getRecaptchaToken } from '../lib/recaptcha';
 
 /** Must match HONEYPOT_FIELD in backend/src/handlers/forms.ts. */
 const HONEYPOT = '_website';
@@ -52,7 +53,8 @@ export default function FormBlock({ slug, heading }: { slug: string; heading?: s
     setBusy(true);
     setError(null);
     try {
-      const res = await submitForm(form.slug, { ...values, [HONEYPOT]: honeypot });
+      const captchaToken = form.requires_captcha ? await getRecaptchaToken(`form_${form.slug.replace(/[^a-zA-Z0-9_/]/g, '_')}`) : undefined;
+      const res = await submitForm(form.slug, { ...values, [HONEYPOT]: honeypot, captchaToken });
       setDone(res.message);
     } catch (err) {
       setError((err as Error).message);
@@ -103,6 +105,20 @@ export default function FormBlock({ slug, heading }: { slug: string; heading?: s
             <button className="btn btn-accent btn-block" type="submit" disabled={busy}>
               {busy ? 'Sending…' : form.submit_label}
             </button>
+
+            {form.requires_captcha && (
+              <p className="small muted" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                This site is protected by reCAPTCHA and the Google{' '}
+                <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">
+                  Privacy Policy
+                </a>{' '}
+                and{' '}
+                <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer">
+                  Terms of Service
+                </a>{' '}
+                apply.
+              </p>
+            )}
           </form>
         )}
       </div>

@@ -20,6 +20,11 @@ export const COGNITO = {
 
 export const MOODLE_URL = 'https://www.learn.hilomcollective.com';
 
+// reCAPTCHA v3 site key — public by design (it identifies the site to Google,
+// same as the Cognito client id above). The secret key that actually verifies
+// a token never leaves the backend.
+export const RECAPTCHA_SITE_KEY = '6LetIpMtAAAAAL9F4VgYG8OrZ8gsn84byJNB6g9o';
+
 /**
  * Mirrors backend/src/lib/access-url.ts: a single owned course deep-links
  * straight to it, a bundle (or multiple owned courses) has no one "right"
