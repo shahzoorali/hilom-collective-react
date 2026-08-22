@@ -26,7 +26,7 @@ import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCalle
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
 import { sendFacilitatorApproved } from '../lib/booking-email.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
-import { normalizeSlug, slugify, findAvailableSlug, SlugError } from '../lib/slug.js';
+import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 
 const ADMIN_FACILITATOR_COLUMNS =
   'id, slug, email, cognito_sub, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at';
@@ -126,7 +126,7 @@ async function createFacilitator(
   const profile = validateProfile(body);
 
   const base = slugify(profile.display_name) || 'facilitator';
-  const slug = await findAvailableSlug(normalizeSlug(base), async (candidate) => {
+  const slug = await findAvailableFacilitatorSlug(normalizeSlug(base), async (candidate) => {
     const { data } = await supabase.from('facilitators').select('id').eq('slug', candidate).maybeSingle();
     return Boolean(data);
   });

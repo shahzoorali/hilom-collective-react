@@ -118,13 +118,19 @@ export default function FacilitatorApply() {
               <>
                 <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Already on file</h2>
                 <p style={{ marginBottom: 0 }}>
-                  There's already an application for {user.email}, currently{' '}
-                  <strong>{result.status}</strong>.{' '}
+                  There's already an application for {user.email}.{' '}
                   {result.status === 'approved' || result.status === 'published' ? (
                     <>
-                      Head to your <Link to="/facilitator">dashboard</Link> to finish setting up.
+                      It's been approved — head to your <Link to="/facilitator">dashboard</Link> to
+                      finish setting up.
                     </>
+                  ) : result.status === 'rejected' ? (
+                    "It wasn't approved. If something's changed since you applied, reach out to us directly."
+                  ) : result.status === 'suspended' ? (
+                    'It was paused after being live. Reach out to us directly if you have questions.'
                   ) : (
+                    // 'applied' — the only status left, and the true default:
+                    // still sitting in the review queue.
                     "We'll be in touch once it's been reviewed."
                   )}
                 </p>
