@@ -42,20 +42,28 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const method = event.requestContext.http.method;
   const path = event.requestContext.http.path;
 
+  // Every branch below is `await`ed deliberately, not just returned: a bare
+  // `return asyncFn()` inside a try block hands back a *pending* promise
+  // before that promise has rejected, so by the time an inner throw (a bad
+  // input, a Postgres error) actually happens, this function's own try block
+  // has already exited and the catch below never runs — the error instead
+  // reaches Lambda as a raw, uncaught rejection, and the caller sees a bare
+  // "Internal Server Error" with none of the handling below applied. Found
+  // via createFacilitator's validation error doing exactly that.
   try {
     const supabase = await getSupabase();
 
-    if (path.includes('/admin/payouts')) return payouts(supabase, event, method);
-    if (path.includes('/admin/bookings')) return listBookings(supabase, event);
+    if (path.includes('/admin/payouts')) return await payouts(supabase, event, method);
+    if (path.includes('/admin/bookings')) return await listBookings(supabase, event);
 
     const facilitatorId = event.pathParameters?.facilitatorId;
     if (!facilitatorId) {
-      if (method === 'GET') return listFacilitators(supabase, event);
-      if (method === 'POST') return createFacilitator(supabase, parseBody(event));
+      if (method === 'GET') return await listFacilitators(supabase, event);
+      if (method === 'POST') return await createFacilitator(supabase, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
-    if (method === 'GET') return getFacilitator(supabase, facilitatorId);
-    if (method === 'PATCH') return patchFacilitator(supabase, facilitatorId, parseBody(event));
+    if (method === 'GET') return await getFacilitator(supabase, facilitatorId);
+    if (method === 'PATCH') return await patchFacilitator(supabase, facilitatorId, parseBody(event));
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     if (err instanceof FacilitatorInputError || err instanceof SlugError) return badRequest(err.message);

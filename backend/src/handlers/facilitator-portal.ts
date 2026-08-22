@@ -61,12 +61,18 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const method = event.requestContext.http.method;
   const path = event.requestContext.http.path;
 
+  // Every branch below is `await`ed deliberately, not just returned — a bare
+  // `return asyncFn()` inside a try hands back a *pending* promise before it
+  // has rejected, so an inner throw (bad input, a Postgres error) surfaces
+  // after this function's own try block has already exited, and the catch
+  // below never runs. See the identical note in admin-facilitators.ts, where
+  // this was actually caught happening.
   try {
     // The application endpoint is the one route open to any signed-in user —
     // by definition the applicant is not yet in the facilitator group.
     if (path.endsWith('/facilitators/apply')) {
       const user = await requireUser(event);
-      return apply(user, parseBody(event));
+      return await apply(user, parseBody(event));
     }
 
     const user = await requireGroup(event, 'facilitator');
@@ -80,30 +86,30 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (path.endsWith('/facilitator/me')) {
       if (method === 'GET') return ok({ facilitator });
-      if (method === 'PUT') return updateProfile(supabase, facilitator, parseBody(event));
+      if (method === 'PUT') return await updateProfile(supabase, facilitator, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (path.includes('/facilitator/services')) {
-      return services(supabase, facilitator, event, method);
+      return await services(supabase, facilitator, event, method);
     }
 
     if (path.includes('/facilitator/availability')) {
-      if (method === 'GET') return listAvailability(supabase, facilitator);
-      if (method === 'PUT') return replaceAvailability(supabase, facilitator, parseBody(event));
+      if (method === 'GET') return await listAvailability(supabase, facilitator);
+      if (method === 'PUT') return await replaceAvailability(supabase, facilitator, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (path.includes('/facilitator/blackouts')) {
-      return blackouts(supabase, facilitator, event, method);
+      return await blackouts(supabase, facilitator, event, method);
     }
 
     if (path.includes('/facilitator/bookings')) {
-      return bookings(supabase, facilitator, event, method, path);
+      return await bookings(supabase, facilitator, event, method, path);
     }
 
     if (path.endsWith('/facilitator/earnings')) {
-      return earnings(supabase, facilitator);
+      return await earnings(supabase, facilitator);
     }
 
     return notFound();
