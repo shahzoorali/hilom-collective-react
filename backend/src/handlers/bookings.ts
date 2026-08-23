@@ -399,7 +399,7 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     cancelledBy: 'client',
   });
 
-  const { error } = await supabase
+  const { data: cancelled, error } = await supabase
     .from('bookings')
     .update({
       status: 'cancelled_by_client',
@@ -412,9 +412,19 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     })
     .eq('id', bookingId)
     // Loses cleanly if the facilitator cancelled the same booking concurrently.
-    .eq('status', 'confirmed');
+    .eq('status', 'confirmed')
+    // Required for "loses cleanly" to actually hold: a filtered update that
+    // matches nothing raises no error, so without reading back the row this
+    // path would email a second cancellation and report a refund the database
+    // never recorded — and the two sides disagree about money, because a
+    // facilitator cancellation is a full refund where this one may be partial.
+    .select('id')
+    .maybeSingle<{ id: string }>();
 
   if (error) throw error;
+  if (!cancelled) {
+    return conflict('That booking was already cancelled.');
+  }
 
   await sendBookingCancelled(
     {
@@ -480,11 +490,17 @@ async function reschedule(
 
   const previousStartsAt = booking.starts_at as string;
 
-  const { error } = await supabase
+  const { data: moved, error } = await supabase
     .from('bookings')
     .update({ starts_at: slot.startsAt, ends_at: slot.blockEndsAt })
     .eq('id', bookingId)
-    .eq('status', 'confirmed');
+    .eq('status', 'confirmed')
+    // Same reason as the cancel path above — a filtered update matching zero
+    // rows is silent, so without this a booking cancelled in the interim would
+    // still report success and email both parties a new time for a session
+    // that is no longer happening.
+    .select('id')
+    .maybeSingle<{ id: string }>();
 
   if (error) {
     // The row's own old time is excluded from the overlap check by virtue of
@@ -492,6 +508,9 @@ async function reschedule(
     // with a different booking taken in the interim.
     if (error.code === EXCLUSION_VIOLATION) return conflict('That time was just taken');
     throw error;
+  }
+  if (!moved) {
+    return conflict('That booking was cancelled — it can no longer be moved.');
   }
 
   await sendBookingRescheduled(

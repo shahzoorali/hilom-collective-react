@@ -372,18 +372,68 @@ async function buildPayout(
   if (insertError) throw insertError;
   if (!payout) throw new Error('Payout insert returned no row');
 
-  const { error: stampError } = await supabase
+  const { data: claimed, error: stampError } = await supabase
     .from('bookings')
     .update({ payout_id: payout.id })
     .in('id', bookings.map((b) => b.id as string))
     // Re-assert the unpaid condition: if a concurrent batch claimed some of
     // these between the read and this write, they stay with that batch rather
     // than being counted twice.
-    .is('payout_id', null);
+    .is('payout_id', null)
+    // Read back what this batch actually won. The filter above prevents
+    // double-*claiming*, but the totals were computed from the pre-stamp read,
+    // so without this the row keeps paying for sessions another batch took —
+    // and that other batch pays for them too. Same session, paid twice.
+    .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos');
 
   if (stampError) throw stampError;
 
-  return ok({ payout, sessionCount: bookings.length });
+  const claimedRows = claimed ?? [];
+
+  // Lost every row to a concurrent batch. Void rather than leave an empty
+  // draft that reads as a real, approvable payout.
+  if (claimedRows.length === 0) {
+    await supabase.from('facilitator_payouts').update({ status: 'void' }).eq('id', payout.id);
+    return json(409, {
+      error: 'Those sessions were claimed by another payout batch. Nothing left to pay in this period.',
+    });
+  }
+
+  // Re-total from what was actually claimed. Usually identical to the
+  // provisional figures above; different only when a concurrent batch took
+  // some, which is exactly the case this exists to get right.
+  if (claimedRows.length !== bookings.length) {
+    const actual = claimedRows.reduce(
+      (acc, row) => ({
+        gross: acc.gross + Number(row.price_centavos ?? 0),
+        fees: acc.fees + Number(row.platform_fee_centavos ?? 0),
+        net: acc.net + Number(row.facilitator_net_centavos ?? 0),
+      }),
+      { gross: 0, fees: 0, net: 0 },
+    );
+
+    const { data: corrected, error: correctionError } = await supabase
+      .from('facilitator_payouts')
+      .update({
+        gross_centavos: actual.gross,
+        platform_fee_centavos: actual.fees,
+        net_centavos: actual.net - processingFee,
+      })
+      .eq('id', payout.id)
+      .select(PAYOUT_COLUMNS)
+      .maybeSingle();
+    if (correctionError) throw correctionError;
+
+    console.warn('[adminFacilitators.buildPayout] concurrent batch claimed some sessions', {
+      payoutId: payout.id,
+      expected: bookings.length,
+      claimed: claimedRows.length,
+    });
+
+    return ok({ payout: corrected ?? payout, sessionCount: claimedRows.length });
+  }
+
+  return ok({ payout, sessionCount: claimedRows.length });
 }
 
 async function updatePayout(

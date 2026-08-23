@@ -88,13 +88,20 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
   };
   if (paymentId) patch.paymongo_payment_id = paymentId;
 
-  const { error: updateError } = await supabase
+  const { data: claimed, error: updateError } = await supabase
     .from('bookings')
     .update(patch)
     .eq('id', bookingId)
     // Guard against two concurrent webhook deliveries both passing the status
     // check above: only one update matches a still-pending row.
-    .eq('status', 'pending_payment');
+    .eq('status', 'pending_payment')
+    // The `.select()` is what makes that guard real. Without it the filter
+    // still narrows the write, but a delivery that matched *zero* rows is
+    // indistinguishable from one that matched — no error is raised either way —
+    // so both deliveries would fall through and email the client and the
+    // facilitator a second confirmation for the same session.
+    .select('id')
+    .maybeSingle<{ id: string }>();
 
   if (updateError) {
     await supabase
@@ -102,6 +109,12 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
       .update({ error_detail: updateError.message })
       .eq('id', bookingId);
     throw updateError;
+  }
+
+  // Lost the race: a concurrent delivery confirmed this booking (and sent the
+  // emails) between the status read above and this write.
+  if (!claimed) {
+    return { bookingId, status: 'confirmed', alreadyConfirmed: true };
   }
 
   const facilitator = booking.facilitators;

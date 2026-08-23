@@ -30,7 +30,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../lib/supabase.js';
-import { ok, notFound, badRequest, unauthorized, serverError } from '../lib/http.js';
+import { ok, json, notFound, badRequest, unauthorized, serverError } from '../lib/http.js';
 import { requireUser, requireGroup, UnauthorizedError } from '../lib/auth.js';
 import { SERVICE_PUBLIC_COLUMNS } from '../lib/scheduling.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
@@ -462,12 +462,20 @@ async function bookings(
     if (booking.status !== 'confirmed' && booking.status !== 'completed') {
       return badRequest('Only a completed session can be marked as a no-show');
     }
-    const { error: updateError } = await supabase
+    const { data: marked, error: updateError } = await supabase
       .from('bookings')
       .update({ status: 'no_show' })
       .eq('id', bookingId)
-      .eq('facilitator_id', facilitator.id);
+      .eq('facilitator_id', facilitator.id)
+      // Re-asserted on the write, not just checked on the read above: `no_show`
+      // is a *payable* status, so without this a booking the client cancelled
+      // between that read and this write could be flipped back into one the
+      // facilitator gets paid for.
+      .in('status', ['confirmed', 'completed'])
+      .select('id')
+      .maybeSingle<{ id: string }>();
     if (updateError) throw updateError;
+    if (!marked) return badRequest('That booking is no longer one that can be marked as a no-show');
     return ok({ bookingId, status: 'no_show' });
   }
 
@@ -487,7 +495,7 @@ async function bookings(
         ? String(parseBody(event).reason).slice(0, 500)
         : decision.reason;
 
-    const { error: updateError } = await supabase
+    const { data: cancelled, error: updateError } = await supabase
       .from('bookings')
       .update({
         status: 'cancelled_by_facilitator',
@@ -498,8 +506,17 @@ async function bookings(
       })
       .eq('id', bookingId)
       .eq('facilitator_id', facilitator.id)
-      .eq('status', 'confirmed');
+      .eq('status', 'confirmed')
+      // Without reading the row back, a client cancellation landing first goes
+      // unnoticed here: this path would still email the client "the facilitator
+      // cancelled, refunded in full" while the database holds the client's own
+      // partial refund. The two sides would disagree about money.
+      .select('id')
+      .maybeSingle<{ id: string }>();
     if (updateError) throw updateError;
+    if (!cancelled) {
+      return json(409, { error: 'That booking was already cancelled.' });
+    }
 
     await sendBookingCancelled(
       {
