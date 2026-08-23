@@ -7,17 +7,29 @@
  * than only in a footnote — someone cancelling 10 hours out should learn that
  * it is non-refundable *before* they confirm, not after.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../components/Layout';
+import SlotPicker, { type SlotPickerHandle } from '../components/SlotPicker';
 import { currentUser, login } from '../lib/auth';
 import {
   cancelBooking,
   listMyBookings,
+  rescheduleBooking,
   viewerTimezone,
   zoneLabel,
   type Booking,
 } from '../lib/booking';
+
+/**
+ * Mirrors RESCHEDULE_MIN_NOTICE_HOURS in backend/src/lib/booking-domain.ts,
+ * where the rule is actually enforced. Duplicated rather than fetched: it is
+ * one number that changes about never, and a round trip to learn it would
+ * delay the only thing this page exists to show.
+ */
+const RESCHEDULE_MIN_NOTICE_HOURS = 24;
+
+const hoursUntil = (iso: string) => (new Date(iso).getTime() - Date.now()) / 3_600_000;
 
 const STATUS_LABEL: Record<string, string> = {
   confirmed: 'Confirmed',
@@ -34,6 +46,12 @@ export default function AccountBookings() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  /** The booking whose reschedule picker is open, if any. */
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [newSlot, setNewSlot] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const pickerRef = useRef<SlotPickerHandle>(null);
 
   const reload = useCallback(() => {
     if (!user) return;
@@ -87,6 +105,41 @@ export default function AccountBookings() {
       reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not cancel');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function openMove(booking: Booking) {
+    setMovingId(booking.id);
+    setNewSlot(null);
+    setMoveError(null);
+    setNotice(null);
+  }
+
+  async function onMove(booking: Booking) {
+    if (!newSlot) return;
+    setBusyId(booking.id);
+    setMoveError(null);
+    try {
+      const result = await rescheduleBooking(booking.id, newSlot);
+      setMovingId(null);
+      setNewSlot(null);
+      setNotice(
+        `Moved to ${new Intl.DateTimeFormat('en-PH', {
+          dateStyle: 'full',
+          timeStyle: 'short',
+          timeZone: viewerTimezone(),
+        }).format(new Date(result.startsAt))}. We've emailed you both.`,
+      );
+      reload();
+    } catch (err) {
+      // Covers the slot going in the seconds since it was offered, and the
+      // 24-hour rule if the page has been open a while. Reload the grid so it
+      // reflects reality rather than repeating the same failure.
+      setMoveError(err instanceof Error ? err.message : 'Could not move this session');
+      pickerRef.current?.reload();
+      setNewSlot(null);
     } finally {
       setBusyId(null);
     }
@@ -150,16 +203,18 @@ export default function AccountBookings() {
                       Join
                     </a>
                   )}
-                  {/* Mirrors RESCHEDULE_MIN_NOTICE_HOURS in
-                      backend/src/lib/booking-domain.ts. The server is the one
-                      that enforces this; showing it here just means the rule
-                      is visible before someone tries, rather than after. */}
-                  {b.facilitators &&
-                    (new Date(b.starts_at).getTime() - now) / 3_600_000 >= 24 && (
-                      <Link className="btn btn-ghost small" to={`/facilitators/${b.facilitators.slug}`}>
-                        Reschedule
-                      </Link>
-                    )}
+                  {/* The 24h gate is enforced server-side in
+                      booking-domain.ts; hiding the control here just means the
+                      rule is visible before someone tries, not after. */}
+                  {b.facilitators && hoursUntil(b.starts_at) >= RESCHEDULE_MIN_NOTICE_HOURS && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost small"
+                      onClick={() => (movingId === b.id ? setMovingId(null) : openMove(b))}
+                    >
+                      {movingId === b.id ? 'Keep this time' : 'Reschedule'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn btn-ghost small"
@@ -170,11 +225,59 @@ export default function AccountBookings() {
                   </button>
                 </div>
 
-                {(new Date(b.starts_at).getTime() - now) / 3_600_000 < 24 && (
+                {hoursUntil(b.starts_at) < RESCHEDULE_MIN_NOTICE_HOURS && (
                   <p className="small muted" style={{ margin: '0.6rem 0 0' }}>
-                    This session is within 24 hours, so it can no longer be moved — you can still
-                    cancel, though the refund depends on how much notice you give.
+                    This session is within {RESCHEDULE_MIN_NOTICE_HOURS} hours, so it can no longer
+                    be moved — you can still cancel, though the refund depends on how much notice
+                    you give.
                   </p>
+                )}
+
+                {movingId === b.id && b.facilitators && (
+                  <div style={{ marginTop: '1rem', borderTop: '1px solid var(--line)', paddingTop: '1rem' }}>
+                    <h3 style={{ fontSize: '1.05rem', marginTop: 0 }}>Pick a new time</h3>
+                    <p className="small muted" style={{ marginTop: 0 }}>
+                      Same session, same price — nothing is charged again.
+                    </p>
+
+                    <SlotPicker
+                      handleRef={pickerRef}
+                      facilitatorSlug={b.facilitators.slug}
+                      serviceId={b.service_id}
+                      facilitatorTimezone={b.facilitators.timezone}
+                      facilitatorName={b.facilitators.display_name}
+                      selected={newSlot}
+                      onSelect={setNewSlot}
+                    />
+
+                    {moveError && (
+                      <div className="alert alert-error" style={{ marginTop: '1rem' }}>{moveError}</div>
+                    )}
+
+                    {newSlot && (
+                      <div style={{ marginTop: '1.25rem' }}>
+                        <p style={{ margin: '0 0 0.75rem' }}>
+                          Move to{' '}
+                          <strong>
+                            {new Intl.DateTimeFormat('en-PH', {
+                              dateStyle: 'full',
+                              timeStyle: 'short',
+                              timeZone: zone,
+                            }).format(new Date(newSlot))}
+                          </strong>{' '}
+                          <span className="small muted">({zoneLabel(zone)})</span>?
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-accent"
+                          disabled={busyId === b.id}
+                          onClick={() => void onMove(b)}
+                        >
+                          {busyId === b.id ? 'Moving…' : 'Confirm new time'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             ))}
