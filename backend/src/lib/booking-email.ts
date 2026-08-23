@@ -137,6 +137,60 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
   ]);
 }
 
+/**
+ * Sent to both parties shortly before the session.
+ *
+ * Carries the join link rather than pointing at the dashboard, because the
+ * whole job of this email is to be the thing someone opens at the moment the
+ * session starts — one that says "go and look somewhere else for the link" has
+ * failed at exactly the wrong time.
+ *
+ * The client's copy deliberately does not offer rescheduling. By the time this
+ * lands, the 24-hour window has closed (see canReschedule in
+ * booking-domain.ts), so inviting them to move it would be inviting a click
+ * into a refusal.
+ */
+export async function sendBookingReminder(ctx: BookingEmailContext): Promise<void> {
+  const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+  const joinLine = ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.';
+
+  const clientText = [
+    `Coming up: ${ctx.serviceTitle} with ${ctx.facilitatorName}`,
+    '',
+    `When: ${when}`,
+    joinLine,
+    '',
+    "If you can't make it, let your facilitator know as soon as you can.",
+  ].join('\n');
+
+  const clientHtml = `
+    <p><strong>Coming up:</strong> ${escapeHtml(ctx.serviceTitle)} with ${escapeHtml(ctx.facilitatorName)}</p>
+    <p><strong>When:</strong> ${escapeHtml(when)}</p>
+    <p>${ctx.meetingUrl ? `<a href="${escapeHtml(ctx.meetingUrl)}">Join the session</a>` : 'Your facilitator will send joining details.'}</p>
+    <p style="color:#666;font-size:14px;">If you can't make it, let your facilitator know as soon as you can.</p>
+  `;
+
+  const facilitatorText = [
+    `Coming up: ${ctx.serviceTitle}`,
+    '',
+    `Client: ${ctx.clientName || ctx.clientEmail} (${ctx.clientEmail})`,
+    `When: ${when}`,
+    joinLine,
+  ].join('\n');
+
+  const facilitatorHtml = `
+    <p><strong>Coming up:</strong> ${escapeHtml(ctx.serviceTitle)}</p>
+    <p><strong>Client:</strong> ${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})</p>
+    <p><strong>When:</strong> ${escapeHtml(when)}</p>
+    <p>${ctx.meetingUrl ? `<a href="${escapeHtml(ctx.meetingUrl)}">Join the session</a>` : ''}</p>
+  `;
+
+  await Promise.all([
+    send(ctx.clientEmail, `Reminder: ${ctx.serviceTitle} tomorrow`, clientText, clientHtml),
+    send(ctx.facilitatorEmail, `Reminder: ${ctx.serviceTitle} tomorrow`, facilitatorText, facilitatorHtml),
+  ]);
+}
+
 /** Sent to both parties on cancellation, whoever initiated it. */
 export async function sendBookingCancelled(
   ctx: BookingEmailContext,

@@ -527,7 +527,12 @@ export class HilomBackendStack extends cdk.Stack {
     // paymongoWebhook and enrollmentRetryConsumer are absent because the
     // fulfillOrder loop above already grants them this exact statement; both
     // now also send booking confirmations through the same identity.
-    for (const fn of [bookings, facilitatorPortal, adminFacilitators]) {
+    // bookingSweep joined this list when it started sending pre-session
+    // reminders. It had no reason to send anything before that, and the
+    // failure mode if it were left out is exactly the one this comment warns
+    // about: reminders would fail with AccessDenied on a schedule, where
+    // nobody is watching a response code.
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep]) {
       fn.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ['ses:SendEmail'],
