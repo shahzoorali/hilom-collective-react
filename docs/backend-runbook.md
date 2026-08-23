@@ -84,6 +84,32 @@ without needing its own dedupe logic for the Moodle side — only the order
 row's `paymongo_payment_id` uniqueness needs to guard against a duplicated
 *payment* event; a duplicated *enrollment call* is already safe.
 
+### Amended 2026-08-23 — the sequential case holds, the concurrent one does not
+
+The claim above is true when the two calls are sequential, which is how it was
+probed. It does **not** hold under concurrency. Production, 2026-08-17:
+
+```
+[enrollment-retry-consumer] order ab2766f5-… failed again: Error writing to database
+(Duplicate entry '26-50' for key 'mdl_userenro_enruse_uix' …)
+```
+
+Moodle checks for an existing enrollment and then inserts, so two callers that
+interleave — the webhook and a retry, most likely — can both pass the check and
+race to the same INSERT. The loser gets a duplicate-key write failure.
+
+Two consequences were fixed in `moodle.ts`:
+
+* `enrolUser` now enrolls **one course per call**. It used to batch every course
+  into a single request, so one failing course took down the whole request and
+  the others never landed. For a bundle (course 17 → 10, 15, 16) that was
+  unrecoverable: once any one course was enrolled, every retry re-sent all
+  three, collided, and rolled back — the buyer never received the rest.
+* A duplicate-key collision on `mdl_userenro_enruse_uix` is now treated as
+  success, since the row it collided with is the one we wanted.
+
+Retries therefore converge on "fully enrolled" instead of failing forever.
+
 One transient finding along the way: production Moodle's DB connection
 dropped mid-request once (`MySQL server has gone away`) during user creation.
 The user was actually created despite the WS call reporting an error — worth

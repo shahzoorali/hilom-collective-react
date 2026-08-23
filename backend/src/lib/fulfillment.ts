@@ -127,8 +127,10 @@ export async function fulfillOrder(orderId: string, billingName?: string | null)
       }
     }
 
-    // Verified idempotent against production — safe to call again on retry
-    // without checking existing enrollments first.
+    // Safe to call again on retry without checking existing enrollments first:
+    // enrolUser goes course-by-course and treats an already-enrolled course as
+    // success, so a retry of a partly-fulfilled order finishes the courses that
+    // are missing instead of failing on the ones that already landed.
     await moodle.enrolUser(moodleUser.id, courseIds);
 
     const { error: updateError } = await supabase

@@ -59,6 +59,28 @@ export class MoodleError extends Error {
   }
 }
 
+/**
+ * True when a failed enrolment write means "this user is already enrolled in
+ * this course", which for fulfillment purposes is success, not failure.
+ *
+ * `mdl_userenro_enruse_uix` is the unique index on (enrolid, userid), so a
+ * collision on it says the exact row we were trying to create already exists.
+ * Matched on the index name rather than on `errorcode` because Moodle reports
+ * this as a generic `dmlwriteexception` — the same code it uses for unrelated
+ * write failures that must keep throwing.
+ *
+ * Seen in production on 2026-08-17: an enrolment that had already landed was
+ * re-sent by the retry consumer and the write collided. Moodle usually updates
+ * rather than inserts for an existing enrolment, so the likely trigger is a
+ * race between the webhook and a retry running concurrently — both observing
+ * "not enrolled" before either commits. Tolerating the collision is correct
+ * either way; the row we wanted is there.
+ */
+export function isAlreadyEnrolledError(err: unknown): boolean {
+  if (!(err instanceof MoodleError)) return false;
+  return `${err.message} ${err.debuginfo ?? ''}`.includes('mdl_userenro_enruse_uix');
+}
+
 export class MoodleClient {
   private readonly endpoint: string;
 
@@ -167,16 +189,34 @@ export class MoodleClient {
   }
 
   /**
-   * Enrolls a user into one or more courses in a single call. No `timeend` is
-   * sent, which Moodle treats as permanent access.
+   * Enrolls a user into one or more courses. No `timeend` is sent, which
+   * Moodle treats as permanent access.
+   *
+   * One call per course, not one batched call for all of them. A batch is a
+   * single Moodle request, so one course failing takes the whole request down
+   * with it — and the courses that would have succeeded do not land. That made
+   * a partially-fulfilled bundle unrecoverable: course 17 fans out to 10, 15
+   * and 16, and once any one of them was enrolled, every retry re-sent all
+   * three, collided on the one that had succeeded, and the buyer never got the
+   * rest. Per-course means a collision costs that course and nothing else.
+   *
+   * An already-enrolled course is swallowed rather than thrown, so a retry of
+   * a partly-completed order converges on "fully enrolled" instead of failing
+   * forever. See `isAlreadyEnrolledError`.
    *
    * roleid 5 is the stock "Student" archetype.
    */
   async enrolUser(userid: number, courseIds: number[], roleid = 5): Promise<void> {
-    if (courseIds.length === 0) return;
-    await this.call<null>('enrol_manual_enrol_users', {
-      enrolments: courseIds.map((courseid) => ({ roleid, userid, courseid })),
-    });
+    for (const courseid of courseIds) {
+      try {
+        await this.call<null>('enrol_manual_enrol_users', {
+          enrolments: [{ roleid, userid, courseid }],
+        });
+      } catch (err) {
+        if (!isAlreadyEnrolledError(err)) throw err;
+        console.warn(`[moodle.enrolUser] user ${userid} already enrolled in ${courseid}; treating as success`);
+      }
+    }
   }
 
   /** Used by the Phase 8 manual refund-revoke flow. */
