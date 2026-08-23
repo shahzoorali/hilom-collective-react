@@ -35,6 +35,7 @@ import {
 import {
   splitFee,
   refundForCancellation,
+  canReschedule,
   EXCLUSION_VIOLATION,
   UNIQUE_VIOLATION,
   type BookingStatus,
@@ -477,6 +478,13 @@ async function reschedule(
 
   const now = new Date();
   if (new Date(booking.starts_at) <= now) return badRequest('That session has already started');
+
+  // Checked against the time the session currently holds, before anything
+  // about the proposed new one is considered. Without this, moving a session
+  // is a free alternative to a cancellation that would have cost the client
+  // half the price or all of it — see canReschedule's note.
+  const reschedulable = canReschedule({ startsAt: new Date(booking.starts_at), now });
+  if (!reschedulable.allowed) return badRequest(reschedulable.reason);
 
   const facilitator = booking.facilitators as FacilitatorSchedulingRow;
   const service = booking.facilitator_services as ServiceRow;

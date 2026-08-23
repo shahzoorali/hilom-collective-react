@@ -150,11 +150,16 @@ export default function AccountBookings() {
                       Join
                     </a>
                   )}
-                  {b.facilitators && (
-                    <Link className="btn btn-ghost small" to={`/facilitators/${b.facilitators.slug}`}>
-                      Reschedule
-                    </Link>
-                  )}
+                  {/* Mirrors RESCHEDULE_MIN_NOTICE_HOURS in
+                      backend/src/lib/booking-domain.ts. The server is the one
+                      that enforces this; showing it here just means the rule
+                      is visible before someone tries, rather than after. */}
+                  {b.facilitators &&
+                    (new Date(b.starts_at).getTime() - now) / 3_600_000 >= 24 && (
+                      <Link className="btn btn-ghost small" to={`/facilitators/${b.facilitators.slug}`}>
+                        Reschedule
+                      </Link>
+                    )}
                   <button
                     type="button"
                     className="btn btn-ghost small"
@@ -164,6 +169,13 @@ export default function AccountBookings() {
                     {busyId === b.id ? 'Cancelling…' : 'Cancel'}
                   </button>
                 </div>
+
+                {(new Date(b.starts_at).getTime() - now) / 3_600_000 < 24 && (
+                  <p className="small muted" style={{ margin: '0.6rem 0 0' }}>
+                    This session is within 24 hours, so it can no longer be moved — you can still
+                    cancel, though the refund depends on how much notice you give.
+                  </p>
+                )}
               </div>
             ))}
           </>

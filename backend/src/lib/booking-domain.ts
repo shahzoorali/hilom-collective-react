@@ -113,6 +113,54 @@ export function refundForCancellation(input: {
 }
 
 /**
+ * How much notice a client must give to *move* a session rather than cancel it.
+ *
+ * Deliberately the same 24 hours that makes a cancellation free, and that
+ * symmetry is the entire point. Below this line cancelling costs the client
+ * money — half the price, then all of it — so a reschedule that stayed free
+ * would be strictly the better move at every point: the slot is released just
+ * the same, and nothing is paid for it. The facilitator loses a committed hour
+ * with no compensation, which is the cancellation policy defeated by another
+ * name rather than a separate feature.
+ *
+ * Above the line the two are already equivalent — the client could cancel for
+ * a full refund and rebook — so allowing a direct move there is convenience,
+ * not a loophole.
+ */
+export const RESCHEDULE_MIN_NOTICE_HOURS = 24;
+
+export interface RescheduleDecision {
+  allowed: boolean;
+  /** Shown to the client when it isn't. Empty when it is. */
+  reason: string;
+}
+
+/**
+ * Whether a confirmed booking may still be moved.
+ *
+ * Judged on the booking's *current* start time, not the proposed new one —
+ * the new time is checked separately by the slot engine, which enforces the
+ * service's own notice period and advance window. What this guards is the hour
+ * the facilitator has already set aside.
+ *
+ * Applies to free sessions too. There is no refund to protect there, but the
+ * held hour is just as real, and one rule is easier to state than two.
+ */
+export function canReschedule(input: { startsAt: Date; now: Date }): RescheduleDecision {
+  const hoursBefore = (input.startsAt.getTime() - input.now.getTime()) / 3_600_000;
+
+  if (hoursBefore >= RESCHEDULE_MIN_NOTICE_HOURS) {
+    return { allowed: true, reason: '' };
+  }
+  return {
+    allowed: false,
+    reason:
+      `Sessions can be moved up to ${RESCHEDULE_MIN_NOTICE_HOURS} hours before they start. ` +
+      'Closer than that, you can only cancel — and the refund depends on how much notice you give.',
+  };
+}
+
+/**
  * Whether a booking still occupies its slot.
  *
  * Mirrors the predicate on the `bookings_no_overlap` exclusion constraint. It

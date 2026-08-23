@@ -1,0 +1,125 @@
+/**
+ * Tests for the booking money and policy rules.
+ *
+ * Same reasoning as slots.test.ts: `node:test` via tsx, no framework. These
+ * are the decisions that decide what someone is charged and what a facilitator
+ * is owed, so the assertions are on exact centavo amounts rather than shapes.
+ *
+ * Run with `npm run test` in backend/.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  splitFee,
+  refundForCancellation,
+  canReschedule,
+  RESCHEDULE_MIN_NOTICE_HOURS,
+} from './booking-domain.js';
+
+const NOW = new Date('2026-03-10T00:00:00Z');
+const hoursFromNow = (h: number) => new Date(NOW.getTime() + h * 3_600_000);
+
+describe('splitFee — the platform cut', () => {
+  it('splits a clean percentage exactly', () => {
+    const fee = splitFee(150_000, 1500); // ₱1,500 at 15%
+    assert.equal(fee.platformFeeCentavos, 22_500);
+    assert.equal(fee.facilitatorNetCentavos, 127_500);
+  });
+
+  it('always sums back to the price, so nothing is created or lost', () => {
+    for (const price of [1, 99, 100, 12_345, 150_000, 999_999]) {
+      for (const bps of [0, 1, 750, 1500, 3333, 10_000]) {
+        const fee = splitFee(price, bps);
+        assert.equal(
+          fee.platformFeeCentavos + fee.facilitatorNetCentavos,
+          price,
+          `split of ${price} at ${bps}bps did not sum back`,
+        );
+      }
+    }
+  });
+
+  it('rounds the half-centavo to the facilitator, not the platform', () => {
+    // 1 centavo at 50% is exactly half a centavo — it must not round to Hilom.
+    const fee = splitFee(1, 5000);
+    assert.equal(fee.platformFeeCentavos, 0);
+    assert.equal(fee.facilitatorNetCentavos, 1);
+  });
+
+  it('clamps a nonsense rate rather than inverting the split', () => {
+    assert.equal(splitFee(1000, -500).platformFeeCentavos, 0);
+    assert.equal(splitFee(1000, 99_999).facilitatorNetCentavos, 0);
+  });
+});
+
+describe('refundForCancellation — what the client gets back', () => {
+  const price = 150_000;
+
+  it('refunds in full at 24 hours or more', () => {
+    const d = refundForCancellation({ priceCentavos: price, startsAt: hoursFromNow(24), now: NOW, cancelledBy: 'client' });
+    assert.equal(d.refundCentavos, price);
+  });
+
+  it('refunds half between 12 and 24 hours', () => {
+    const d = refundForCancellation({ priceCentavos: price, startsAt: hoursFromNow(13), now: NOW, cancelledBy: 'client' });
+    assert.equal(d.refundCentavos, price / 2);
+  });
+
+  it('refunds nothing under 12 hours', () => {
+    const d = refundForCancellation({ priceCentavos: price, startsAt: hoursFromNow(11), now: NOW, cancelledBy: 'client' });
+    assert.equal(d.refundCentavos, 0);
+  });
+
+  it('refunds in full whenever the facilitator cancels, however late', () => {
+    const d = refundForCancellation({ priceCentavos: price, startsAt: hoursFromNow(0.5), now: NOW, cancelledBy: 'facilitator' });
+    assert.equal(d.refundCentavos, price);
+  });
+
+  it('has nothing to refund on a complimentary session', () => {
+    const d = refundForCancellation({ priceCentavos: 0, startsAt: hoursFromNow(1), now: NOW, cancelledBy: 'client' });
+    assert.equal(d.refundCentavos, 0);
+  });
+});
+
+describe('canReschedule — moving a session must not undercut cancelling it', () => {
+  it('allows a move at exactly the notice boundary', () => {
+    const d = canReschedule({ startsAt: hoursFromNow(RESCHEDULE_MIN_NOTICE_HOURS), now: NOW });
+    assert.equal(d.allowed, true);
+  });
+
+  it('allows a move comfortably ahead of the session', () => {
+    assert.equal(canReschedule({ startsAt: hoursFromNow(72), now: NOW }).allowed, true);
+  });
+
+  /**
+   * The bypass this rule exists to close: inside the free-cancellation window
+   * a move must not be available, or it is strictly better than cancelling —
+   * the slot is released either way, but nothing is paid for it.
+   */
+  it('refuses a move once cancelling would cost the client money', () => {
+    for (const h of [23.9, 20, 13, 12, 6, 0.5]) {
+      const d = canReschedule({ startsAt: hoursFromNow(h), now: NOW });
+      assert.equal(d.allowed, false, `a move ${h}h out should be refused`);
+      assert.match(d.reason, /cancel/i);
+    }
+  });
+
+  it('agrees with the refund policy about where the free window ends', () => {
+    // Anywhere a move is allowed, cancelling must already be free — otherwise
+    // the move is the cheaper option and the policy is bypassable.
+    for (const h of [24, 25, 48, 200]) {
+      const moveOk = canReschedule({ startsAt: hoursFromNow(h), now: NOW }).allowed;
+      const refund = refundForCancellation({
+        priceCentavos: 150_000,
+        startsAt: hoursFromNow(h),
+        now: NOW,
+        cancelledBy: 'client',
+      }).refundCentavos;
+      assert.equal(moveOk && refund === 150_000, true, `at ${h}h the two policies disagree`);
+    }
+  });
+
+  it('applies to complimentary sessions too — the held hour is just as real', () => {
+    assert.equal(canReschedule({ startsAt: hoursFromNow(2), now: NOW }).allowed, false);
+  });
+});
