@@ -30,8 +30,44 @@ export const unauthorized = (message = 'Unauthorized') => json(401, { error: mes
  * (Supabase errors, Moodle debuginfo) must not reach the browser.
  */
 export function serverError(context: string, err: unknown): APIGatewayProxyResultV2 {
-  console.error(`[${context}]`, err);
+  console.error(`[${context}]`, forLog(err));
   return json(500, { error: 'Internal server error' });
+}
+
+/**
+ * Makes a thrown value loggable.
+ *
+ * Much of what reaches `serverError` is not an Error. Supabase hands back a
+ * `PostgrestError` — a plain object carrying `message`/`code`/`details`/`hint`
+ * and nothing else — and the handlers rethrow it as-is (`if (error) throw
+ * error`). That object has no stack, so a handler with two dozen query sites
+ * logs a failure that names none of them; and anything that stringifies it
+ * rather than inspecting it renders the whole thing as "[object Object]",
+ * which is what an unhandled rejection reaching the Lambda runtime produced on
+ * 2026-08-17 before the dispatch calls were awaited.
+ *
+ * Promoting it to a real Error here captures a stack. Those frames point at the
+ * catch block rather than at the failing query — the throw site is already gone
+ * by the time we see the value — but naming the handler and preserving the
+ * Postgres error code is the difference between a searchable log line and a
+ * dead end. Original fields are kept on the Error so nothing is lost.
+ */
+function forLog(err: unknown): unknown {
+  if (err instanceof Error || err === null || typeof err !== 'object') return err;
+
+  const fields = err as Record<string, unknown>;
+  const message = typeof fields.message === 'string' ? fields.message : JSON.stringify(err);
+  const wrapped = new Error(message);
+  wrapped.name = typeof fields.code === 'string' ? `NonError[${fields.code}]` : 'NonError';
+
+  // `message` and `stack` are skipped when copying the original fields across:
+  // both are already set on `wrapped`, and a thrown object carrying its own
+  // `stack` would otherwise overwrite the one just captured — throwing away the
+  // only thing this function exists to add.
+  for (const [key, value] of Object.entries(fields)) {
+    if (key !== 'message' && key !== 'stack') (wrapped as unknown as Record<string, unknown>)[key] = value;
+  }
+  return wrapped;
 }
 
 /**
