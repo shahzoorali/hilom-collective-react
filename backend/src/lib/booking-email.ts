@@ -143,7 +143,16 @@ export async function sendBookingCancelled(
   detail: { cancelledBy: string; refundNote: string },
 ): Promise<void> {
   const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
-  const who = detail.cancelledBy === 'client' ? 'the client' : 'the facilitator';
+  // Named explicitly rather than "client or else facilitator": an admin
+  // cancellation is a third case, and falling through to "the facilitator"
+  // would tell both parties the facilitator pulled out of a session they had
+  // no part in cancelling.
+  const who =
+    detail.cancelledBy === 'client'
+      ? 'the client'
+      : detail.cancelledBy === 'admin'
+        ? 'Hilom Collective'
+        : 'the facilitator';
 
   const text = [
     `Cancelled: ${ctx.serviceTitle}`,

@@ -707,6 +707,8 @@ export class HilomBackendStack extends cdk.Stack {
       ['/admin/facilitators', [GET, POST]],
       ['/admin/facilitators/{facilitatorId}', [GET, PATCH]],
       ['/admin/bookings', [GET]],
+      ['/admin/bookings/{bookingId}/cancel', [POST]],
+      ['/admin/bookings/{bookingId}/refund', [POST]],
       ['/admin/payouts', [GET, POST]],
       ['/admin/payouts/{payoutId}', [PATCH]],
     ]);

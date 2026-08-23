@@ -422,11 +422,60 @@ export const adminPatchFacilitator = (
     },
   ).then((r) => r.facilitator);
 
-export const adminListBookings = (adminKey: string, status?: string) =>
-  apiFetch<{ bookings: Booking[] }>(
-    `/admin/bookings${status ? `?status=${encodeURIComponent(status)}` : ''}`,
-    { headers: { 'x-admin-key': adminKey } },
-  ).then((r) => r.bookings);
+/**
+ * A booking as the admin sees it — the client's row plus the facilitator it
+ * belongs to and the refund ledger, neither of which a client is shown.
+ */
+export interface AdminBooking extends Booking {
+  facilitator_id: string;
+  paymongo_payment_id: string | null;
+  /** When the promised refund was actually sent. Null while it is owed. */
+  refunded_at: string | null;
+  refund_reference: string | null;
+  facilitators?: {
+    slug: string;
+    display_name: string;
+    email: string;
+    photo_url: string | null;
+    timezone: string;
+  } | null;
+}
+
+/** `refund: 'due'` is the work queue — promised refunds nobody has sent yet. */
+export const adminListBookings = (
+  adminKey: string,
+  filter?: { status?: string; refund?: 'due' },
+) => {
+  const params = new URLSearchParams();
+  if (filter?.status) params.set('status', filter.status);
+  if (filter?.refund) params.set('refund', filter.refund);
+  const qs = params.toString();
+  return apiFetch<{ bookings: AdminBooking[] }>(`/admin/bookings${qs ? `?${qs}` : ''}`, {
+    headers: { 'x-admin-key': adminKey },
+  }).then((r) => r.bookings);
+};
+
+/** Cancels on Hilom's behalf — always a full refund. */
+export const adminCancelBooking = (adminKey: string, bookingId: string, reason?: string) =>
+  apiFetch<{ bookingId: string; status: BookingStatus; refundCentavos: number }>(
+    `/admin/bookings/${encodeURIComponent(bookingId)}/cancel`,
+    {
+      method: 'POST',
+      headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    },
+  );
+
+/** Records that a refund has actually been sent. The money moves by hand. */
+export const adminMarkRefundSent = (adminKey: string, bookingId: string, reference: string) =>
+  apiFetch<{ bookingId: string; refundedAt: string; reference: string }>(
+    `/admin/bookings/${encodeURIComponent(bookingId)}/refund`,
+    {
+      method: 'POST',
+      headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reference }),
+    },
+  );
 
 export interface AdminPayout extends Payout {
   facilitator_id: string;

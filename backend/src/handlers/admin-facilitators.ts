@@ -6,6 +6,8 @@
  *   GET    /admin/facilitators/{facilitatorId}
  *   PATCH  /admin/facilitators/{facilitatorId}
  *   GET    /admin/bookings
+ *   POST   /admin/bookings/{bookingId}/cancel
+ *   POST   /admin/bookings/{bookingId}/refund
  *   GET    /admin/payouts
  *   POST   /admin/payouts
  *   PATCH  /admin/payouts/{payoutId}
@@ -24,7 +26,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
-import { sendFacilitatorApproved } from '../lib/booking-email.js';
+import { sendFacilitatorApproved, sendBookingCancelled } from '../lib/booking-email.js';
+import { refundForCancellation } from '../lib/booking-domain.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 
@@ -54,7 +57,16 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     const supabase = await getSupabase();
 
     if (path.includes('/admin/payouts')) return await payouts(supabase, event, method);
-    if (path.includes('/admin/bookings')) return await listBookings(supabase, event);
+    if (path.includes('/admin/bookings')) {
+      const bookingId = event.pathParameters?.bookingId;
+      if (bookingId && path.endsWith('/cancel')) {
+        return await adminCancelBooking(supabase, bookingId, parseBody(event));
+      }
+      if (bookingId && path.endsWith('/refund')) {
+        return await markRefundSent(supabase, bookingId, parseBody(event));
+      }
+      return await listBookings(supabase, event);
+    }
 
     const facilitatorId = event.pathParameters?.facilitatorId;
     if (!facilitatorId) {
@@ -259,6 +271,7 @@ async function listBookings(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyResultV2> {
   const status = event.queryStringParameters?.status?.trim();
+  const refund = event.queryStringParameters?.refund?.trim();
 
   let query = supabase
     .from('bookings')
@@ -267,10 +280,159 @@ async function listBookings(
     .limit(200);
 
   if (status) query = query.eq('status', status);
+  // The queue that costs someone real money if it is not worked: refunds the
+  // policy has promised and nobody has sent yet.
+  if (refund === 'due') query = query.gt('refund_centavos', 0).is('refunded_at', null);
 
   const { data, error } = await query;
   if (error) throw error;
   return ok({ bookings: data ?? [] });
+}
+
+/**
+ * Cancels a booking on Hilom's behalf.
+ *
+ * The third cancellation path, alongside the client's and the facilitator's,
+ * and the only one support can reach. It exists because the other two require
+ * a party who may be unreachable, uncooperative or the problem itself — a
+ * facilitator who has stopped responding, a session booked fraudulently.
+ *
+ * Always a full refund, matching `refundForCancellation`'s existing rule for a
+ * cancellation the client did not choose. An admin overriding the amount is
+ * deliberately not offered: the notice-period tiers exist to price the
+ * client's *own* change of mind, and none of them describe this.
+ */
+async function adminCancelBooking(
+  supabase: SupabaseClient,
+  bookingId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const { data: booking, error } = await supabase
+    .from('bookings')
+    .select(
+      'id, status, starts_at, price_centavos, client_email, client_name, meeting_url, ' +
+        'facilitators(email, display_name, timezone), facilitator_services(title)',
+    )
+    .eq('id', bookingId)
+    .maybeSingle<any>();
+
+  if (error) throw error;
+  if (!booking) return notFound('Booking not found');
+  if (booking.status !== 'confirmed') {
+    return badRequest(`Only a confirmed booking can be cancelled — this one is ${booking.status}.`);
+  }
+
+  const now = new Date();
+  const decision = refundForCancellation({
+    priceCentavos: booking.price_centavos,
+    startsAt: new Date(booking.starts_at),
+    now,
+    cancelledBy: 'admin',
+  });
+
+  const reason = typeof body.reason === 'string' && body.reason.trim()
+    ? body.reason.trim().slice(0, 500)
+    : decision.reason;
+
+  const { data: cancelled, error: updateError } = await supabase
+    .from('bookings')
+    .update({
+      // Recorded as a facilitator cancellation because that is what the
+      // *client* experiences and what the refund follows — the session was
+      // called off by the platform side, not by them. `cancelled_by` carries
+      // the real actor for anyone reading the row.
+      status: 'cancelled_by_facilitator',
+      cancelled_at: now.toISOString(),
+      cancelled_by: 'admin',
+      cancellation_reason: reason,
+      refund_centavos: decision.refundCentavos,
+    })
+    .eq('id', bookingId)
+    // Same reasoning as every other transition here: a filtered update that
+    // matches nothing raises no error, so without reading the row back this
+    // would email a cancellation that never happened.
+    .eq('status', 'confirmed')
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (updateError) throw updateError;
+  if (!cancelled) return json(409, { error: 'That booking was already cancelled.' });
+
+  const facilitator = booking.facilitators;
+  const service = booking.facilitator_services;
+  if (facilitator && service) {
+    await sendBookingCancelled(
+      {
+        clientEmail: booking.client_email,
+        clientName: booking.client_name,
+        facilitatorEmail: facilitator.email,
+        facilitatorName: facilitator.display_name,
+        facilitatorTimezone: facilitator.timezone,
+        serviceTitle: service.title,
+        startsAt: booking.starts_at,
+        meetingUrl: booking.meeting_url,
+        isFree: booking.price_centavos === 0,
+      },
+      { cancelledBy: 'admin', refundNote: reason },
+    );
+  }
+
+  return ok({
+    bookingId,
+    status: 'cancelled_by_facilitator',
+    refundCentavos: decision.refundCentavos,
+  });
+}
+
+/**
+ * Records that a refund has actually been sent.
+ *
+ * The money moves by hand, outside this system, exactly as payouts and course
+ * refunds do. This is the ledger entry proving it happened — without it,
+ * `refund_centavos` says only what was promised, and "has this client been
+ * refunded?" can only be answered from the PayMongo dashboard.
+ *
+ * A reference is required rather than optional for the same reason the payout
+ * flow demands one: an unverifiable claim that money moved is worth very
+ * little when somebody disputes it later.
+ */
+async function markRefundSent(
+  supabase: SupabaseClient,
+  bookingId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const reference = typeof body.reference === 'string' ? body.reference.trim().slice(0, 200) : '';
+  if (!reference) return badRequest('A payment or bank reference is required');
+
+  const { data: booking, error } = await supabase
+    .from('bookings')
+    .select('id, refund_centavos, refunded_at')
+    .eq('id', bookingId)
+    .maybeSingle<{ id: string; refund_centavos: number | null; refunded_at: string | null }>();
+
+  if (error) throw error;
+  if (!booking) return notFound('Booking not found');
+  if (!booking.refund_centavos || booking.refund_centavos <= 0) {
+    return badRequest('No refund is owed on this booking');
+  }
+  if (booking.refunded_at) {
+    return json(409, { error: 'This refund is already recorded as sent.' });
+  }
+
+  const { data: marked, error: updateError } = await supabase
+    .from('bookings')
+    .update({ refunded_at: new Date().toISOString(), refund_reference: reference })
+    .eq('id', bookingId)
+    // Re-asserted so two admins working the queue at once cannot both record
+    // the same refund as sent, which would read as two payments.
+    .is('refunded_at', null)
+    .select('id, refunded_at, refund_reference')
+    .maybeSingle<{ id: string; refunded_at: string; refund_reference: string }>();
+
+  if (updateError) throw updateError;
+  if (!marked) return json(409, { error: 'This refund is already recorded as sent.' });
+
+  return ok({ bookingId, refundedAt: marked.refunded_at, reference: marked.refund_reference });
 }
 
 const PAYOUT_COLUMNS =

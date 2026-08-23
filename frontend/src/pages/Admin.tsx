@@ -5,6 +5,7 @@ import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
 import PayoutsTab from './admin/PayoutsTab';
+import BookingsTab from './admin/BookingsTab';
 import PagesTab from './admin/PagesTab';
 import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
@@ -25,6 +26,7 @@ const TABS = [
   { label: 'Forms', path: 'forms', icon: '📋' },
   { label: 'Commerce', path: 'commerce', icon: '💳' },
   { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
+  { label: 'Bookings', path: 'bookings', icon: '🗓️' },
   { label: 'Payouts', path: 'payouts', icon: '🏦' },
 ] as const;
 
@@ -236,6 +238,7 @@ export default function Admin() {
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
+          <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>
