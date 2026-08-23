@@ -7,6 +7,7 @@
  * there with production access — see community.ts for the same pattern.
  */
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { renderEmail, renderText, escapeHtml, p, note, details, button, link } from './email-layout.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
@@ -18,15 +19,6 @@ const LOGIN_URL =
   '?client_id=29bo0gpj7j9u7ofbcii22emj8l&response_type=code&scope=openid+email+profile' +
   '&redirect_uri=https%3A%2F%2Fhilomcollective.com%2Fauth%2Fcallback';
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 /**
  * Sent once, right after a buyer's Cognito account is first admin-created.
  * Cognito's own welcome email is suppressed (MessageAction: 'SUPPRESS' in
@@ -35,51 +27,50 @@ function escapeHtml(s: string): string {
  * set their own, rather than being handed a Cognito temporary password.
  */
 export async function sendAccountCreatedEmail(email: string, firstname: string): Promise<void> {
-  const textBody = [
-    `Hi ${firstname},`,
-    '',
-    'Welcome to Hilom Collective! 🌿',
-    '',
+  const textBody = renderText(`Welcome to Hilom Collective, ${firstname}`, [
     'Your Hilom Learning Hub account has been created.',
     '',
     `Username: ${email}`,
     '',
-    'To set your own password, go to the login page using the link below:',
+    'Your account does not have a password yet. To set one:',
     '',
-    LOGIN_URL,
+    `1. Open the sign-in page: ${LOGIN_URL}`,
+    '2. Click "Forgot your password?"',
+    '3. Enter the username above.',
+    '4. Follow the emailed instructions to create your password.',
     '',
-    "Once you're on the login page:",
+    "Once you're signed in, your learning dashboard and courses are all in one place.",
     '',
-    '1. Click "Forgot your password?"',
-    '2. Enter the username provided above.',
-    '3. Follow the instructions sent to your email to create your password.',
-    '4. Return to the login page and sign in.',
-    '',
-    "Once you're logged in, you'll be able to access your learning dashboard and courses.",
-    '',
-    'If you need any help, please contact us at kumusta@hilomcollective.com',
-    '',
-    'May this be a space help with your continuous growth.',
-  ].join('\n');
+    'Need a hand? Email us at kumusta@hilomcollective.com',
+    'May this be a space that helps with your continuous growth.',
+  ]);
 
-  const htmlBody = `
-    <p>Hi ${escapeHtml(firstname)},</p>
-    <p>Welcome to Hilom Collective! 🌿</p>
-    <p>Your Hilom Learning Hub account has been created.</p>
-    <p><strong>Username:</strong> ${escapeHtml(email)}</p>
-    <p>To set your own password, go to the login page using the link below:</p>
-    <p><a href="${LOGIN_URL}">${LOGIN_URL}</a></p>
-    <p>Once you're on the login page:</p>
-    <ol>
-      <li>Click <em>Forgot your password?</em></li>
-      <li>Enter the username provided above.</li>
-      <li>Follow the instructions sent to your email to create your password.</li>
-      <li>Return to the login page and sign in.</li>
-    </ol>
-    <p>Once you're logged in, you'll be able to access your learning dashboard and courses.</p>
-    <p>If you need any help, please contact us at <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a></p>
-    <p>May this be a space help with your continuous growth.</p>
-  `;
+  const htmlBody = renderEmail({
+    preheader: 'Your Hilom Learning Hub account is ready — set a password to sign in.',
+    heading: `Welcome to Hilom Collective, ${firstname}`,
+    body:
+      p('Your Hilom Learning Hub account has been created.') +
+      details([{ label: 'Username', value: escapeHtml(email) }]) +
+      // The account is admin-created and genuinely has no password yet, so the
+      // "Forgot your password?" route is the real path to setting one — not
+      // the workaround it looks like. Spelled out step by step because a
+      // welcome email telling someone to use password *recovery* is confusing
+      // enough to lose people at the first step.
+      p('Your account does not have a password yet. To set one:') +
+      p(
+        '<strong>1.</strong> Open the sign-in page below.<br>' +
+          '<strong>2.</strong> Click <em>Forgot your password?</em><br>' +
+          `<strong>3.</strong> Enter <strong>${escapeHtml(email)}</strong> as the username.<br>` +
+          '<strong>4.</strong> Follow the emailed instructions to create your password.',
+      ) +
+      button('Go to the sign-in page', LOGIN_URL) +
+      note("Once you're signed in, your learning dashboard and courses are all in one place.") +
+      note(
+        'Need a hand? Email us at ' +
+          link('kumusta@hilomcollective.com', 'mailto:kumusta@hilomcollective.com') +
+          '. May this be a space that helps with your continuous growth.',
+      ),
+  });
 
   await sesClient.send(
     new SendEmailCommand({

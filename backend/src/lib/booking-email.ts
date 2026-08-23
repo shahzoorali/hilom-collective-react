@@ -11,21 +11,19 @@
  * Both sides are notified on every state change. A facilitator who finds out
  * about a cancellation by sitting in an empty meeting room does not stay on the
  * platform, and that is a failure mode email is the entire fix for.
+ *
+ * Every template here composes from `email-layout.ts` rather than writing its
+ * own markup — see that file for why email HTML looks the way it does.
  */
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { renderEmail, renderText, escapeHtml, p, note, details, button, link } from './email-layout.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
 const SENDER = 'Hilom Collective <hello@hilomcollective.com>';
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const ACCOUNT_BOOKINGS_URL = 'https://www.hilomcollective.com/account/bookings';
+const FACILITATOR_BOOKINGS_URL = 'https://www.hilomcollective.com/facilitator/bookings';
 
 /**
  * Formats an instant for a human, in a named zone, with the zone shown.
@@ -84,52 +82,70 @@ export interface BookingEmailContext {
   isFree: boolean;
 }
 
+/** The join row, which is either a link or an honest admission there isn't one. */
+function joinDetail(meetingUrl?: string | null): { label: string; value: string } {
+  return {
+    label: 'Join',
+    value: meetingUrl ? link(meetingUrl, meetingUrl) : 'Your facilitator will send joining details.',
+  };
+}
+
 /** Sent to both parties the moment a booking becomes `confirmed`. */
 export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<void> {
   const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
   const joinLine = ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.';
+  const rescheduleNote = ctx.isFree
+    ? 'This is a complimentary call — a short conversation to see whether this facilitator is the right fit for you.'
+    : 'You can reschedule or cancel from your Hilom account, up to 24 hours before the session starts.';
 
-  const clientText = [
-    `Your session is confirmed: ${ctx.serviceTitle} with ${ctx.facilitatorName}`,
-    '',
+  const clientHtml = renderEmail({
+    preheader: `${ctx.serviceTitle} with ${ctx.facilitatorName} — ${when}`,
+    heading: 'Your session is confirmed',
+    body:
+      p(`You're booked in with <strong>${escapeHtml(ctx.facilitatorName)}</strong>. Here are the details.`) +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'With', value: escapeHtml(ctx.facilitatorName) },
+        { label: 'When', value: escapeHtml(when) },
+        joinDetail(ctx.meetingUrl),
+      ]) +
+      button('View your bookings', ACCOUNT_BOOKINGS_URL) +
+      note(rescheduleNote),
+  });
+
+  const clientText = renderText(`Your session is confirmed: ${ctx.serviceTitle} with ${ctx.facilitatorName}`, [
     `When: ${when}`,
     joinLine,
     '',
-    ctx.isFree
-      ? 'This is a complimentary call — a short conversation to see whether this facilitator is the right fit for you.'
-      : 'You can reschedule or cancel from your Hilom account.',
+    rescheduleNote,
     '',
-    'See your bookings: https://www.hilomcollective.com/account/bookings',
-  ].join('\n');
+    `See your bookings: ${ACCOUNT_BOOKINGS_URL}`,
+  ]);
 
-  const clientHtml = `
-    <p><strong>Your session is confirmed:</strong> ${escapeHtml(ctx.serviceTitle)} with ${escapeHtml(ctx.facilitatorName)}</p>
-    <p><strong>When:</strong> ${escapeHtml(when)}</p>
-    <p>${ctx.meetingUrl ? `<a href="${escapeHtml(ctx.meetingUrl)}">Join the session</a>` : 'Your facilitator will send joining details.'}</p>
-    <p style="color:#666;font-size:14px;">${
-      ctx.isFree
-        ? 'This is a complimentary call — a short conversation to see whether this facilitator is the right fit for you.'
-        : 'You can reschedule or cancel from your Hilom account.'
-    }</p>
-    <p style="color:#666;font-size:14px;"><a href="https://www.hilomcollective.com/account/bookings">See your bookings</a></p>
-  `;
+  const facilitatorHtml = renderEmail({
+    preheader: `${ctx.clientName || ctx.clientEmail} booked ${ctx.serviceTitle} — ${when}`,
+    heading: 'You have a new booking',
+    body:
+      p('Someone has booked a session with you.') +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        {
+          label: 'Client',
+          value: `${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})`,
+        },
+        { label: 'When', value: escapeHtml(when) },
+        joinDetail(ctx.meetingUrl),
+      ]) +
+      button('Open your calendar', FACILITATOR_BOOKINGS_URL),
+  });
 
-  const facilitatorText = [
-    `New booking: ${ctx.serviceTitle}`,
-    '',
+  const facilitatorText = renderText(`New booking: ${ctx.serviceTitle}`, [
     `Client: ${ctx.clientName || ctx.clientEmail} (${ctx.clientEmail})`,
     `When: ${when}`,
     joinLine,
     '',
-    'See your calendar: https://www.hilomcollective.com/facilitator/bookings',
-  ].join('\n');
-
-  const facilitatorHtml = `
-    <p><strong>New booking:</strong> ${escapeHtml(ctx.serviceTitle)}</p>
-    <p><strong>Client:</strong> ${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})</p>
-    <p><strong>When:</strong> ${escapeHtml(when)}</p>
-    <p style="color:#666;font-size:14px;"><a href="https://www.hilomcollective.com/facilitator/bookings">See your calendar</a></p>
-  `;
+    `See your calendar: ${FACILITATOR_BOOKINGS_URL}`,
+  ]);
 
   await Promise.all([
     send(ctx.clientEmail, `Session confirmed: ${ctx.serviceTitle}`, clientText, clientHtml),
@@ -140,10 +156,10 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
 /**
  * Sent to both parties shortly before the session.
  *
- * Carries the join link rather than pointing at the dashboard, because the
- * whole job of this email is to be the thing someone opens at the moment the
- * session starts — one that says "go and look somewhere else for the link" has
- * failed at exactly the wrong time.
+ * Leads with the join button rather than pointing at the dashboard, because
+ * the whole job of this email is to be the thing someone opens as the session
+ * starts — one that says "go and look somewhere else for the link" has failed
+ * at exactly the wrong moment.
  *
  * The client's copy deliberately does not offer rescheduling. By the time this
  * lands, the 24-hour window has closed (see canReschedule in
@@ -154,36 +170,52 @@ export async function sendBookingReminder(ctx: BookingEmailContext): Promise<voi
   const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
   const joinLine = ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.';
 
-  const clientText = [
-    `Coming up: ${ctx.serviceTitle} with ${ctx.facilitatorName}`,
-    '',
+  const clientHtml = renderEmail({
+    preheader: `${ctx.serviceTitle} with ${ctx.facilitatorName} — ${when}`,
+    heading: 'Your session is coming up',
+    body:
+      p(`A reminder that you're seeing <strong>${escapeHtml(ctx.facilitatorName)}</strong> tomorrow.`) +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'With', value: escapeHtml(ctx.facilitatorName) },
+        { label: 'When', value: escapeHtml(when) },
+      ]) +
+      (ctx.meetingUrl ? button('Join the session', ctx.meetingUrl) : '') +
+      note(
+        ctx.meetingUrl
+          ? "If you can't make it, let your facilitator know as soon as you can."
+          : "Your facilitator will send joining details. If you can't make it, let them know as soon as you can.",
+      ),
+  });
+
+  const clientText = renderText(`Coming up: ${ctx.serviceTitle} with ${ctx.facilitatorName}`, [
     `When: ${when}`,
     joinLine,
     '',
     "If you can't make it, let your facilitator know as soon as you can.",
-  ].join('\n');
+  ]);
 
-  const clientHtml = `
-    <p><strong>Coming up:</strong> ${escapeHtml(ctx.serviceTitle)} with ${escapeHtml(ctx.facilitatorName)}</p>
-    <p><strong>When:</strong> ${escapeHtml(when)}</p>
-    <p>${ctx.meetingUrl ? `<a href="${escapeHtml(ctx.meetingUrl)}">Join the session</a>` : 'Your facilitator will send joining details.'}</p>
-    <p style="color:#666;font-size:14px;">If you can't make it, let your facilitator know as soon as you can.</p>
-  `;
+  const facilitatorHtml = renderEmail({
+    preheader: `${ctx.serviceTitle} with ${ctx.clientName || ctx.clientEmail} — ${when}`,
+    heading: 'A session is coming up',
+    body:
+      p("A reminder of tomorrow's session.") +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        {
+          label: 'Client',
+          value: `${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})`,
+        },
+        { label: 'When', value: escapeHtml(when) },
+      ]) +
+      (ctx.meetingUrl ? button('Join the session', ctx.meetingUrl) : ''),
+  });
 
-  const facilitatorText = [
-    `Coming up: ${ctx.serviceTitle}`,
-    '',
+  const facilitatorText = renderText(`Coming up: ${ctx.serviceTitle}`, [
     `Client: ${ctx.clientName || ctx.clientEmail} (${ctx.clientEmail})`,
     `When: ${when}`,
     joinLine,
-  ].join('\n');
-
-  const facilitatorHtml = `
-    <p><strong>Coming up:</strong> ${escapeHtml(ctx.serviceTitle)}</p>
-    <p><strong>Client:</strong> ${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})</p>
-    <p><strong>When:</strong> ${escapeHtml(when)}</p>
-    <p>${ctx.meetingUrl ? `<a href="${escapeHtml(ctx.meetingUrl)}">Join the session</a>` : ''}</p>
-  `;
+  ]);
 
   await Promise.all([
     send(ctx.clientEmail, `Reminder: ${ctx.serviceTitle} tomorrow`, clientText, clientHtml),
@@ -208,20 +240,24 @@ export async function sendBookingCancelled(
         ? 'Hilom Collective'
         : 'the facilitator';
 
-  const text = [
-    `Cancelled: ${ctx.serviceTitle}`,
-    '',
+  const html = renderEmail({
+    preheader: `${ctx.serviceTitle} on ${when} was cancelled`,
+    heading: 'This session has been cancelled',
+    body:
+      p(`The session below was cancelled by ${escapeHtml(who)}.`) +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'Was', value: escapeHtml(when) },
+      ]) +
+      note(escapeHtml(detail.refundNote)),
+  });
+
+  const text = renderText(`Cancelled: ${ctx.serviceTitle}`, [
     `When: ${when}`,
     `Cancelled by ${who}.`,
+    '',
     detail.refundNote,
-  ].join('\n');
-
-  const html = `
-    <p><strong>Cancelled:</strong> ${escapeHtml(ctx.serviceTitle)}</p>
-    <p><strong>When:</strong> ${escapeHtml(when)}</p>
-    <p>Cancelled by ${escapeHtml(who)}.</p>
-    <p style="color:#666;font-size:14px;">${escapeHtml(detail.refundNote)}</p>
-  `;
+  ]);
 
   await Promise.all([
     send(ctx.clientEmail, `Cancelled: ${ctx.serviceTitle}`, text, html),
@@ -237,20 +273,27 @@ export async function sendBookingRescheduled(
   const was = formatWhen(previousStartsAt, ctx.facilitatorTimezone);
   const now = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
 
-  const text = [
-    `Moved: ${ctx.serviceTitle}`,
-    '',
+  const html = renderEmail({
+    preheader: `${ctx.serviceTitle} moved to ${now}`,
+    heading: 'This session has moved',
+    body:
+      p('The session below has been rescheduled. Nothing was charged again.') +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'Was', value: `<span style="text-decoration:line-through;">${escapeHtml(was)}</span>` },
+        { label: 'Now', value: escapeHtml(now) },
+        joinDetail(ctx.meetingUrl),
+      ]) +
+      button('View your bookings', ACCOUNT_BOOKINGS_URL),
+  });
+
+  const text = renderText(`Moved: ${ctx.serviceTitle}`, [
     `Was: ${was}`,
     `Now: ${now}`,
-    ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : '',
-  ].join('\n');
-
-  const html = `
-    <p><strong>Moved:</strong> ${escapeHtml(ctx.serviceTitle)}</p>
-    <p><s>${escapeHtml(was)}</s></p>
-    <p><strong>${escapeHtml(now)}</strong></p>
-    ${ctx.meetingUrl ? `<p><a href="${escapeHtml(ctx.meetingUrl)}">Join the session</a></p>` : ''}
-  `;
+    ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.',
+    '',
+    'Nothing was charged again.',
+  ]);
 
   await Promise.all([
     send(ctx.clientEmail, `Moved: ${ctx.serviceTitle}`, text, html),
@@ -260,20 +303,29 @@ export async function sendBookingRescheduled(
 
 /** Sent when an admin approves a facilitator application. */
 export async function sendFacilitatorApproved(to: string, displayName: string): Promise<void> {
-  const text = [
-    `You're approved, ${displayName}.`,
+  const dashboard = 'https://www.hilomcollective.com/facilitator';
+
+  const html = renderEmail({
+    preheader: 'Set up your services and availability to go live on Hilom.',
+    heading: `You're approved, ${displayName}`,
+    body:
+      p('Welcome to Hilom Collective. Your facilitator account is ready.') +
+      p(
+        'Before clients can find you, set up the sessions you offer and the hours you keep. ' +
+          "We'll publish your profile to the directory once it's ready.",
+      ) +
+      button('Set up your profile', dashboard) +
+      note('Once your profile is published, clients can find and book you directly.'),
+  });
+
+  const text = renderText(`You're approved, ${displayName}.`, [
+    'Welcome to Hilom Collective. Your facilitator account is ready.',
     '',
     'Set up your services and availability before you go live:',
-    'https://www.hilomcollective.com/facilitator',
+    dashboard,
     '',
     'Once your profile is published, clients can find and book you.',
-  ].join('\n');
-
-  const html = `
-    <p><strong>You're approved, ${escapeHtml(displayName)}.</strong></p>
-    <p>Set up your <a href="https://www.hilomcollective.com/facilitator">services and availability</a> before you go live.</p>
-    <p style="color:#666;font-size:14px;">Once your profile is published, clients can find and book you.</p>
-  `;
+  ]);
 
   await send(to, 'Your Hilom facilitator application is approved', text, html);
 }

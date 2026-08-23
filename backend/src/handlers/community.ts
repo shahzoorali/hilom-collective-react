@@ -14,6 +14,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { ok, badRequest, serverError } from '../lib/http.js';
 import { verifyRecaptcha } from '../lib/recaptcha.js';
+import { renderEmail, renderText, escapeHtml, p, note, details, link } from '../lib/email-layout.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
@@ -31,15 +32,6 @@ interface SubmitBody {
   interests?: string[];
   message?: string;
   captchaToken?: string;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -67,20 +59,33 @@ export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayP
   const fullName = `${firstName} ${lastName}`;
   const interestsText = interests.length > 0 ? interests.join(', ') : 'None selected';
 
-  const textBody = [
-    `New community signup from ${fullName} <${email}>`,
-    '',
+  const textBody = renderText('New community signup', [
+    `Name: ${fullName}`,
+    `Email: ${email}`,
     `Interested in: ${interestsText}`,
     '',
     'Message:',
     message || '(none)',
-  ].join('\n');
+    '',
+    'Reply to this email to reach them directly.',
+  ]);
 
-  const htmlBody = `
-    <p><strong>New community signup from ${escapeHtml(fullName)} &lt;${escapeHtml(email)}&gt;</strong></p>
-    <p><strong>Interested in:</strong> ${escapeHtml(interestsText)}</p>
-    <p><strong>Message:</strong><br>${escapeHtml(message || '(none)').replace(/\n/g, '<br>')}</p>
-  `;
+  // Branded like every other Hilom email even though this one goes to the
+  // team rather than a member: it lands in the same inbox as replies from
+  // people who received the outward-facing ones, and a bare unstyled relay
+  // reads as a different system.
+  const htmlBody = renderEmail({
+    preheader: `${fullName} <${email}> — interested in ${interestsText}`,
+    heading: 'New community signup',
+    body:
+      details([
+        { label: 'Name', value: escapeHtml(fullName) },
+        { label: 'Email', value: link(email, `mailto:${email}`) },
+        { label: 'Interested in', value: escapeHtml(interestsText) },
+      ]) +
+      p(`<strong>Message</strong><br>${escapeHtml(message || '(none)').replace(/\n/g, '<br>')}`) +
+      note('Reply to this email to reach them directly.'),
+  });
 
   try {
     await sesClient.send(

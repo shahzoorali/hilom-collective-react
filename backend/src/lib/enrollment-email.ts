@@ -27,19 +27,11 @@
  * part that actually matters. Errors are logged and swallowed.
  */
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { renderEmail, renderText, escapeHtml, p, note, details, button } from './email-layout.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
 const SENDER = 'Hilom Collective <hello@hilomcollective.com>';
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 export interface EnrollmentEmailInput {
   buyerEmail: string;
@@ -67,28 +59,33 @@ export async function sendEnrollmentEmail(input: EnrollmentEmailInput): Promise<
   // sesskey quirk. This email is the only place some buyers ever see that
   // guidance, since not everyone is still on the processing screen when
   // fulfillment lands.
-  const textBody = [
-    `Your course is ready: ${productName}`,
-    '',
+  const textBody = renderText(`Your course is ready: ${productName}`, [
     `Sign in at ${accessUrl} with this email address (${buyerEmail}) to start.`,
-    `On the sign-in page, choose "Hilom Collective". First time signing in may bounce you back`,
-    `once — if that happens, just click "Hilom Collective" again.`,
+    'On the sign-in page, choose "Hilom Collective". The first sign-in may bounce you back',
+    'once — if that happens, just click "Hilom Collective" again.',
     '',
     'This access is permanent — no expiry, no subscription.',
     '',
     "If you didn't expect this email, reply and let us know.",
-  ].join('\n');
+  ]);
 
-  const htmlBody = `
-    <p><strong>Your course is ready:</strong> ${escapeHtml(productName)}</p>
-    <p><a href="${accessUrl}">Start learning</a> — sign in with <strong>${escapeHtml(buyerEmail)}</strong>.</p>
-    <p style="color:#666;font-size:14px;">
-      On the sign-in page, choose <strong>Hilom Collective</strong>. First time signing in may
-      bounce you back once — if that happens, just click <strong>Hilom Collective</strong> again.
-    </p>
-    <p style="color:#666;font-size:14px;">This access is permanent — no expiry, no subscription.</p>
-    <p style="color:#666;font-size:14px;">If you didn't expect this email, reply and let us know.</p>
-  `;
+  const htmlBody = renderEmail({
+    preheader: `${productName} is ready — sign in with ${buyerEmail} to start.`,
+    heading: 'Your course is ready',
+    body:
+      p(`You now have access to <strong>${escapeHtml(productName)}</strong>.`) +
+      details([
+        { label: 'Course', value: escapeHtml(productName) },
+        { label: 'Sign in as', value: escapeHtml(buyerEmail) },
+        { label: 'Access', value: 'Permanent — no expiry, no subscription' },
+      ]) +
+      button('Start learning', accessUrl) +
+      note(
+        'On the sign-in page, choose <strong>Hilom Collective</strong>. The first sign-in may ' +
+          'bounce you back once — if that happens, just click <strong>Hilom Collective</strong> again.',
+      ) +
+      note("If you didn't expect this email, reply and let us know."),
+  });
 
   try {
     await sesClient.send(
