@@ -226,10 +226,14 @@ export default function ServicesTab() {
 
               <label className="field">
                 <span>Type</span>
+                {/* "Package of sessions" is deliberately absent: buying one
+                    charged the full price and produced a single session, so
+                    it is closed at the point of sale until multi-session
+                    scheduling exists. The backend rejects it too — see
+                    SELLABLE_SERVICE_KINDS in facilitator-input.ts. */}
                 <select value={draft.kind} onChange={(e) => set('kind', e.target.value as ServiceKind)}>
                   <option value="standard">Single session</option>
                   <option value="exploratory">Complimentary intro call</option>
-                  <option value="package">Package of sessions</option>
                 </select>
               </label>
 

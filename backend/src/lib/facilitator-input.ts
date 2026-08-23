@@ -49,7 +49,37 @@ function int(value: unknown, field: string, min: number, max: number, fallback?:
 }
 
 const DELIVERY_MODES = new Set(['online', 'in_person', 'both']);
+/**
+ * Every kind the `service_kind` enum knows about. `package` is present here
+ * because the column, the profile page and the payout code all still
+ * understand it — see SELLABLE_SERVICE_KINDS below for why it cannot
+ * currently be sold.
+ */
 const SERVICE_KINDS = new Set(['exploratory', 'standard', 'package']);
+
+/**
+ * What a facilitator may actually put on sale today.
+ *
+ * `package` is deliberately excluded. The kind was fully modelled — validated
+ * `sessions_count`, stored on the service, rendered on the profile as
+ * "· 5 sessions" — but `POST /bookings` never read it: buying a package
+ * charged the whole price and created exactly *one* booking, with no way to
+ * schedule the rest. That is charging for sessions the system cannot deliver,
+ * so the kind is closed at the point of sale rather than left available.
+ *
+ * Enforced here rather than only in the Services editor because a facilitator
+ * holds a valid token and can POST to `/facilitator/services` directly; a
+ * frontend-only gate would not actually close anything.
+ *
+ * To re-open it, the missing half is a purchase that grants N schedulable
+ * credits rather than one booking. The decided shape (2026-08-23): the package
+ * price is split across its N sessions and the facilitator earns each share as
+ * that session is *delivered* — so payout logic keeps working unchanged, and an
+ * abandoned package never pays out for sessions that did not happen. Nothing
+ * needs migrating first: no package service or booking has ever existed in
+ * production.
+ */
+const SELLABLE_SERVICE_KINDS = new Set(['exploratory', 'standard']);
 
 /**
  * A meeting URL is emailed to clients as a link, so the scheme is checked
@@ -161,6 +191,13 @@ export interface ServiceInput {
 export function validateService(body: Record<string, unknown>): ServiceInput {
   const kind = typeof body.kind === 'string' ? body.kind : 'standard';
   if (!SERVICE_KINDS.has(kind)) throw new FacilitatorInputError('Invalid service kind');
+  if (!SELLABLE_SERVICE_KINDS.has(kind)) {
+    // Said plainly rather than as "invalid": the kind is real and is coming
+    // back, and a facilitator who set one up should know why it stopped.
+    throw new FacilitatorInputError(
+      'Multi-session packages are not available yet — sell the sessions individually for now.',
+    );
+  }
 
   const deliveryMode = typeof body.delivery_mode === 'string' ? body.delivery_mode : 'online';
   if (!DELIVERY_MODES.has(deliveryMode)) throw new FacilitatorInputError('Invalid delivery mode');

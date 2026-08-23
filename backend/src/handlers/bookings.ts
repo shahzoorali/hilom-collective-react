@@ -178,6 +178,16 @@ async function create(
   if (!facilitator) return notFound('Facilitator not found');
   if (!service) return notFound('Service not found');
 
+  // Belt and braces with the SELLABLE_SERVICE_KINDS gate in
+  // facilitator-input.ts, which stops a package being created in the first
+  // place. Repeated here because this is the path where money actually
+  // changes hands: booking a package charges the full price and delivers a
+  // single session, so it must not happen even if such a service somehow
+  // exists (a row predating that gate, or one written outside the app).
+  if (service.kind === 'package') {
+    return badRequest('Multi-session packages are not bookable yet.');
+  }
+
   // Clear lapsed holds first: the exclusion constraint cannot tell an expired
   // hold from a live one, so without this an abandoned checkout would block
   // this slot even though the availability endpoint offers it.
