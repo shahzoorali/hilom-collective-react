@@ -146,11 +146,20 @@ img { max-width: 100%; }
 
 /* forms */
 label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; }
-input, select {
+input, select, textarea {
   width: 100%; padding: 0.65rem 0.75rem; font-family: var(--sans); font-size: 0.95rem;
   border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
 }
-input:focus, select:focus { outline: 2px solid var(--forest); outline-offset: 1px; border-color: var(--forest); }
+/* Textareas were missing from the rule above, so every <textarea> on the site
+   fell back to the browser's unstyled default box instead of matching every
+   other field — narrow, no border-radius, sitting beside its label instead of
+   under it, since nothing forced it onto its own line. This is that fix,
+   applied once here rather than per-component, since the same gap was
+   silently present in every form editor and application form across the site. */
+textarea { display: block; resize: vertical; line-height: 1.5; }
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--forest); outline-offset: 1px; border-color: var(--forest);
+}
 .field { margin-bottom: 1rem; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 
