@@ -385,7 +385,14 @@ function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
             {event.note}
           </p>
         ) : null}
-        {event.link_url && event.link_label ? (
+        {/* A ticketed event registers on-site; the outbound link is for
+            listing-only events that send people somewhere else. A past event
+            gets neither — nothing here is still for sale. */}
+        {!past && event.ticketing_enabled ? (
+          <Link className="btn btn-accent" to={`/events/${event.id}/register`}>
+            Register
+          </Link>
+        ) : event.link_url && event.link_label ? (
           <CtaLink value={{ label: event.link_label, href: event.link_url, variant: 'btn-primary' }} />
         ) : null}
       </div>

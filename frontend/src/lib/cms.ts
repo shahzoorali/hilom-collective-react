@@ -58,6 +58,8 @@ export interface CmsEvent {
   link_url: string | null;
   link_label: string | null;
   note: string | null;
+  /** True when the event sells places on-site rather than linking out. */
+  ticketing_enabled?: boolean;
 }
 
 export const getPage = (slug: string) =>

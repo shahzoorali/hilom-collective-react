@@ -4,6 +4,8 @@ import FacilitatorApply from './pages/FacilitatorApply';
 import FacilitatorProfile from './pages/FacilitatorProfile';
 import BookingFlow from './pages/BookingFlow';
 import BookingProcessing from './pages/BookingProcessing';
+import EventRegister from './pages/EventRegister';
+import RegistrationProcessing from './pages/RegistrationProcessing';
 import AccountBookings from './pages/AccountBookings';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
@@ -86,6 +88,10 @@ export default function App() {
                 <Route path="/checkout/processing" element={<Processing />} />
                 <Route path="/checkout/:slug" element={<Checkout />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
+                {/* Literal before the {eventId} route, and both above the
+                    /:slug CMS catch-all so no page can shadow them. */}
+                <Route path="/events/registration/processing" element={<RegistrationProcessing />} />
+                <Route path="/events/:eventId/register" element={<EventRegister />} />
                 {/* Above the /:slug CMS catch-all, and mirrored in
                     RESERVED_SLUGS server-side so no CMS page can shadow them. */}
                 <Route path="/facilitators" element={<Facilitators />} />
