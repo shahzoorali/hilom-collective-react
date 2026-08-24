@@ -28,7 +28,43 @@ import {
   dueNow,
   type EventPlan,
   type TicketingResponse,
+  type TicketedEvent,
 } from '../lib/registrations';
+
+/**
+ * The event's own marketing content — image, subtitle, description, location
+ * and dates — shown identically whether or not someone is signed in.
+ *
+ * Split out because it renders in three places (signed-out, closed/sold-out,
+ * and the registration form itself): whoever lands on this page from the
+ * events listing or a shared link should see what they are registering for
+ * before being asked to sign in, not after.
+ */
+function EventHeader({ event }: { event: TicketedEvent }) {
+  return (
+    <>
+      {event.image_url && (
+        <img
+          src={event.image_url}
+          alt={event.image_alt ?? ''}
+          style={{ width: '100%', borderRadius: 'var(--radius)', marginBottom: 18, aspectRatio: '16/9', objectFit: 'cover' }}
+        />
+      )}
+      <h1 style={{ marginBottom: event.subtitle ? 2 : 4 }}>{event.title}</h1>
+      {event.subtitle && (
+        <p className="muted" style={{ marginTop: 0, fontSize: '1.05em' }}>
+          {event.subtitle}
+        </p>
+      )}
+      <p className="small" style={{ fontWeight: 600, color: 'var(--forest)' }}>
+        {formatEventDates(event.starts_at, event.ends_at)}
+        {event.location && ` · ${event.location}`}
+      </p>
+      {event.description && <div dangerouslySetInnerHTML={{ __html: event.description }} />}
+      {event.venue_details && <p className="muted">{event.venue_details}</p>}
+    </>
+  );
+}
 
 export default function EventRegister() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -95,8 +131,7 @@ export default function EventRegister() {
     return (
       <section className="section">
         <div className="container" style={{ maxWidth: 560 }}>
-          <h1>{event.title}</h1>
-          <p className="muted">{formatEventDates(event.starts_at, event.ends_at)}</p>
+          <EventHeader event={event} />
           <div className="panel">
             <p style={{ marginTop: 0 }}>
               Sign in to reserve your place. You will need an account to manage your payments later.
@@ -118,7 +153,7 @@ export default function EventRegister() {
     return (
       <section className="section">
         <div className="container" style={{ maxWidth: 640 }}>
-          <h1>{event.title}</h1>
+          <EventHeader event={event} />
           <div className="panel">
             <p style={{ margin: 0 }}>
               Registration for this event is closed. Write to us at{' '}
@@ -160,11 +195,7 @@ export default function EventRegister() {
   return (
     <section className="section">
       <div className="container" style={{ maxWidth: 720 }}>
-        <h1 style={{ marginBottom: 4 }}>{event.title}</h1>
-        <p className="muted" style={{ marginTop: 0 }}>
-          {formatEventDates(event.starts_at, event.ends_at)}
-          {event.location && ` · ${event.location}`}
-        </p>
+        <EventHeader event={event} />
 
         {soldOut ? (
           <div className="panel">
@@ -181,8 +212,6 @@ export default function EventRegister() {
             </span>
           </p>
         )}
-
-        {event.venue_details && <p>{event.venue_details}</p>}
 
         {!soldOut && (
           <form className="panel" onSubmit={(e) => void onSubmit(e)} style={{ display: 'grid', gap: 18 }}>
