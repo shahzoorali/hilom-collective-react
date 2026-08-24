@@ -379,8 +379,13 @@ export class HilomBackendStack extends cdk.Stack {
     // handler file that serves GET /events.
     const eventRegistrations = makeFn('EventRegistrationsFn', 'handlers/event-registrations.ts', 'handler');
     const eventsTicketing = makeFn('EventsTicketingFn', 'handlers/events.ts', 'ticketing');
+    // Admin side of the same tables: roster, money, offline payments,
+    // cancellations and the audit trail.
+    const adminRegistrations = makeFn('AdminRegistrationsFn', 'handlers/admin-registrations.ts', 'handler');
     supabaseSecret.grantRead(eventRegistrations);
     supabaseSecret.grantRead(eventsTicketing);
+    supabaseSecret.grantRead(adminRegistrations);
+    adminKeySecret.grantRead(adminRegistrations);
 
     // Not behind API Gateway — invoked on a schedule (below), not by a
     // request. Publishes posts/pages whose scheduled_at has arrived.
@@ -557,7 +562,7 @@ export class HilomBackendStack extends cdk.Stack {
     // failure mode if it were left out is exactly the one this comment warns
     // about: reminders would fail with AccessDenied on a schedule, where
     // nobody is watching a response code.
-    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep, eventRegistrations]) {
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep, eventRegistrations, adminRegistrations]) {
       fn.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ['ses:SendEmail'],
@@ -784,6 +789,19 @@ export class HilomBackendStack extends cdk.Stack {
     ]);
     cmsRoutes(eventsPublic, 'EventsPublicInt', [['/events', [GET]]]);
     cmsRoutes(eventsTicketing, 'EventsTicketingInt', [['/events/{eventId}/ticketing', [GET]]]);
+    cmsRoutes(adminRegistrations, 'AdminRegistrationsInt', [
+      // Literal suffixes before the bare {registrationId} route.
+      ['/admin/events/{eventId}/roster', [GET]],
+      ['/admin/events/{eventId}/roster.csv', [GET]],
+      ['/admin/audit-log', [GET]],
+      ['/admin/registrations', [GET]],
+      ['/admin/registrations/{registrationId}/cancel', [POST]],
+      ['/admin/registrations/{registrationId}/nudge', [POST]],
+      ['/admin/registrations/{registrationId}/charges/{chargeId}/mark-paid', [POST]],
+      ['/admin/registrations/{registrationId}/charges/{chargeId}/waive', [POST]],
+      ['/admin/registrations/{registrationId}/charges/{chargeId}/void', [POST]],
+      ['/admin/registrations/{registrationId}', [GET]],
+    ]);
     cmsRoutes(eventRegistrations, 'EventRegistrationsInt', [
       ['/events/{eventId}/register', [POST]],
       ['/me/registrations', [GET]],

@@ -1,0 +1,739 @@
+/**
+ * Admin operations on event registrations.
+ *
+ *   GET  /admin/events/{eventId}/roster
+ *   GET  /admin/events/{eventId}/roster.csv
+ *   GET  /admin/registrations                     ?flagged=1 ?eventId= ?status=
+ *   GET  /admin/registrations/{registrationId}
+ *   POST /admin/registrations/{registrationId}/cancel
+ *   POST /admin/registrations/{registrationId}/nudge
+ *   POST /admin/registrations/{registrationId}/charges/{chargeId}/mark-paid
+ *   POST /admin/registrations/{registrationId}/charges/{chargeId}/waive
+ *   POST /admin/registrations/{registrationId}/charges/{chargeId}/void
+ *   GET  /admin/audit-log
+ *
+ * Authorized with the shared admin key (`isAuthorizedAdmin`), matching every
+ * other admin surface here. Consequence worth stating: the key identifies an
+ * office, not a person, so the audit trail records an *attestation* — see
+ * lib/audit.ts.
+ *
+ * **Marking a payment received offline goes through applyChargePayment**, the
+ * same function the webhook calls, rather than writing `status: 'paid'` here.
+ * That is what makes a bank transfer produce the same seat confirmation, the
+ * same receipt number and the same emails as a QR Ph payment. Two paths to
+ * "this is paid" would eventually disagree about one of the three.
+ */
+import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getSupabase } from '../lib/supabase.js';
+import { ok, notFound, badRequest, unauthorized, serverError, json, isAuthorizedAdmin } from '../lib/http.js';
+import { actorFromEvent, recordAudit, type AuditActor } from '../lib/audit.js';
+import { applyChargePayment } from '../lib/registration-fulfillment.js';
+import { sendRegistrationCancelled, sendPaymentNudge } from '../lib/registration-email.js';
+import {
+  isOutstanding,
+  outstandingCentavos,
+  paidCentavos,
+  nextDueCharge,
+  type ChargeStatus,
+} from '../lib/event-ticketing.js';
+
+const conflict = (message: string) => json(409, { error: message });
+
+const REGISTRATION_COLUMNS =
+  'id, event_id, plan_id, status, seat_no, buyer_email, buyer_cognito_sub, registrant_name, ' +
+  'registrant_email, registrant_phone, registrant_details, transferred_at, plan_name, plan_kind, ' +
+  'total_centavos, currency, price_override_centavos, price_override_reason, hold_expires_at, ' +
+  'confirmed_at, flagged_at, flag_reason, cancellation_requested_at, cancellation_reason, ' +
+  'cancellation_decided_at, cancellation_decision, cancelled_at, cancelled_by, refund_centavos, ' +
+  'refunded_at, refund_reference, admin_notes, created_at, updated_at';
+
+const CHARGE_COLUMNS =
+  'id, registration_id, seq, label, is_deposit, amount_centavos, currency, due_at, status, paid_at, ' +
+  'paid_method, paid_reference, receipt_no, flagged_at, voided_at, void_reason, paymongo_payment_id';
+
+/** Statuses that hold, or have held, a place. */
+const LIVE = ['pending_payment', 'confirmed'];
+
+interface RegistrationRow extends Record<string, unknown> {
+  id: string;
+  event_id: string;
+  status: string;
+  seat_no: number;
+  buyer_email: string;
+  registrant_name: string;
+  plan_kind: 'full' | 'installment';
+  total_centavos: number;
+  currency: string;
+}
+
+interface ChargeRow extends Record<string, unknown> {
+  id: string;
+  registration_id: string;
+  seq: number;
+  label: string;
+  is_deposit: boolean;
+  amount_centavos: number;
+  currency: string;
+  due_at: string;
+  status: ChargeStatus;
+}
+
+interface EventRow extends Record<string, unknown> {
+  id: string;
+  title: string;
+  capacity: number | null;
+  currency: string;
+  starts_at: string;
+}
+
+export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  if (!(await isAuthorizedAdmin(event.headers))) return unauthorized();
+
+  const method = event.requestContext.http.method;
+  const path = event.requestContext.http.path;
+  const actor = actorFromEvent(event);
+
+  const eventId = event.pathParameters?.eventId;
+  const registrationId = event.pathParameters?.registrationId;
+  const chargeId = event.pathParameters?.chargeId;
+
+  try {
+    // Every branch awaited, never bare-returned: a returned pending promise
+    // escapes this try before rejecting and becomes an uncaught Lambda
+    // rejection instead of a 400.
+    if (eventId && method === 'GET' && path.endsWith('/roster.csv')) {
+      return await rosterCsv(eventId, actor);
+    }
+    if (eventId && method === 'GET' && path.endsWith('/roster')) {
+      return await roster(eventId);
+    }
+    if (method === 'GET' && path.endsWith('/admin/audit-log')) {
+      return await auditLog(event.queryStringParameters ?? {});
+    }
+
+    if (registrationId && chargeId && method === 'POST') {
+      const body = parseBody(event);
+      if (path.endsWith('/mark-paid')) return await markPaid(registrationId, chargeId, body, actor);
+      if (path.endsWith('/waive')) return await settleWithout(registrationId, chargeId, body, actor, 'waived');
+      if (path.endsWith('/void')) return await settleWithout(registrationId, chargeId, body, actor, 'void');
+      return badRequest(`Unsupported action ${path}`);
+    }
+
+    if (registrationId && method === 'POST') {
+      const body = parseBody(event);
+      if (path.endsWith('/cancel')) return await cancel(registrationId, body, actor);
+      if (path.endsWith('/nudge')) return await nudge(registrationId, body, actor);
+      return badRequest(`Unsupported action ${path}`);
+    }
+
+    if (registrationId && method === 'GET') {
+      return await registrationDetail(registrationId);
+    }
+    if (method === 'GET' && path.endsWith('/admin/registrations')) {
+      return await queue(event.queryStringParameters ?? {});
+    }
+
+    return badRequest(`Unsupported route ${method} ${path}`);
+  } catch (err) {
+    return serverError('adminRegistrations', err);
+  }
+}
+
+function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(event.body ?? '{}');
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+// ---------------------------------------------------------------------------
+
+/** Charges keyed by registration, for a set of registrations. */
+async function chargesFor(
+  supabase: SupabaseClient,
+  registrationIds: string[],
+): Promise<Map<string, ChargeRow[]>> {
+  const byRegistration = new Map<string, ChargeRow[]>();
+  if (registrationIds.length === 0) return byRegistration;
+
+  const { data, error } = await supabase
+    .from('registration_charges')
+    .select(CHARGE_COLUMNS)
+    .in('registration_id', registrationIds)
+    .order('seq', { ascending: true })
+    .returns<ChargeRow[]>();
+  if (error) throw error;
+
+  for (const charge of data ?? []) {
+    byRegistration.set(charge.registration_id, [...(byRegistration.get(charge.registration_id) ?? []), charge]);
+  }
+  return byRegistration;
+}
+
+/** The derived figures every admin view shows, computed from the ledger. */
+function decorate(registration: RegistrationRow, charges: ChargeRow[], now: Date): Record<string, unknown> {
+  const overdue = charges.filter((c) => isOutstanding(c.status) && Date.parse(c.due_at) < now.getTime());
+  return {
+    ...registration,
+    charges,
+    paidCentavos: paidCentavos(charges),
+    outstandingCentavos: outstandingCentavos(charges),
+    overdueCentavos: overdue.reduce((acc, c) => acc + c.amount_centavos, 0),
+    overdueCount: overdue.length,
+    nextDue: nextDueCharge(charges),
+  };
+}
+
+/**
+ * One event's roster and its money, in a single response.
+ *
+ * Deliberately one call rather than a roster endpoint plus a totals endpoint:
+ * the totals are a sum over exactly the rows already being returned, and two
+ * endpoints would mean two round trips that can disagree with each other by a
+ * payment that landed in between.
+ */
+async function roster(eventId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const now = new Date();
+
+  const { data: eventRow, error: eventError } = await supabase
+    .from('events')
+    .select('id, title, capacity, currency, starts_at')
+    .eq('id', eventId)
+    .maybeSingle<EventRow>();
+  if (eventError) throw eventError;
+  if (!eventRow) return notFound('Event not found');
+
+  const { data: registrations, error } = await supabase
+    .from('event_registrations')
+    .select(REGISTRATION_COLUMNS)
+    .eq('event_id', eventId)
+    .order('seat_no', { ascending: true })
+    .returns<RegistrationRow[]>();
+  if (error) throw error;
+
+  const rows = registrations ?? [];
+  const byRegistration = await chargesFor(supabase, rows.map((r) => r.id));
+  const decorated = rows.map((r) => decorate(r, byRegistration.get(r.id) ?? [], now));
+
+  // Money is counted over live registrations only. A cancelled place's paid
+  // charges are real money that was received, but counting them in "collected"
+  // for an event would overstate what the event actually earned — they belong
+  // to the refund conversation, which is why they surface separately.
+  const live = decorated.filter((r) => LIVE.includes(String(r.status)));
+  const cancelled = decorated.filter((r) => r.status === 'cancelled');
+
+  const sum = (list: Record<string, unknown>[], key: string) =>
+    list.reduce((acc, r) => acc + Number(r[key] ?? 0), 0);
+
+  const taken = live.length;
+  const capacity = eventRow.capacity ?? 0;
+
+  return ok({
+    event: eventRow,
+    registrations: decorated,
+    money: {
+      currency: eventRow.currency,
+      capacity,
+      placesTaken: taken,
+      placesFree: Math.max(0, capacity - taken),
+      collectedCentavos: sum(live, 'paidCentavos'),
+      outstandingCentavos: sum(live, 'outstandingCentavos'),
+      overdueCentavos: sum(live, 'overdueCentavos'),
+      // Expected total if every live registration pays in full.
+      expectedCentavos: sum(live, 'paidCentavos') + sum(live, 'outstandingCentavos'),
+      cancelledPaidCentavos: sum(cancelled, 'paidCentavos'),
+      refundsOwedCentavos: decorated
+        .filter((r) => Number(r.refund_centavos ?? 0) > 0 && !r.refunded_at)
+        .reduce((acc, r) => acc + Number(r.refund_centavos ?? 0), 0),
+    },
+  });
+}
+
+/**
+ * The cross-event attention queue.
+ *
+ * Defaults to everything needing a human: a flagged registration, an overdue
+ * payment, or a cancellation someone asked for and nobody has answered. That
+ * default is the whole point of the screen — a list of every registration ever
+ * is a report, not a queue.
+ */
+async function queue(query: Record<string, string | undefined>): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const now = new Date();
+
+  let builder = supabase.from('event_registrations').select(REGISTRATION_COLUMNS);
+
+  if (query.eventId) builder = builder.eq('event_id', query.eventId);
+  if (query.status) builder = builder.eq('status', query.status);
+
+  const { data, error } = await builder
+    .order('created_at', { ascending: false })
+    .limit(500)
+    .returns<RegistrationRow[]>();
+  if (error) throw error;
+
+  const rows = data ?? [];
+  const byRegistration = await chargesFor(supabase, rows.map((r) => r.id));
+  let decorated = rows.map((r) => decorate(r, byRegistration.get(r.id) ?? [], now));
+
+  if (query.flagged === '1') {
+    decorated = decorated.filter(
+      (r) =>
+        r.flagged_at !== null ||
+        Number(r.overdueCount ?? 0) > 0 ||
+        (r.cancellation_requested_at !== null && r.cancellation_decided_at === null),
+    );
+  }
+
+  return ok({ registrations: decorated });
+}
+
+async function registrationDetail(registrationId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const now = new Date();
+
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select(`${REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location)`)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow>();
+  if (error) throw error;
+  if (!data) return notFound('Registration not found');
+
+  const byRegistration = await chargesFor(supabase, [registrationId]);
+
+  // The trail for this registration, so a money question is answerable without
+  // leaving the row it is about.
+  const { data: audit } = await supabase
+    .from('admin_audit_log')
+    .select('id, actor_source, actor_label, source_ip, action, amount_centavos, currency, note, before, after, created_at')
+    .eq('target_id', registrationId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  return ok({
+    registration: decorate(data, byRegistration.get(registrationId) ?? [], now),
+    audit: audit ?? [],
+  });
+}
+
+/**
+ * The roster as CSV, for the venue.
+ *
+ * Builds its own response object because `json()` in http.ts hard-codes
+ * `Content-Type: application/json` — do not "tidy" this back into ok().
+ *
+ * The export is audited: this file carries dietary requirements, medical notes
+ * and emergency contacts, and a record that it left the system is the only
+ * trace that a PII export happened at all.
+ */
+async function rosterCsv(eventId: string, actor: AuditActor): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const now = new Date();
+
+  const { data: eventRow } = await supabase
+    .from('events')
+    .select('id, title, capacity, currency, starts_at')
+    .eq('id', eventId)
+    .maybeSingle<EventRow>();
+  if (!eventRow) return notFound('Event not found');
+
+  const { data: registrations, error } = await supabase
+    .from('event_registrations')
+    .select(REGISTRATION_COLUMNS)
+    .eq('event_id', eventId)
+    .in('status', LIVE)
+    .order('seat_no', { ascending: true })
+    .returns<RegistrationRow[]>();
+  if (error) throw error;
+
+  const rows = registrations ?? [];
+  const byRegistration = await chargesFor(supabase, rows.map((r) => r.id));
+
+  const detailKeys = [
+    ...new Set(rows.flatMap((r) => Object.keys((r.registrant_details ?? {}) as Record<string, string>))),
+  ].sort();
+
+  const header = [
+    'Seat', 'Name', 'Email', 'Phone', 'Status', 'Plan', 'Paid', 'Outstanding',
+    ...detailKeys.map((k) => k.replace(/_/g, ' ')),
+  ];
+
+  const lines = [header.map(csvCell).join(',')];
+  for (const r of rows) {
+    const charges = byRegistration.get(r.id) ?? [];
+    const details = (r.registrant_details ?? {}) as Record<string, string>;
+    lines.push(
+      [
+        r.seat_no,
+        r.registrant_name,
+        r.registrant_email,
+        r.registrant_phone ?? '',
+        r.status,
+        r.plan_name,
+        (paidCentavos(charges) / 100).toFixed(2),
+        (outstandingCentavos(charges) / 100).toFixed(2),
+        ...detailKeys.map((k) => details[k] ?? ''),
+      ].map(csvCell).join(','),
+    );
+  }
+
+  await recordAudit(actor, {
+    action: 'event.roster_exported',
+    targetTable: 'events',
+    targetId: eventId,
+    eventId,
+    note: `${rows.length} attendee${rows.length === 1 ? '' : 's'}, including ${detailKeys.length} personal-detail column${detailKeys.length === 1 ? '' : 's'}`,
+  });
+
+  const slug = String(eventRow.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const stamp = now.toISOString().slice(0, 10);
+
+  return {
+    statusCode: 200,
+    headers: {
+      'Access-Control-Allow-Origin': process.env.CORS_ORIGIN ?? '*',
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${slug}-roster-${stamp}.csv"`,
+    },
+    // A leading BOM so Excel opens UTF-8 correctly — without it a name with a
+    // ñ in it arrives mangled, which is not a detail to get wrong on a list of
+    // people's names.
+    body: `﻿${lines.join('\r\n')}`,
+  };
+}
+
+/** RFC 4180 quoting: double the quotes, wrap anything with a separator in them. */
+function csvCell(value: unknown): string {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+// ---------------------------------------------------------------------------
+// Writing
+// ---------------------------------------------------------------------------
+
+/** Loads a registration and one of its charges, or the 404 to return. */
+async function loadCharge(
+  supabase: SupabaseClient,
+  registrationId: string,
+  chargeId: string,
+): Promise<{ registration: RegistrationRow; charge: ChargeRow } | null> {
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(REGISTRATION_COLUMNS)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow>();
+  if (error) throw error;
+  if (!registration) return null;
+
+  const { data: charge, error: chargeError } = await supabase
+    .from('registration_charges')
+    .select(CHARGE_COLUMNS)
+    // Scoped to the registration in the path, so a charge id from a different
+    // registration cannot be acted on by guessing the pair.
+    .eq('registration_id', registrationId)
+    .eq('id', chargeId)
+    .maybeSingle<ChargeRow>();
+  if (chargeError) throw chargeError;
+  if (!charge) return null;
+
+  return { registration, charge };
+}
+
+/**
+ * Records a payment that arrived outside PayMongo — a bank transfer, GCash, or
+ * cash on the day.
+ *
+ * Routed through applyChargePayment rather than writing the row here, so the
+ * registrant gets the same receipt and the same confirmation they would have
+ * had online, and the deposit still confirms the place.
+ */
+async function markPaid(
+  registrationId: string,
+  chargeId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const method = String(body.method ?? '').trim().slice(0, 40);
+  const reference = String(body.reference ?? '').trim().slice(0, 200);
+  if (!method) return badRequest('How was it paid? (bank transfer, GCash, cash…)');
+  if (!reference) {
+    // Insisted on, not optional: an offline payment with no reference cannot be
+    // matched against a bank statement later, which is the entire reason for
+    // recording it here rather than in someone's inbox.
+    return badRequest('A reference is required — the bank reference, receipt number, or similar.');
+  }
+
+  const paidAtRaw = body.paidAt ? new Date(String(body.paidAt)) : null;
+  if (paidAtRaw && Number.isNaN(paidAtRaw.getTime())) return badRequest('That payment date is not valid.');
+
+  const loaded = await loadCharge(supabase, registrationId, chargeId);
+  if (!loaded) return notFound('Registration or payment not found');
+  const { charge } = loaded;
+
+  if (charge.status === 'paid') return conflict('That payment is already recorded as paid.');
+  if (!isOutstanding(charge.status)) return conflict('That payment is no longer due.');
+
+  const result = await applyChargePayment(chargeId, undefined, {
+    method,
+    reference,
+    ...(paidAtRaw ? { paidAt: paidAtRaw.toISOString() } : {}),
+  });
+
+  await recordAudit(actor, {
+    action: 'charge.mark_paid_offline',
+    targetTable: 'registration_charges',
+    targetId: registrationId,
+    eventId: loaded.registration.event_id,
+    amountCentavos: charge.amount_centavos,
+    currency: charge.currency,
+    before: { status: charge.status },
+    after: { status: 'paid', method, reference },
+    note: `${charge.label} received by ${method}`,
+  });
+
+  return ok({ chargeId, status: result.status, registrationConfirmed: result.registrationConfirmed });
+}
+
+/**
+ * Settles a charge without money: forgiven, or cancelled as a duplicate.
+ *
+ * One function for both because the mechanics are identical and only the word
+ * differs — and the word matters, which is why they stay separate values in
+ * the enum. A waiver is money the business chose not to collect; a void is a
+ * charge that should not have existed. Reporting them as one number would hide
+ * the first inside the second.
+ */
+async function settleWithout(
+  registrationId: string,
+  chargeId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+  outcome: 'waived' | 'void',
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const reason = String(body.reason ?? '').trim().slice(0, 500);
+  if (!reason) return badRequest('Why? A short reason is recorded against this.');
+
+  const loaded = await loadCharge(supabase, registrationId, chargeId);
+  if (!loaded) return notFound('Registration or payment not found');
+  const { charge } = loaded;
+
+  if (charge.status === 'paid') return conflict('That payment has already been made.');
+  if (!isOutstanding(charge.status)) return conflict('That payment is no longer due.');
+
+  const { data: claimed, error } = await supabase
+    .from('registration_charges')
+    .update({
+      status: outcome,
+      voided_at: new Date().toISOString(),
+      void_reason: reason,
+      flagged_at: null,
+    })
+    .eq('id', chargeId)
+    // Compare-and-set: a payment that landed between the read above and this
+    // write must win, not be overwritten by a waiver.
+    .in('status', ['scheduled', 'awaiting_payment'])
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (error) throw error;
+  if (!claimed) return conflict('That payment changed while you were working — reload and try again.');
+
+  await recordAudit(actor, {
+    action: outcome === 'waived' ? 'charge.waive' : 'charge.void',
+    targetTable: 'registration_charges',
+    targetId: registrationId,
+    eventId: loaded.registration.event_id,
+    // A waiver is money forgiven and belongs in the money view; a void is a
+    // correction to a charge that should not have been there, and counting it
+    // as forgiven revenue would be wrong.
+    ...(outcome === 'waived'
+      ? { amountCentavos: charge.amount_centavos, currency: charge.currency }
+      : {}),
+    before: { status: charge.status },
+    after: { status: outcome },
+    note: `${charge.label}: ${reason}`,
+  });
+
+  return ok({ chargeId, status: outcome });
+}
+
+/**
+ * Cancels a place and frees the seat.
+ *
+ * The refund is *recorded*, never executed — consistent with the standing
+ * "manual revoke, no automation" rule and with how booking refunds work. Note
+ * that the retreat product has no refund policy at all, so nothing computes
+ * this number: a non-zero value means a human decided on an exception.
+ */
+async function cancel(
+  registrationId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const reason = String(body.reason ?? '').trim().slice(0, 500);
+  const refundRaw = body.refundCentavos;
+  const refundCentavos =
+    refundRaw === undefined || refundRaw === null || refundRaw === '' ? null : Number(refundRaw);
+  if (refundCentavos !== null && (!Number.isInteger(refundCentavos) || refundCentavos < 0)) {
+    return badRequest('A refund must be a whole number of centavos, or left blank.');
+  }
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(`${REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, venue_details, format)`)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow & { events: Record<string, unknown> | null }>();
+  if (error) throw error;
+  if (!registration) return notFound('Registration not found');
+  if (registration.status === 'cancelled') return conflict('That registration is already cancelled.');
+
+  const now = new Date().toISOString();
+
+  const { data: claimed, error: updateError } = await supabase
+    .from('event_registrations')
+    .update({
+      status: 'cancelled',
+      cancelled_at: now,
+      cancelled_by: 'admin',
+      cancellation_reason: reason || null,
+      cancellation_decided_at: registration.cancellation_requested_at ? now : null,
+      cancellation_decision: registration.cancellation_requested_at ? 'approved' : null,
+      refund_centavos: refundCentavos,
+      hold_expires_at: null,
+      flagged_at: null,
+      flag_reason: null,
+    })
+    .eq('id', registrationId)
+    .neq('status', 'cancelled')
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (updateError) throw updateError;
+  if (!claimed) return conflict('That registration changed while you were working — reload and try again.');
+
+  // Nothing further is owed on a place nobody holds. Paid charges are left
+  // exactly as they are: that money was received, and erasing the record of it
+  // is not the same as returning it.
+  await supabase
+    .from('registration_charges')
+    .update({ status: 'void', voided_at: now, void_reason: 'registration cancelled', flagged_at: null })
+    .eq('registration_id', registrationId)
+    .in('status', ['scheduled', 'awaiting_payment']);
+
+  const charges = (await chargesFor(supabase, [registrationId])).get(registrationId) ?? [];
+
+  await recordAudit(actor, {
+    action: 'registration.cancel',
+    targetTable: 'event_registrations',
+    targetId: registrationId,
+    eventId: registration.event_id,
+    ...(refundCentavos ? { amountCentavos: refundCentavos, currency: registration.currency } : {}),
+    before: { status: registration.status, seat_no: registration.seat_no },
+    after: { status: 'cancelled', refund_centavos: refundCentavos },
+    note: reason || null,
+  });
+
+  const ev = registration.events;
+  if (ev) {
+    await sendRegistrationCancelled({
+      registrationId,
+      buyerEmail: registration.buyer_email,
+      registrantName: registration.registrant_name,
+      event: ev as never,
+      registration: registration as never,
+      charges: charges as never,
+      refundCentavos,
+      reason: reason || null,
+    });
+  }
+
+  return ok({ registrationId, status: 'cancelled', seatFreed: registration.seat_no });
+}
+
+/**
+ * Emails a registrant about an outstanding payment.
+ *
+ * Carries no PayMongo link on purpose — see sendPaymentNudge. This is the
+ * "have you seen this?" that comes before any harder conversation, and it is
+ * audited without an amount because nothing moved.
+ */
+async function nudge(
+  registrationId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(`${REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, venue_details, format)`)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow & { events: Record<string, unknown> | null }>();
+  if (error) throw error;
+  if (!registration) return notFound('Registration not found');
+  if (registration.status === 'cancelled') return conflict('That registration is cancelled.');
+
+  const charges = (await chargesFor(supabase, [registrationId])).get(registrationId) ?? [];
+  if (outstandingCentavos(charges) === 0) return conflict('There is nothing outstanding to chase.');
+  if (!registration.events) return conflict('That event is missing.');
+
+  const note = String(body.note ?? '').trim().slice(0, 500) || null;
+
+  await sendPaymentNudge({
+    registrationId,
+    buyerEmail: registration.buyer_email,
+    registrantName: registration.registrant_name,
+    event: registration.events as never,
+    registration: registration as never,
+    charges: charges as never,
+    note,
+  });
+
+  await recordAudit(actor, {
+    action: 'registration.nudged',
+    targetTable: 'event_registrations',
+    targetId: registrationId,
+    eventId: registration.event_id,
+    note: note ?? 'payment reminder sent',
+  });
+
+  return ok({ registrationId, sent: true });
+}
+
+// ---------------------------------------------------------------------------
+
+async function auditLog(query: Record<string, string | undefined>): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  let builder = supabase
+    .from('admin_audit_log')
+    .select(
+      'id, actor_source, actor_label, actor_sub, source_ip, action, target_table, target_id, ' +
+        'event_id, amount_centavos, currency, before, after, note, created_at',
+    );
+
+  if (query.eventId) builder = builder.eq('event_id', query.eventId);
+  if (query.targetId) builder = builder.eq('target_id', query.targetId);
+  // The money view: everything that moved a number, which is the subset anyone
+  // reconciling actually wants.
+  if (query.money === '1') builder = builder.not('amount_centavos', 'is', null);
+
+  const limit = Math.min(500, Math.max(1, Number(query.limit ?? 100) || 100));
+
+  const { data, error } = await builder.order('created_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+
+  return ok({ entries: data ?? [] });
+}

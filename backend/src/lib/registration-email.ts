@@ -331,3 +331,108 @@ export async function sendFullySettled(ctx: RegistrationEmailContext): Promise<v
     renderEmail({ preheader: `${event.title} is paid in full.`, heading, body }),
   );
 }
+
+/**
+ * A nudge toward an outstanding payment, sent by an admin.
+ *
+ * Deliberately does not carry a PayMongo link. A hosted session expires, and a
+ * dead checkout link in an email is worse than no link — it reads as "the
+ * system is broken" rather than "click through and pay". This points at the
+ * registration page, where the buyer mints a fresh session at the moment they
+ * actually want to pay.
+ */
+export async function sendPaymentNudge(
+  ctx: RegistrationEmailContext & { note?: string | null },
+): Promise<void> {
+  const { event, registration, charges } = ctx;
+  const currency = registration.currency;
+  const owing = outstandingTotal(charges);
+  const next = nextDue(charges);
+
+  const heading = `A payment for ${event.title}`;
+
+  const body =
+    p(`Hello ${escapeHtml(ctx.registrantName)},`) +
+    p(
+      next
+        ? `This is a reminder about your ${escapeHtml(next.label.toLowerCase())} of ` +
+          `${escapeHtml(peso(next.amount_centavos, currency))} for ${escapeHtml(event.title)}, due ` +
+          `${escapeHtml(dueDay(next.due_at))}.`
+        : `This is a reminder about the ${escapeHtml(peso(owing, currency))} outstanding on your place at ` +
+          `${escapeHtml(event.title)}.`,
+    ) +
+    (ctx.note ? p(escapeHtml(ctx.note)) : '') +
+    scheduleBlock(charges, currency) +
+    button('Pay now', registrationUrl(ctx.registrationId)) +
+    note('Your place is not at risk — if anything about the timing is difficult, just reply to this email.');
+
+  await send(
+    ctx.buyerEmail,
+    `A payment for ${event.title}`,
+    renderText(heading, [
+      next
+        ? `Your ${next.label.toLowerCase()} of ${peso(next.amount_centavos, currency)} is due ${dueDay(next.due_at)}.`
+        : `${peso(owing, currency)} is outstanding on your place at ${event.title}.`,
+      ...(ctx.note ? ['', ctx.note] : []),
+      '',
+      registrationUrl(ctx.registrationId),
+      '',
+      'Your place is not at risk — reply to this email if the timing is difficult.',
+    ]),
+    renderEmail({ preheader: `${peso(owing, currency)} outstanding`, heading, body }),
+  );
+}
+
+/**
+ * Confirms that a place has been cancelled.
+ *
+ * States the refund position explicitly, including when it is nothing, because
+ * the alternative is someone waiting for money that was never coming. Refunds
+ * are recorded here and moved by a human, so the wording promises a person
+ * rather than a timeline the system cannot keep.
+ */
+export async function sendRegistrationCancelled(
+  ctx: RegistrationEmailContext & { refundCentavos: number | null; reason?: string | null },
+): Promise<void> {
+  const { event, registration, charges, refundCentavos } = ctx;
+  const currency = registration.currency;
+  const paid = charges
+    .filter((c) => c.status === 'paid')
+    .reduce((acc, c) => acc + c.amount_centavos, 0);
+
+  const heading = `Your place at ${event.title} has been cancelled`;
+
+  const body =
+    p(`Hello ${escapeHtml(ctx.registrantName)},`) +
+    p(`Your place at ${escapeHtml(event.title)} has been cancelled and is no longer held.`) +
+    (ctx.reason ? p(escapeHtml(ctx.reason)) : '') +
+    details([
+      { label: 'Event', value: escapeHtml(event.title) },
+      { label: 'Total paid', value: escapeHtml(peso(paid, currency)) },
+      {
+        label: 'Refund',
+        value:
+          refundCentavos && refundCentavos > 0
+            ? escapeHtml(peso(refundCentavos, currency))
+            : 'None',
+      },
+    ]) +
+    (refundCentavos && refundCentavos > 0
+      ? p('Someone will be in touch to arrange the transfer.')
+      : '') +
+    note('If any of this looks wrong, reply to this email and a person will pick it up.');
+
+  await send(
+    ctx.buyerEmail,
+    `Your place at ${event.title} has been cancelled`,
+    renderText(heading, [
+      `Your place at ${event.title} has been cancelled.`,
+      ...(ctx.reason ? ['', ctx.reason] : []),
+      '',
+      `Total paid: ${peso(paid, currency)}`,
+      `Refund: ${refundCentavos && refundCentavos > 0 ? peso(refundCentavos, currency) : 'None'}`,
+      ...(refundCentavos && refundCentavos > 0 ? ['', 'Someone will be in touch to arrange the transfer.'] : []),
+    ]),
+    renderEmail({ preheader: `Your place at ${event.title} has been cancelled.`, heading, body }),
+  );
+}

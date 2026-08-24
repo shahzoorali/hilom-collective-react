@@ -11,6 +11,7 @@ import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
 import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
+import RegistrationsTab from './admin/RegistrationsTab';
 import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
 import { MediaGrid } from './admin/MediaLibrary';
@@ -27,6 +28,7 @@ const TABS = [
   { label: 'Commerce', path: 'commerce', icon: '💳' },
   { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
   { label: 'Bookings', path: 'bookings', icon: '🗓️' },
+  { label: 'Registrations', path: 'registrations', icon: '🎟️' },
   { label: 'Payouts', path: 'payouts', icon: '🏦' },
 ] as const;
 
@@ -264,6 +266,7 @@ export default function Admin() {
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
           <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
+            <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>

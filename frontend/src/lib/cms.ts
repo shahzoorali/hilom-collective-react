@@ -664,3 +664,164 @@ export const adminUpdateCategory = (adminKey: string, categoryId: string, body: 
 
 export const adminDeleteCategory = (adminKey: string, categoryId: string) =>
   apiFetch<{ deleted: boolean }>(`/admin/categories/${categoryId}`, adminInit(adminKey, 'DELETE'));
+
+// --- event registrations (admin) ---
+
+export type AdminChargeStatus =
+  | 'scheduled'
+  | 'awaiting_payment'
+  | 'paid'
+  | 'waived'
+  | 'void'
+  | 'refunded';
+
+export interface AdminCharge {
+  id: string;
+  registration_id: string;
+  seq: number;
+  label: string;
+  is_deposit: boolean;
+  amount_centavos: number;
+  currency: string;
+  due_at: string;
+  status: AdminChargeStatus;
+  paid_at: string | null;
+  paid_method: string | null;
+  paid_reference: string | null;
+  receipt_no: string | null;
+  flagged_at: string | null;
+  void_reason: string | null;
+  paymongo_payment_id: string | null;
+}
+
+export interface AdminRegistration {
+  id: string;
+  event_id: string;
+  status: 'pending_payment' | 'confirmed' | 'expired' | 'cancelled' | 'completed';
+  seat_no: number;
+  buyer_email: string;
+  registrant_name: string;
+  registrant_email: string;
+  registrant_phone: string | null;
+  registrant_details: Record<string, string>;
+  plan_name: string;
+  plan_kind: 'full' | 'installment';
+  total_centavos: number;
+  currency: string;
+  confirmed_at: string | null;
+  flagged_at: string | null;
+  flag_reason: string | null;
+  cancellation_requested_at: string | null;
+  cancellation_reason: string | null;
+  cancellation_decided_at: string | null;
+  cancelled_at: string | null;
+  refund_centavos: number | null;
+  refunded_at: string | null;
+  admin_notes: string | null;
+  created_at: string;
+  charges: AdminCharge[];
+  paidCentavos: number;
+  outstandingCentavos: number;
+  overdueCentavos: number;
+  overdueCount: number;
+  nextDue: AdminCharge | null;
+  events?: { title: string; starts_at: string; ends_at: string | null; location: string | null } | null;
+}
+
+export interface RosterMoney {
+  currency: string;
+  capacity: number;
+  placesTaken: number;
+  placesFree: number;
+  collectedCentavos: number;
+  outstandingCentavos: number;
+  overdueCentavos: number;
+  expectedCentavos: number;
+  cancelledPaidCentavos: number;
+  refundsOwedCentavos: number;
+}
+
+export interface AuditEntry {
+  id: string;
+  actor_source: 'shared_key' | 'cognito' | 'system';
+  actor_label: string;
+  source_ip: string | null;
+  action: string;
+  target_table: string;
+  target_id: string | null;
+  event_id: string | null;
+  amount_centavos: number | null;
+  currency: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export const adminGetRoster = (adminKey: string, eventId: string) =>
+  apiFetch<{ event: AdminEvent; registrations: AdminRegistration[]; money: RosterMoney }>(
+    `/admin/events/${eventId}/roster`,
+    adminInit(adminKey),
+  );
+
+export const adminListRegistrations = (adminKey: string, params: Record<string, string> = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch<{ registrations: AdminRegistration[] }>(
+    `/admin/registrations${qs ? `?${qs}` : ''}`,
+    adminInit(adminKey),
+  ).then((r) => r.registrations);
+};
+
+export const adminGetRegistration = (adminKey: string, registrationId: string) =>
+  apiFetch<{ registration: AdminRegistration; audit: AuditEntry[] }>(
+    `/admin/registrations/${registrationId}`,
+    adminInit(adminKey),
+  );
+
+export const adminMarkChargePaid = (
+  adminKey: string,
+  registrationId: string,
+  chargeId: string,
+  body: { method: string; reference: string; paidAt?: string },
+) =>
+  apiFetch<{ chargeId: string; status: string }>(
+    `/admin/registrations/${registrationId}/charges/${chargeId}/mark-paid`,
+    adminInit(adminKey, 'POST', body),
+  );
+
+export const adminSettleChargeWithout = (
+  adminKey: string,
+  registrationId: string,
+  chargeId: string,
+  outcome: 'waive' | 'void',
+  reason: string,
+) =>
+  apiFetch<{ chargeId: string; status: string }>(
+    `/admin/registrations/${registrationId}/charges/${chargeId}/${outcome}`,
+    adminInit(adminKey, 'POST', { reason }),
+  );
+
+export const adminCancelRegistration = (
+  adminKey: string,
+  registrationId: string,
+  body: { reason?: string; refundCentavos?: number | null },
+) =>
+  apiFetch<{ registrationId: string; status: string; seatFreed: number }>(
+    `/admin/registrations/${registrationId}/cancel`,
+    adminInit(adminKey, 'POST', body),
+  );
+
+export const adminNudgeRegistration = (adminKey: string, registrationId: string, note?: string) =>
+  apiFetch<{ registrationId: string; sent: boolean }>(
+    `/admin/registrations/${registrationId}/nudge`,
+    adminInit(adminKey, 'POST', { note }),
+  );
+
+export const adminListAuditLog = (adminKey: string, params: Record<string, string> = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch<{ entries: AuditEntry[] }>(
+    `/admin/audit-log${qs ? `?${qs}` : ''}`,
+    adminInit(adminKey),
+  ).then((r) => r.entries);
+};
+
+/** The CSV export is a download, so it bypasses apiFetch and its JSON parsing. */
+export const adminRosterCsvUrl = (eventId: string) => `/admin/events/${eventId}/roster.csv`;
