@@ -385,17 +385,22 @@ export class HilomBackendStack extends cdk.Stack {
     // SES sends from ap-south-1 (Mumbai), not this stack's ap-southeast-1:
     // hilomcollective.com is already a verified, DKIM-signed domain identity
     // there with production access, so no new identity/DNS work was needed.
-    communitySubmit.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['ses:SendEmail'],
-        resources: [
-          `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
-          // The domain identity has a default configuration set attached, so SES
-          // checks permission on that resource too, not just the identity.
-          `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
-        ],
-      }),
-    );
+    // formsPublic joins this grant alongside communitySubmit: a CMS-built form
+    // notifies its configured notify_email the same way the hardcoded
+    // community form does (backend/src/handlers/forms.ts, notifySubmission).
+    for (const fn of [communitySubmit, formsPublic]) {
+      fn.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ['ses:SendEmail'],
+          resources: [
+            `arn:aws:ses:ap-south-1:${this.account}:identity/hilomcollective.com`,
+            // The domain identity has a default configuration set attached, so SES
+            // checks permission on that resource too, not just the identity.
+            `arn:aws:ses:ap-south-1:${this.account}:configuration-set/default-config-set`,
+          ],
+        }),
+      );
+    }
 
     // Same SES identity, granted to every path that can call fulfillOrder and
     // so may send either of the two emails it can trigger: the account-created
