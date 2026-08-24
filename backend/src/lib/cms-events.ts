@@ -14,6 +14,19 @@ import {
   type EventFormat,
 } from './event-ticketing.js';
 
+export interface Facilitator {
+  name: string;
+  title: string | null;
+  bio: string | null;
+  photo_url: string | null;
+  photo_alt: string | null;
+}
+
+export interface GalleryImage {
+  url: string;
+  alt: string;
+}
+
 export interface EventInput {
   title: string;
   subtitle: string | null;
@@ -27,6 +40,15 @@ export interface EventInput {
   link_url: string | null;
   link_label: string | null;
   note: string | null;
+  // Undefined — not [] — when the request body did not mention the key at
+  // all, so a PUT from a form that knows nothing about these fields (the
+  // plain event editor) cannot silently wipe a roster or a gallery someone
+  // set through a different call. Object spread + JSON serialization drops an
+  // undefined-valued key, so this reads as "field omitted from the patch" at
+  // the database, exactly like validateTicketing's null-return does for the
+  // ticketing block.
+  facilitators: Facilitator[] | undefined;
+  gallery: GalleryImage[] | undefined;
 }
 
 function optionalText(raw: unknown, maxLength: number): string | null {
@@ -50,6 +72,65 @@ function optionalUrl(raw: unknown, field: string): string | null {
     throw new BlockValidationError(`${field} must be an http or https URL`);
   }
   return value;
+}
+
+const MAX_FACILITATORS = 12;
+const MAX_GALLERY = 20;
+
+/** Same http(s)-only rule as optionalUrl, applied to a photo src. */
+function photoUrl(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = String(raw).trim().slice(0, 1000);
+  if (!value) return null;
+  if (!/^https?:\/\//i.test(value)) {
+    throw new BlockValidationError(`${field} must be an http or https URL`);
+  }
+  return value;
+}
+
+/**
+ * A facilitator roster: name, role, a short bio, and a photo.
+ *
+ * Bio is plain text, not rich text — stripTags rather than sanitizeRichText —
+ * because a bio is a paragraph, not a document; nobody needs headings or lists
+ * inside three sentences about a facilitator, and keeping it plain avoids a
+ * second HTML sanitization pass on content nobody asked to format.
+ */
+function validateFacilitators(raw: unknown): Facilitator[] | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return [];
+  if (!Array.isArray(raw)) throw new BlockValidationError('facilitators must be a list');
+  if (raw.length > MAX_FACILITATORS) {
+    throw new BlockValidationError(`facilitators: at most ${MAX_FACILITATORS} allowed`);
+  }
+  return raw.map((item, i) => {
+    const f = (item ?? {}) as Record<string, unknown>;
+    const name = stripTags(String(f.name ?? '')).trim().slice(0, 120);
+    if (!name) throw new BlockValidationError(`facilitator ${i + 1} needs a name`);
+    return {
+      name,
+      title: optionalText(f.title, 200),
+      bio: optionalText(f.bio, 2000),
+      photo_url: photoUrl(f.photo_url, `facilitator ${i + 1} photo`),
+      photo_alt: optionalText(f.photo_alt, 300),
+    };
+  });
+}
+
+/** A set of venue/event photos, shown as a simple grid. */
+function validateGallery(raw: unknown): GalleryImage[] | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return [];
+  if (!Array.isArray(raw)) throw new BlockValidationError('gallery must be a list');
+  if (raw.length > MAX_GALLERY) {
+    throw new BlockValidationError(`gallery: at most ${MAX_GALLERY} images allowed`);
+  }
+  return raw.map((item, i) => {
+    const g = (item ?? {}) as Record<string, unknown>;
+    const url = photoUrl(g.url, `gallery image ${i + 1}`);
+    if (!url) throw new BlockValidationError(`gallery image ${i + 1} needs a url`);
+    return { url, alt: stripTags(String(g.alt ?? '')).trim().slice(0, 300) };
+  });
 }
 
 export function validateEvent(body: Record<string, unknown>): EventInput {
@@ -82,6 +163,8 @@ export function validateEvent(body: Record<string, unknown>): EventInput {
     link_url: optionalUrl(body.link_url, 'link_url'),
     link_label: optionalText(body.link_label, 100),
     note: optionalText(body.note, 300),
+    facilitators: validateFacilitators(body.facilitators),
+    gallery: validateGallery(body.gallery),
   };
 }
 

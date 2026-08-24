@@ -62,6 +62,51 @@ function EventHeader({ event }: { event: TicketedEvent }) {
       </p>
       {event.description && <div dangerouslySetInnerHTML={{ __html: event.description }} />}
       {event.venue_details && <p className="muted">{event.venue_details}</p>}
+
+      {event.gallery.length > 0 && (
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8, margin: '18px 0' }}
+        >
+          {event.gallery.map((img, i) => (
+            <img
+              key={i}
+              src={img.url}
+              alt={img.alt}
+              style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover', borderRadius: 8 }}
+            />
+          ))}
+        </div>
+      )}
+
+      {event.facilitators.length > 0 && (
+        <div style={{ margin: '18px 0' }}>
+          <h3 style={{ marginBottom: 12 }}>Facilitated by</h3>
+          <div style={{ display: 'grid', gap: 16 }}>
+            {event.facilitators.map((f, i) => (
+              <div key={i} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                {f.photo_url && (
+                  <img
+                    src={f.photo_url}
+                    alt={f.photo_alt ?? f.name}
+                    style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                  />
+                )}
+                <div>
+                  <strong>{f.name}</strong>
+                  {f.title && (
+                    <>
+                      <br />
+                      <span className="small muted">{f.title}</span>
+                    </>
+                  )}
+                  {f.bio && <p className="small" style={{ marginTop: 6 }}>{f.bio}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }

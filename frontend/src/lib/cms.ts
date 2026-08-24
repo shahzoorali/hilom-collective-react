@@ -45,6 +45,19 @@ export interface CmsForm {
   requires_captcha: boolean;
 }
 
+export interface EventFacilitator {
+  name: string;
+  title: string | null;
+  bio: string | null;
+  photo_url: string | null;
+  photo_alt: string | null;
+}
+
+export interface EventGalleryImage {
+  url: string;
+  alt: string;
+}
+
 export interface CmsEvent {
   id: string;
   title: string;
@@ -60,6 +73,8 @@ export interface CmsEvent {
   note: string | null;
   /** True when the event sells places on-site rather than linking out. */
   ticketing_enabled?: boolean;
+  facilitators?: EventFacilitator[];
+  gallery?: EventGalleryImage[];
 }
 
 export const getPage = (slug: string) =>
@@ -337,6 +352,8 @@ export interface AdminEvent extends CmsEvent {
   status: 'draft' | 'published';
   created_at: string;
   updated_at: string;
+  facilitators: EventFacilitator[];
+  gallery: EventGalleryImage[];
   // Ticketing (migration 0016). Null/false on every listing-only event, which
   // is every event that existed before ticketing shipped.
   ticketing_enabled: boolean;
@@ -433,6 +450,8 @@ export type AdminEventInput = {
   venue_details?: string | null;
   terms_html?: string | null;
   registrant_fields?: string[];
+  facilitators?: EventFacilitator[];
+  gallery?: EventGalleryImage[];
 };
 
 export const adminListEvents = (adminKey: string) =>

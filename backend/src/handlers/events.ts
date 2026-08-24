@@ -26,7 +26,7 @@ const COLUMNS =
   // Enough for the events list to render a "From ₱30,000 · 13 places" card and
   // a Register button instead of the generic outbound link. The prices
   // themselves come from the plans, so only the flag travels here.
-  'ticketing_enabled';
+  'ticketing_enabled, facilitators, gallery';
 
 export async function handler(): Promise<APIGatewayProxyResultV2> {
   try {
@@ -68,7 +68,7 @@ export async function handler(): Promise<APIGatewayProxyResultV2> {
 const TICKETING_COLUMNS =
   'id, title, subtitle, description, image_url, image_alt, location, starts_at, ends_at, ' +
   'status, ticketing_enabled, capacity, currency, registration_opens_at, registration_closes_at, ' +
-  'hold_minutes, venue_details, terms_html, registrant_fields';
+  'hold_minutes, venue_details, terms_html, registrant_fields, facilitators, gallery';
 
 interface TicketingEventRow {
   id: string;

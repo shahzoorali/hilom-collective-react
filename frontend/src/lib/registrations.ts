@@ -46,6 +46,19 @@ export interface EventPlan {
   installments: PlanInstallment[];
 }
 
+export interface EventFacilitator {
+  name: string;
+  title: string | null;
+  bio: string | null;
+  photo_url: string | null;
+  photo_alt: string | null;
+}
+
+export interface EventGalleryImage {
+  url: string;
+  alt: string;
+}
+
 export interface TicketedEvent {
   id: string;
   title: string;
@@ -63,6 +76,8 @@ export interface TicketedEvent {
   venue_details: string | null;
   terms_html: string | null;
   registrant_fields: string[];
+  facilitators: EventFacilitator[];
+  gallery: EventGalleryImage[];
 }
 
 export interface TicketingResponse {
