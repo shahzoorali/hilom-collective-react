@@ -30,7 +30,26 @@ export function sanitizeRichText(html: string): string {
   return sanitizeHtml(html, OPTIONS);
 }
 
-/** Plain-text fields (headings, captions) must never carry markup at all. */
+/**
+ * Plain-text fields (headings, captions) must never carry markup at all.
+ *
+ * sanitize-html serializes its output as HTML, which HTML-entity-encodes `&`,
+ * `<` and `>` in text content — correct for something that will be injected
+ * via dangerouslySetInnerHTML, wrong here, because every caller of this
+ * function treats the result as plain text for a React text node. Left
+ * encoded, a facilitator title of "Coaching & Wellness" would render on
+ * screen as the literal characters "Coaching &amp; Wellness" rather than the
+ * ampersand it was written with.
+ *
+ * Decoded back afterward, `&amp;` last so that a literal "&lt;" typed by an
+ * admin (encoded once, to `&amp;lt;`) round-trips to the "&lt;" they typed
+ * rather than decoding twice into "<". All tags are already gone at this
+ * point — allowedTags is empty — so there is no HTML meaning left for a
+ * decoded `<` or `>` to reintroduce.
+ */
 export function stripTags(text: string): string {
-  return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} });
+  return sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} })
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
 }

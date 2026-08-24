@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/slots.test.ts src/lib/booking-domain.test.ts src/lib/facilitator-input.test.ts src/lib/moodle-enrol.test.ts src/lib/form-notification.test.ts src/lib/event-ticketing.test.ts",
+    "test": "tsx --test src/lib/slots.test.ts src/lib/booking-domain.test.ts src/lib/facilitator-input.test.ts src/lib/moodle-enrol.test.ts src/lib/form-notification.test.ts src/lib/event-ticketing.test.ts src/lib/sanitize.test.ts",
     "probe:moodle": "tsx ../scripts/probe-moodle.ts"
   },
   "dependencies": {
