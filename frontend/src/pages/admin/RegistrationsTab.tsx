@@ -24,6 +24,9 @@ import {
   adminSettleChargeWithout,
   adminCancelRegistration,
   adminNudgeRegistration,
+  adminDecideCancellation,
+  adminMarkRefundSent,
+  adminOverridePrice,
   adminActor,
   type AdminEvent,
   type AdminRegistration,
@@ -324,8 +327,57 @@ function RegistrationRow({
 
           {r.cancellation_requested_at && !r.cancellation_decided_at && (
             <div className="alert alert-info small">
-              Cancellation requested {manilaDate(r.cancellation_requested_at)}
-              {r.cancellation_reason && `: "${r.cancellation_reason}"`}
+              <div style={{ marginBottom: 8 }}>
+                Cancellation requested {manilaDate(r.cancellation_requested_at)}
+                {r.cancellation_reason && `: "${r.cancellation_reason}"`}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost small"
+                  disabled={busy}
+                  onClick={() => {
+                    const refundPesos = window.prompt(
+                      `Approve — cancel ${r.registrant_name}'s place and free seat #${r.seat_no}.\n\n` +
+                        `They have paid ${money(r.paidCentavos, r.currency)}.\n` +
+                        'Refund amount in pesos, or leave blank for none. Recorded only — a person still sends it.',
+                      '',
+                    );
+                    if (refundPesos === null) return;
+                    const refundCentavos = refundPesos.trim() ? Math.round(Number(refundPesos) * 100) : null;
+                    if (refundCentavos !== null && !Number.isFinite(refundCentavos)) {
+                      onError('That refund amount is not a number.');
+                      return;
+                    }
+                    void run('Cancellation approved — the place is free again.', () =>
+                      adminDecideCancellation(adminKey, r.id, {
+                        decision: 'approved',
+                        reason: r.cancellation_reason ?? undefined,
+                        refundCentavos,
+                      }),
+                    );
+                  }}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost small"
+                  disabled={busy}
+                  onClick={() => {
+                    const reason = window.prompt(
+                      'Decline this request.\n\n' +
+                        'Their place stays held and payments stay due. What should we tell them?',
+                    );
+                    if (reason === null) return;
+                    void run('Request declined — the registrant has been told.', () =>
+                      adminDecideCancellation(adminKey, r.id, { decision: 'declined', reason }),
+                    );
+                  }}
+                >
+                  Decline
+                </button>
+              </div>
             </div>
           )}
 
@@ -419,12 +471,74 @@ function RegistrationRow({
                 Cancel this place
               </button>
             )}
+
+            {r.status !== 'cancelled' && (
+              <button
+                type="button"
+                className="btn btn-ghost small"
+                disabled={busy}
+                onClick={() => {
+                  const pesos = window.prompt(
+                    `Change what this registration costs.\n\n` +
+                      `Currently ${money(r.total_centavos, r.currency)}, of which ` +
+                      `${money(r.paidCentavos, r.currency)} is paid.\n\n` +
+                      'New total, in pesos:',
+                    (r.total_centavos / 100).toFixed(2),
+                  );
+                  if (pesos === null) return;
+                  const totalCentavos = Math.round(Number(pesos) * 100);
+                  if (!Number.isFinite(totalCentavos) || totalCentavos < 0) {
+                    onError('That total is not a number.');
+                    return;
+                  }
+                  const reason = window.prompt('Why is the price changing? (recorded in the audit trail)');
+                  if (!reason) return;
+                  const remaining = totalCentavos - r.paidCentavos;
+                  const consequence =
+                    remaining > 0
+                      ? `They will owe ${money(remaining, r.currency)}, replacing what is scheduled now.`
+                      : remaining < 0
+                        ? `They have overpaid by ${money(-remaining, r.currency)} — that goes into refunds owed.`
+                        : 'Nothing further will be owed.';
+                  if (!window.confirm(`New total ${money(totalCentavos, r.currency)}.\n\n${consequence}`)) return;
+                  void run('Price updated.', () =>
+                    adminOverridePrice(adminKey, r.id, { totalCentavos, reason }),
+                  );
+                }}
+              >
+                Change the price
+              </button>
+            )}
           </div>
 
           {r.refund_centavos != null && r.refund_centavos > 0 && (
             <p className="small" style={{ color: r.refunded_at ? 'var(--muted)' : 'var(--danger)' }}>
               Refund of {money(r.refund_centavos, r.currency)}{' '}
-              {r.refunded_at ? `sent ${manilaDate(r.refunded_at)}` : '— not yet sent'}
+              {r.refunded_at ? (
+                `sent ${manilaDate(r.refunded_at)}`
+              ) : (
+                <>
+                  — not yet sent
+                  <button
+                    type="button"
+                    className="linklike small"
+                    disabled={busy}
+                    style={{ marginLeft: 8 }}
+                    onClick={() => {
+                      const reference = window.prompt(
+                        `Mark ${money(r.refund_centavos!, r.currency)} as sent.\n\n` +
+                          'Bank reference or transfer id:',
+                      );
+                      if (!reference) return;
+                      void run('Refund marked as sent.', () =>
+                        adminMarkRefundSent(adminKey, r.id, reference),
+                      );
+                    }}
+                  >
+                    Mark as sent
+                  </button>
+                </>
+              )}
             </p>
           )}
 

@@ -825,3 +825,32 @@ export const adminListAuditLog = (adminKey: string, params: Record<string, strin
 
 /** The CSV export is a download, so it bypasses apiFetch and its JSON parsing. */
 export const adminRosterCsvUrl = (eventId: string) => `/admin/events/${eventId}/roster.csv`;
+
+export const adminDecideCancellation = (
+  adminKey: string,
+  registrationId: string,
+  body: { decision: 'approved' | 'declined'; reason?: string; refundCentavos?: number | null },
+) =>
+  apiFetch<{ registrationId: string; decision: string }>(
+    `/admin/registrations/${registrationId}/cancellation-decision`,
+    adminInit(adminKey, 'POST', body),
+  );
+
+/** Records that a refund actually moved — separate from deciding its amount. */
+export const adminMarkRefundSent = (adminKey: string, registrationId: string, reference: string) =>
+  apiFetch<{ registrationId: string; refundedAt: string; reference: string }>(
+    `/admin/registrations/${registrationId}/refund-sent`,
+    adminInit(adminKey, 'POST', { reference }),
+  );
+
+export const adminOverridePrice = (
+  adminKey: string,
+  registrationId: string,
+  body: { totalCentavos: number; reason: string },
+) =>
+  apiFetch<{
+    registrationId: string;
+    totalCentavos: number;
+    paidCentavos: number;
+    overpaidCentavos: number;
+  }>(`/admin/registrations/${registrationId}/price-override`, adminInit(adminKey, 'POST', body));

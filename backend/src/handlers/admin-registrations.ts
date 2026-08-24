@@ -6,6 +6,9 @@
  *   GET  /admin/registrations                     ?flagged=1 ?eventId= ?status=
  *   GET  /admin/registrations/{registrationId}
  *   POST /admin/registrations/{registrationId}/cancel
+ *   POST /admin/registrations/{registrationId}/cancellation-decision
+ *   POST /admin/registrations/{registrationId}/refund-sent
+ *   POST /admin/registrations/{registrationId}/price-override
  *   POST /admin/registrations/{registrationId}/nudge
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/mark-paid
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/waive
@@ -29,7 +32,11 @@ import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAuthorizedAdmin } from '../lib/http.js';
 import { actorFromEvent, recordAudit, type AuditActor } from '../lib/audit.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
-import { sendRegistrationCancelled, sendPaymentNudge } from '../lib/registration-email.js';
+import {
+  sendRegistrationCancelled,
+  sendPaymentNudge,
+  sendCancellationDeclined,
+} from '../lib/registration-email.js';
 import {
   isOutstanding,
   outstandingCentavos,
@@ -65,6 +72,13 @@ interface RegistrationRow extends Record<string, unknown> {
   plan_kind: 'full' | 'installment';
   total_centavos: number;
   currency: string;
+  // Declared rather than left to the index signature: the cancellation
+  // lifecycle does arithmetic and null checks on these, and `unknown` from
+  // Record<string, unknown> makes both an error.
+  refund_centavos: number | null;
+  refunded_at: string | null;
+  cancellation_requested_at: string | null;
+  cancellation_decided_at: string | null;
 }
 
 interface ChargeRow extends Record<string, unknown> {
@@ -122,6 +136,13 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (registrationId && method === 'POST') {
       const body = parseBody(event);
+      // Literal suffixes checked before '/cancel', which would otherwise also
+      // match '/cancellation-decision' under endsWith.
+      if (path.endsWith('/cancellation-decision')) {
+        return await cancellationDecision(registrationId, body, actor);
+      }
+      if (path.endsWith('/refund-sent')) return await refundSent(registrationId, body, actor);
+      if (path.endsWith('/price-override')) return await priceOverride(registrationId, body, actor);
       if (path.endsWith('/cancel')) return await cancel(registrationId, body, actor);
       if (path.endsWith('/nudge')) return await nudge(registrationId, body, actor);
       return badRequest(`Unsupported action ${path}`);
@@ -282,7 +303,13 @@ async function queue(query: Record<string, string | undefined>): Promise<APIGate
   const byRegistration = await chargesFor(supabase, rows.map((r) => r.id));
   let decorated = rows.map((r) => decorate(r, byRegistration.get(r.id) ?? [], now));
 
-  if (query.flagged === '1') {
+  // Unanswered cancellation requests only — a narrower queue than `flagged`,
+  // for working through decisions rather than everything needing attention.
+  if (query.cancelRequests === '1') {
+    decorated = decorated.filter(
+      (r) => r.cancellation_requested_at !== null && r.cancellation_decided_at === null,
+    );
+  } else if (query.flagged === '1') {
     decorated = decorated.filter(
       (r) =>
         r.flagged_at !== null ||
@@ -736,4 +763,284 @@ async function auditLog(query: Record<string, string | undefined>): Promise<APIG
   if (error) throw error;
 
   return ok({ entries: data ?? [] });
+}
+
+// ---------------------------------------------------------------------------
+// The cancellation lifecycle
+// ---------------------------------------------------------------------------
+
+/**
+ * Answers a registrant's own cancellation request — yes or no.
+ *
+ * Approving delegates to `cancel`, which is the single place a place is ever
+ * given up: one path to "cancelled" means the seat is freed, the schedule
+ * voided, the refund recorded and the email sent identically whether an admin
+ * initiated it or a registrant asked for it.
+ *
+ * Declining is the branch that did not exist before this. It stamps the
+ * decision and leaves everything else exactly as it was — the place stays
+ * held, the schedule stays due — and it takes the request out of the admin
+ * queue, because an answered request is answered whichever way it went.
+ */
+async function cancellationDecision(
+  registrationId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const decision = String(body.decision ?? '');
+  if (decision !== 'approved' && decision !== 'declined') {
+    return badRequest("Decision must be either 'approved' or 'declined'.");
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(`${REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, venue_details, format)`)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow & { events: Record<string, unknown> | null }>();
+  if (error) throw error;
+  if (!registration) return notFound('Registration not found');
+
+  if (!registration.cancellation_requested_at) {
+    return conflict(
+      'Nobody has asked to cancel this registration. Use "Cancel this place" if you need to cancel it anyway.',
+    );
+  }
+  if (registration.cancellation_decided_at) {
+    return conflict('That request has already been answered.');
+  }
+
+  if (decision === 'approved') {
+    // The one path to cancelled. `cancel` already stamps decided_at and
+    // decision='approved' when a request is outstanding.
+    return await cancel(registrationId, body, actor);
+  }
+
+  const reason = String(body.reason ?? '').trim().slice(0, 500);
+  const now = new Date().toISOString();
+
+  const { data: claimed, error: updateError } = await supabase
+    .from('event_registrations')
+    .update({ cancellation_decided_at: now, cancellation_decision: 'declined' })
+    .eq('id', registrationId)
+    // Compare-and-set: a concurrent approval must win rather than be
+    // overwritten by a decline arriving a moment later.
+    .is('cancellation_decided_at', null)
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (updateError) throw updateError;
+  if (!claimed) return conflict('That request was answered while you were working — reload and try again.');
+
+  await recordAudit(actor, {
+    action: 'registration.cancellation_declined',
+    targetTable: 'event_registrations',
+    targetId: registrationId,
+    eventId: registration.event_id,
+    before: { cancellation_requested_at: registration.cancellation_requested_at },
+    after: { cancellation_decision: 'declined' },
+    note: reason || null,
+  });
+
+  const ev = registration.events as { title?: string } | null;
+  if (ev?.title) {
+    await sendCancellationDeclined({
+      to: registration.buyer_email,
+      registrantName: registration.registrant_name,
+      eventTitle: ev.title,
+      reason: reason || null,
+    }).catch((err) => console.error('[adminRegistrations] decline email failed', err));
+  }
+
+  return ok({ registrationId, decision: 'declined' });
+}
+
+/**
+ * Records that a refund has actually been sent.
+ *
+ * Deliberately separate from deciding the amount. `refund_centavos` is what
+ * someone judged was owed; `refunded_at` is the fact that money moved, and
+ * only a human moving it can assert that. Keeping them apart is what makes
+ * "refunds still to send" answerable at all — the admin money view reads
+ * exactly that gap.
+ *
+ * A reference is required for the same reason an offline payment needs one:
+ * without it, this is unmatchable against a bank statement later.
+ */
+async function refundSent(
+  registrationId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const reference = String(body.reference ?? '').trim().slice(0, 200);
+  if (!reference) {
+    return badRequest('A reference is required — the bank reference or transfer id.');
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(REGISTRATION_COLUMNS)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow>();
+  if (error) throw error;
+  if (!registration) return notFound('Registration not found');
+
+  if (!registration.refund_centavos || registration.refund_centavos <= 0) {
+    return conflict('No refund is recorded against this registration.');
+  }
+  if (registration.refunded_at) {
+    return conflict('That refund is already marked as sent.');
+  }
+
+  const { data: claimed, error: updateError } = await supabase
+    .from('event_registrations')
+    .update({ refunded_at: new Date().toISOString(), refund_reference: reference })
+    .eq('id', registrationId)
+    .is('refunded_at', null)
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (updateError) throw updateError;
+  if (!claimed) return conflict('That refund was marked sent while you were working — reload and try again.');
+
+  await recordAudit(actor, {
+    action: 'registration.refund_sent',
+    targetTable: 'event_registrations',
+    targetId: registrationId,
+    eventId: registration.event_id,
+    amountCentavos: registration.refund_centavos,
+    currency: registration.currency,
+    after: { refund_reference: reference },
+    note: `refund of ${registration.refund_centavos} sent, ref ${reference}`,
+  });
+
+  return ok({ registrationId, refundedAt: new Date().toISOString(), reference });
+}
+
+/**
+ * Changes what a registration costs, after the fact.
+ *
+ * **A paid charge is never touched.** Money that arrived is a fact; an
+ * override changes only what is still owed. So: everything outstanding is
+ * voided, and the difference between the new total and what has already been
+ * paid becomes a single new charge.
+ *
+ * The awkward case is an override *below* what someone has already paid. That
+ * is an overpayment, and this does not try to be clever about it — it records
+ * the difference as a refund owed and leaves it in the admin's refunds queue,
+ * where a human decides what actually happens. Silently voiding the excess
+ * would lose the fact that Hilom is holding money it no longer has a claim to.
+ */
+async function priceOverride(
+  registrationId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const totalRaw = body.totalCentavos;
+  const newTotal = Number(totalRaw);
+  if (!Number.isInteger(newTotal) || newTotal < 0) {
+    return badRequest('The new total must be a whole number of centavos.');
+  }
+  const reason = String(body.reason ?? '').trim().slice(0, 500);
+  if (!reason) return badRequest('Why is the price changing? A short reason is recorded against this.');
+
+  const supabase = await getSupabase();
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(REGISTRATION_COLUMNS)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrationRow>();
+  if (error) throw error;
+  if (!registration) return notFound('Registration not found');
+  if (registration.status === 'cancelled') return conflict('That registration is cancelled.');
+
+  const charges = (await chargesFor(supabase, [registrationId])).get(registrationId) ?? [];
+  const paid = paidCentavos(charges);
+  const outstanding = charges.filter((c) => isOutstanding(c.status));
+  const now = new Date().toISOString();
+
+  // The latest date anything was already due, so a reissued balance does not
+  // silently become due sooner than what it replaced.
+  const latestDue = outstanding.reduce<string | null>(
+    (acc, c) => (acc === null || Date.parse(c.due_at) > Date.parse(acc) ? c.due_at : acc),
+    null,
+  );
+
+  if (outstanding.length > 0) {
+    const { error: voidError } = await supabase
+      .from('registration_charges')
+      .update({ status: 'void', voided_at: now, void_reason: `price changed: ${reason}`, flagged_at: null })
+      .eq('registration_id', registrationId)
+      .in('status', ['scheduled', 'awaiting_payment']);
+    if (voidError) throw voidError;
+  }
+
+  const remaining = newTotal - paid;
+  let reissuedChargeId: string | null = null;
+  let overpaidCentavos = 0;
+
+  if (remaining > 0) {
+    const maxSeq = charges.reduce((acc, c) => Math.max(acc, c.seq), 0);
+    const { data: reissued, error: insertError } = await supabase
+      .from('registration_charges')
+      .insert({
+        registration_id: registrationId,
+        event_id: registration.event_id,
+        seq: maxSeq + 1,
+        label: 'Adjusted balance',
+        is_deposit: false,
+        amount_centavos: remaining,
+        currency: registration.currency,
+        due_at: latestDue ?? now,
+        status: 'scheduled',
+      })
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (insertError) throw insertError;
+    reissuedChargeId = reissued?.id ?? null;
+  } else if (remaining < 0) {
+    overpaidCentavos = -remaining;
+  }
+
+  const { error: regError } = await supabase
+    .from('event_registrations')
+    .update({
+      total_centavos: newTotal,
+      price_override_centavos: newTotal,
+      price_override_reason: reason,
+      // Added to whatever was already owed, not replacing it: an override
+      // after a partial refund decision must not erase that decision.
+      ...(overpaidCentavos > 0
+        ? { refund_centavos: (registration.refund_centavos ?? 0) + overpaidCentavos }
+        : {}),
+    })
+    .eq('id', registrationId);
+  if (regError) throw regError;
+
+  await recordAudit(actor, {
+    action: 'registration.price_override',
+    targetTable: 'event_registrations',
+    targetId: registrationId,
+    eventId: registration.event_id,
+    amountCentavos: newTotal,
+    currency: registration.currency,
+    before: { total_centavos: registration.total_centavos, paid_centavos: paid },
+    after: {
+      total_centavos: newTotal,
+      voided_charges: outstanding.length,
+      reissued_centavos: remaining > 0 ? remaining : 0,
+      overpaid_centavos: overpaidCentavos,
+    },
+    note: reason,
+  });
+
+  return ok({
+    registrationId,
+    totalCentavos: newTotal,
+    paidCentavos: paid,
+    reissuedChargeId,
+    overpaidCentavos,
+  });
 }

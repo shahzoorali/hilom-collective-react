@@ -649,3 +649,44 @@ export async function sendCancellationRequestedAdminAlert(input: {
     renderEmail({ heading, body }),
   );
 }
+
+/**
+ * Tells a registrant their cancellation request was not approved.
+ *
+ * Says plainly that the place is still theirs and still due, because the
+ * alternative is someone assuming they are cancelled, not paying, and finding
+ * out in December. Ends with an opening to reply — a declined request is
+ * usually the start of a conversation, not the end of one.
+ */
+export async function sendCancellationDeclined(input: {
+  to: string;
+  registrantName: string;
+  eventTitle: string;
+  reason: string | null;
+}): Promise<void> {
+  const { to, registrantName, eventTitle, reason } = input;
+  const heading = `About your cancellation request`;
+
+  const body =
+    p(`Hello ${escapeHtml(registrantName)},`) +
+    p(
+      `We've looked at your request to cancel your place at ${escapeHtml(eventTitle)}, and we're not ` +
+        `able to cancel it on this occasion.`,
+    ) +
+    (reason ? p(escapeHtml(reason)) : '') +
+    p('Your place is still held, and any remaining payments are still due as scheduled.') +
+    note('If circumstances have changed or this feels wrong, reply to this email — a person will read it.');
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `We're not able to cancel your place at ${eventTitle} on this occasion.`,
+      ...(reason ? ['', reason] : []),
+      '',
+      'Your place is still held, and any remaining payments are still due as scheduled.',
+      'If this feels wrong, reply to this email — a person will read it.',
+    ]),
+    renderEmail({ heading, body }),
+  );
+}
