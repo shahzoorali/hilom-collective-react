@@ -279,3 +279,4 @@ async function handleRegistrationCharge(
     return ok({ received: true, handled: true, status: 'queued_for_retry' });
   }
 }
+

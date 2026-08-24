@@ -2,7 +2,11 @@
  * Buyer-facing event registration.
  *
  *   POST /events/{eventId}/register
+ *   GET  /me/registrations
+ *   GET  /registrations/{registrationId}
  *   GET  /registrations/{registrationId}/status
+ *   POST /registrations/{registrationId}/charges/{chargeId}/pay
+ *   POST /registrations/{registrationId}/pay-balance
  *
  * Cognito-authenticated throughout: `requireBuyer` gives a verified, confirmed
  * email, which is the identity a registration is keyed on — there is no users
@@ -27,8 +31,14 @@ import {
   validateRegistrant,
   registrationOpen,
   TicketingValidationError,
+  isOutstanding,
+  nextDueCharge,
+  outstandingCentavos,
+  paidCentavos,
+  isFullySettled,
   type PaymentPlan,
   type PlanInstallment,
+  type ChargeStatus,
 } from '../lib/event-ticketing.js';
 
 /** 409 — the request was well-formed but the world moved. */
@@ -101,11 +111,27 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     const eventId = event.pathParameters?.eventId;
     const registrationId = event.pathParameters?.registrationId;
 
+    const chargeId = event.pathParameters?.chargeId;
+
     if (eventId && method === 'POST' && path.endsWith('/register')) {
       return await register(event, eventId, buyer);
     }
+    if (method === 'GET' && path.endsWith('/me/registrations')) {
+      return await listMine(buyer.email);
+    }
     if (registrationId && method === 'GET' && path.endsWith('/status')) {
       return await status(registrationId, buyer.email);
+    }
+    if (registrationId && chargeId && method === 'POST' && path.endsWith('/pay')) {
+      return await payCharge(registrationId, chargeId, buyer);
+    }
+    if (registrationId && method === 'POST' && path.endsWith('/pay-balance')) {
+      return await payBalance(registrationId, buyer);
+    }
+    // Bare /registrations/{id} last: every literal-suffixed route above would
+    // also match this one's shape.
+    if (registrationId && method === 'GET') {
+      return await detail(registrationId, buyer.email);
     }
 
     return badRequest(`Unsupported route ${method} ${path}`);
@@ -330,4 +356,441 @@ async function status(registrationId: string, email: string): Promise<APIGateway
     startsAt: data.events?.starts_at ?? null,
     location: data.events?.location ?? null,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Reading your own registrations
+// ---------------------------------------------------------------------------
+
+const CHARGE_COLUMNS =
+  'id, seq, label, is_deposit, amount_centavos, currency, due_at, status, paid_at, receipt_no, ' +
+  'checkout_url, checkout_expires_at';
+
+/**
+ * Columns safe to hand a buyer.
+ *
+ * `seat_no` is deliberately absent: the number is real and useful on the admin
+ * roster, but telling someone they are "seat 13 of 13" publishes an ordering
+ * nobody intended. Same for admin_notes and the flag columns — an internal
+ * note about a registration is not the registrant's to read.
+ */
+const OWN_REGISTRATION_COLUMNS =
+  'id, event_id, status, buyer_email, registrant_name, registrant_email, registrant_phone, ' +
+  'registrant_details, plan_name, plan_kind, total_centavos, currency, hold_expires_at, ' +
+  'confirmed_at, cancellation_requested_at, cancellation_decided_at, cancellation_decision, created_at';
+
+interface OwnedRegistration extends Record<string, unknown> {
+  id: string;
+  buyer_email: string;
+  status: string;
+  plan_kind: 'full' | 'installment';
+  currency: string;
+}
+
+/** What loadOwned selects: the owned row plus the two joins both payers need. */
+interface OwnedForPayment extends OwnedRegistration {
+  event_id: string;
+  events: { title: string } | null;
+}
+
+interface ChargeRow extends Record<string, unknown> {
+  id: string;
+  seq: number;
+  label: string;
+  is_deposit: boolean;
+  amount_centavos: number;
+  currency: string;
+  due_at: string;
+  status: ChargeStatus;
+  checkout_url: string | null;
+  checkout_expires_at: string | null;
+}
+
+/** Everything the account view needs, newest first. */
+async function listMine(email: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select(`${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, image_url)`)
+    .eq('buyer_email', email.toLowerCase())
+    // An expired hold is not something anyone wants listed back at them as if
+    // it were a booking. The row is kept (it is a sales lead) but it is not
+    // part of "my registrations".
+    .neq('status', 'expired')
+    .order('created_at', { ascending: false })
+    .returns<OwnedRegistration[]>();
+  if (error) throw error;
+
+  const registrations = data ?? [];
+  if (registrations.length === 0) return ok({ registrations: [] });
+
+  const { data: charges, error: chargeError } = await supabase
+    .from('registration_charges')
+    .select(`${CHARGE_COLUMNS}, registration_id`)
+    .in('registration_id', registrations.map((r) => r.id))
+    .order('seq', { ascending: true })
+    .returns<(ChargeRow & { registration_id: string })[]>();
+  if (chargeError) throw chargeError;
+
+  const byRegistration = new Map<string, ChargeRow[]>();
+  for (const charge of charges ?? []) {
+    byRegistration.set(charge.registration_id, [...(byRegistration.get(charge.registration_id) ?? []), charge]);
+  }
+
+  return ok({
+    registrations: registrations.map((r) => withTotals(r, byRegistration.get(r.id) ?? [])),
+  });
+}
+
+/** One registration, ownership-checked. */
+async function detail(registrationId: string, email: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select(`${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, image_url, venue_details)`)
+    .eq('id', registrationId)
+    .maybeSingle<OwnedRegistration>();
+  if (error) throw error;
+
+  // 404 rather than 403 for someone else's registration, the same choice the
+  // booking flow makes: a 403 confirms the id exists, which turns this into a
+  // way to discover them.
+  if (!data || data.buyer_email.toLowerCase() !== email.toLowerCase()) {
+    return notFound('Registration not found');
+  }
+
+  const { data: charges, error: chargeError } = await supabase
+    .from('registration_charges')
+    .select(CHARGE_COLUMNS)
+    .eq('registration_id', registrationId)
+    .order('seq', { ascending: true })
+    .returns<ChargeRow[]>();
+  if (chargeError) throw chargeError;
+
+  return ok({ registration: withTotals(data, charges ?? []) });
+}
+
+/**
+ * Attaches the derived money figures every view needs.
+ *
+ * Computed here from the charge rows rather than stored, because they are a
+ * pure function of the ledger and a stored copy would be one more thing that
+ * can disagree with it. The three functions come from event-ticketing.ts, so
+ * the buyer view, the admin roster and the emails all answer "what is still
+ * owed?" identically.
+ */
+function withTotals(registration: OwnedRegistration, charges: ChargeRow[]): Record<string, unknown> {
+  const next = nextDueCharge(charges);
+  return {
+    ...registration,
+    charges,
+    paidCentavos: paidCentavos(charges),
+    outstandingCentavos: outstandingCentavos(charges),
+    fullySettled: isFullySettled(charges),
+    // Which charge the buyer is allowed to pay next — the UI should offer this
+    // one and nothing else. Null once everything is settled.
+    nextChargeId: next?.id ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Paying
+// ---------------------------------------------------------------------------
+
+/**
+ * Loads a registration the caller owns, or returns the 404 to send back.
+ *
+ * Both payment paths need exactly this, and both must not leak whether an id
+ * exists, so the check lives in one place rather than being repeated with a
+ * chance of one copy being laxer than the other.
+ */
+async function loadOwned(
+  supabase: Awaited<ReturnType<typeof getSupabase>>,
+  registrationId: string,
+  email: string,
+): Promise<{ registration: OwnedForPayment; charges: ChargeRow[] } | null> {
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select(`${OWN_REGISTRATION_COLUMNS}, event_id, events(title)`)
+    .eq('id', registrationId)
+    .maybeSingle<OwnedForPayment>();
+  if (error) throw error;
+  if (!data || data.buyer_email.toLowerCase() !== email.toLowerCase()) return null;
+
+  const { data: charges, error: chargeError } = await supabase
+    .from('registration_charges')
+    .select(CHARGE_COLUMNS)
+    .eq('registration_id', registrationId)
+    .order('seq', { ascending: true })
+    .returns<ChargeRow[]>();
+  if (chargeError) throw chargeError;
+
+  return { registration: data, charges: charges ?? [] };
+}
+
+/** A live hosted-checkout URL, or null if there is none worth reusing. */
+function liveCheckout(charge: ChargeRow, now: Date): string | null {
+  if (!charge.checkout_url) return null;
+  if (!charge.checkout_expires_at) return null;
+  return Date.parse(charge.checkout_expires_at) > now.getTime() ? charge.checkout_url : null;
+}
+
+/**
+ * How long a hosted checkout for an instalment stays open.
+ *
+ * Not the event's hold_minutes: that number exists to decide how long an
+ * *unpaid place* blocks someone else, and a confirmed registrant's place is
+ * not at stake here. An hour is simply long enough to finish a QR Ph payment
+ * and short enough that an abandoned session frees the charge to be paid again
+ * the same afternoon.
+ */
+const INSTALLMENT_CHECKOUT_MINUTES = 60;
+
+/**
+ * Opens a checkout for one scheduled instalment.
+ *
+ * Two rules, both about not creating a second way to pay the same money:
+ *
+ *  * **Only the lowest unpaid charge may be paid.** Paying instalment four
+ *    before two is legal money and an illegible ledger, and it breaks the
+ *    reminder tiers, which assume the outstanding set is a suffix of the
+ *    schedule rather than an arbitrary subset.
+ *
+ *  * **A live session is reused, never replaced.** Two open sessions for one
+ *    charge are two ways to pay it, and the second payment has no charge left
+ *    to attach to — it lands as an unmatched payment for an admin to chase.
+ */
+async function payCharge(
+  registrationId: string,
+  chargeId: string,
+  buyer: { email: string; givenName?: string | undefined; familyName?: string | undefined },
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const owned = await loadOwned(supabase, registrationId, buyer.email);
+  if (!owned) return notFound('Registration not found');
+  const { registration, charges } = owned;
+
+  if (registration.status === 'cancelled') {
+    return conflict('This registration was cancelled. Get in touch if that is not what you expected.');
+  }
+
+  const charge = charges.find((c) => c.id === chargeId);
+  if (!charge) return notFound('That payment is not part of this registration.');
+
+  if (charge.status === 'paid') {
+    return conflict('That payment has already been made.');
+  }
+  if (!isOutstanding(charge.status)) {
+    return conflict('That payment is no longer due.');
+  }
+
+  const next = nextDueCharge(charges);
+  if (next && next.id !== charge.id) {
+    return conflict(
+      `Please settle "${next.label}" first — payments are made in order.`,
+    );
+  }
+
+  const now = new Date();
+
+  const existing = liveCheckout(charge, now);
+  if (existing) {
+    return ok({
+      chargeId: charge.id,
+      checkoutUrl: existing,
+      amountCentavos: charge.amount_centavos,
+      currency: charge.currency,
+      reused: true,
+    });
+  }
+
+  const session = await openCheckoutForCharge({
+    supabase,
+    registrationId,
+    charge,
+    eventTitle: (registration as { events?: { title: string } | null }).events?.title ?? 'Hilom event',
+    label: charge.label,
+    amountCentavos: charge.amount_centavos,
+    buyer,
+    now,
+  });
+
+  return ok({
+    chargeId: charge.id,
+    checkoutUrl: session.checkoutUrl,
+    amountCentavos: charge.amount_centavos,
+    currency: charge.currency,
+    reused: false,
+  });
+}
+
+/**
+ * Settles everything outstanding in one payment.
+ *
+ * Implemented as a **new charge** rather than as one session covering several
+ * existing ones, and that is the whole design. A single payment can only carry
+ * one `charge_id` in its metadata, so paying four charges with one session
+ * would need the webhook to fan out across a list — a second code path, and a
+ * second way for a partial failure to leave the ledger half-applied.
+ *
+ * Instead: one new charge for the outstanding amount, and the charges it
+ * supersedes are voided **only when it clears** (in registration-fulfillment),
+ * never here. An abandoned payoff therefore leaves the original schedule
+ * completely intact, still due on its original dates.
+ */
+async function payBalance(
+  registrationId: string,
+  buyer: { email: string; givenName?: string | undefined; familyName?: string | undefined },
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const owned = await loadOwned(supabase, registrationId, buyer.email);
+  if (!owned) return notFound('Registration not found');
+  const { registration, charges } = owned;
+
+  if (registration.status === 'cancelled') {
+    return conflict('This registration was cancelled. Get in touch if that is not what you expected.');
+  }
+  if (registration.status === 'pending_payment') {
+    return conflict('Your deposit has not cleared yet — settle that first.');
+  }
+
+  const outstanding = charges.filter((c) => isOutstanding(c.status));
+  if (outstanding.length === 0) {
+    return conflict('There is nothing left to pay.');
+  }
+
+  const now = new Date();
+
+  // Already mid-payoff: reuse rather than minting a second balance charge,
+  // which would double-count what is owed on the account screen.
+  const openBalance = outstanding.find((c) => !c.is_deposit && liveCheckout(c, now));
+  if (openBalance) {
+    return ok({
+      chargeId: openBalance.id,
+      checkoutUrl: liveCheckout(openBalance, now),
+      amountCentavos: openBalance.amount_centavos,
+      currency: openBalance.currency,
+      reused: true,
+    });
+  }
+
+  // A single outstanding charge is not a "balance" — it is that charge, and
+  // routing it through the supersede machinery would void a row only to
+  // recreate an identical one.
+  if (outstanding.length === 1) {
+    return await payCharge(registrationId, outstanding[0]!.id, buyer);
+  }
+
+  const total = outstanding.reduce((acc, c) => acc + c.amount_centavos, 0);
+  const maxSeq = charges.reduce((acc, c) => Math.max(acc, c.seq), 0);
+  const currency = outstanding[0]!.currency;
+
+  // Which charges this one stands in for, decided now rather than at
+  // fulfillment: by the time the payment clears the outstanding set could look
+  // different, and this payment covers what was outstanding when it was made.
+  const supersedes = outstanding.map((c) => c.id);
+
+  const { data: balanceCharge, error: insertError } = await supabase
+    .from('registration_charges')
+    .insert({
+      registration_id: registrationId,
+      event_id: registration.event_id,
+      seq: maxSeq + 1,
+      label: 'Balance payment',
+      is_deposit: false,
+      amount_centavos: total,
+      currency,
+      // Due now: this charge exists because someone chose to pay it today.
+      due_at: now.toISOString(),
+      status: 'awaiting_payment',
+      // Recorded on the row, not only in PayMongo metadata: the retry consumer
+      // and an admin's offline mark-paid both settle charges without ever
+      // seeing that metadata, and all three paths must void the same rows.
+      supersedes,
+    })
+    .select(CHARGE_COLUMNS)
+    .maybeSingle<ChargeRow>();
+  if (insertError) throw insertError;
+  if (!balanceCharge) throw new Error('balance charge was not created');
+
+  let session;
+  try {
+    session = await openCheckoutForCharge({
+      supabase,
+      registrationId,
+      charge: balanceCharge,
+      eventTitle: registration.events?.title ?? 'Hilom event',
+      label: 'Balance payment',
+      amountCentavos: total,
+      buyer,
+      now,
+    });
+  } catch (err) {
+    // Remove the charge rather than leaving a phantom "Balance payment" on the
+    // schedule for a checkout that was never opened.
+    await supabase.from('registration_charges').delete().eq('id', balanceCharge.id).eq('status', 'awaiting_payment');
+    return serverError('eventRegistrations.payBalance', err);
+  }
+
+  return ok({
+    chargeId: balanceCharge.id,
+    checkoutUrl: session.checkoutUrl,
+    amountCentavos: total,
+    currency,
+    reused: false,
+  });
+}
+
+/** Opens a PayMongo session for one charge and records it on the row. */
+async function openCheckoutForCharge(input: {
+  supabase: Awaited<ReturnType<typeof getSupabase>>;
+  registrationId: string;
+  charge: ChargeRow;
+  eventTitle: string;
+  label: string;
+  amountCentavos: number;
+  buyer: { email: string; givenName?: string | undefined; familyName?: string | undefined };
+  now: Date;
+}): Promise<{ checkoutUrl: string }> {
+  const { supabase, registrationId, charge, eventTitle, label, amountCentavos, buyer, now } = input;
+
+  const origin = process.env.FRONTEND_URL ?? 'https://www.hilomcollective.com';
+  const buyerName = [buyer.givenName, buyer.familyName].filter(Boolean).join(' ') || undefined;
+
+  const session = await createHostedCheckout({
+    name: `${eventTitle} — ${label}`,
+    description: eventTitle,
+    amountCentavos,
+    currency: charge.currency,
+    billing: { email: buyer.email, name: buyerName },
+    metadata: {
+      kind: 'event_registration',
+      charge_id: charge.id,
+      registration_id: registrationId,
+      buyer_email: buyer.email,
+    },
+    successUrl: `${origin}/events/registration/processing?registrationId=${registrationId}`,
+    cancelUrl: `${origin}/account/registrations/${registrationId}`,
+  });
+
+  const expiresAt = new Date(now.getTime() + INSTALLMENT_CHECKOUT_MINUTES * 60_000).toISOString();
+
+  await supabase
+    .from('registration_charges')
+    .update({
+      status: 'awaiting_payment',
+      paymongo_session_id: session.sessionId,
+      checkout_url: session.checkoutUrl,
+      checkout_expires_at: expiresAt,
+    })
+    .eq('id', charge.id)
+    // Only a still-payable charge may be moved: a concurrent webhook that just
+    // marked this paid must not be walked back into awaiting_payment.
+    .in('status', ['scheduled', 'awaiting_payment']);
+
+  return session;
 }

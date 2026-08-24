@@ -513,3 +513,48 @@ describe('validatePlan — the admin plan builder guard rails', () => {
     assert.throws(() => validatePlan(dupe, 0), /two payments numbered 2/);
   });
 });
+
+describe('paying in order — the rule payCharge enforces', () => {
+  const schedule = (statuses: Charge['status'][]): Charge[] =>
+    statuses.map((status, i) => charge(i + 1, i === 0 ? 500_000 : 833_333, status));
+
+  it('offers the deposit first on a brand-new registration', () => {
+    const s = schedule(['awaiting_payment', 'scheduled', 'scheduled', 'scheduled']);
+    assert.equal(nextDueCharge(s)?.seq, 1);
+  });
+
+  it('walks forward one at a time as each clears', () => {
+    assert.equal(nextDueCharge(schedule(['paid', 'scheduled', 'scheduled', 'scheduled']))?.seq, 2);
+    assert.equal(nextDueCharge(schedule(['paid', 'paid', 'scheduled', 'scheduled']))?.seq, 3);
+    assert.equal(nextDueCharge(schedule(['paid', 'paid', 'paid', 'scheduled']))?.seq, 4);
+  });
+
+  it('never offers a later instalment while an earlier one is unpaid', () => {
+    // The specific thing payCharge refuses: someone posting charge 4's id
+    // while 2 and 3 are still outstanding.
+    const s = schedule(['paid', 'scheduled', 'scheduled', 'scheduled']);
+    const fourth = s.find((c) => c.seq === 4)!;
+    assert.notEqual(nextDueCharge(s)?.id, fourth.id, 'seq 4 must not be payable yet');
+  });
+
+  it('skips over a voided instalment rather than stalling on it', () => {
+    // After an early payoff the middle rows are void, not paid — the outstanding
+    // set must still resolve cleanly rather than pointing at a dead row.
+    const s = schedule(['paid', 'void', 'void', 'void']);
+    assert.equal(nextDueCharge(s), null);
+    assert.equal(isFullySettled(s), true);
+  });
+
+  it('counts a settled-by-payoff registration as owing nothing', () => {
+    const paidOff = [
+      charge(1, 500_000, 'paid'),
+      charge(2, 833_333, 'void'),
+      charge(3, 833_333, 'void'),
+      charge(4, 833_334, 'void'),
+      charge(5, 2_500_000, 'paid'), // the balance payment
+    ];
+    assert.equal(outstandingCentavos(paidOff), 0);
+    assert.equal(paidCentavos(paidOff), 3_000_000, 'the voided rows must not be double-counted');
+    assert.equal(isFullySettled(paidOff), true);
+  });
+});

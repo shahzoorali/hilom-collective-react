@@ -43,6 +43,7 @@ interface ChargeRow {
   status: ChargeStatus;
   paymongo_payment_id: string | null;
   receipt_no: string | null;
+  supersedes: string[] | null;
 }
 
 interface RegistrationRow {
@@ -63,7 +64,7 @@ interface RegistrationRow {
 
 const CHARGE_COLUMNS =
   'id, registration_id, event_id, seq, label, is_deposit, amount_centavos, currency, due_at, status, ' +
-  'paymongo_payment_id, receipt_no';
+  'paymongo_payment_id, receipt_no, supersedes';
 
 const REGISTRATION_COLUMNS =
   'id, event_id, plan_id, buyer_email, registrant_name, registrant_email, status, seat_no, ' +
@@ -165,6 +166,38 @@ export async function applyChargePayment(
   if (!claimed) {
     // Lost the race to a concurrent delivery, which has already sent the mail.
     return { chargeId, status: 'paid', alreadyPaid: true, registrationConfirmed: false };
+  }
+
+  // Only now that this payment is definitely recorded do the charges it
+  // replaces stop being due. Read from the row rather than passed in, so that
+  // the webhook, an SQS retry and an admin's offline mark-paid all void the
+  // same rows — only the first of those three ever sees PayMongo's metadata.
+  //
+  // Scoped to this registration and to charges that are still outstanding, so
+  // a superseded charge that was somehow paid in the meantime is left alone
+  // rather than being voided after the fact.
+  const supersedes = charge.supersedes ?? [];
+  if (supersedes.length > 0) {
+    const { error: voidError } = await supabase
+      .from('registration_charges')
+      .update({
+        status: 'void',
+        voided_at: new Date().toISOString(),
+        void_reason: 'paid_off_early',
+        flagged_at: null,
+      })
+      .eq('registration_id', charge.registration_id)
+      .in('id', supersedes)
+      .in('status', ['scheduled', 'awaiting_payment']);
+    if (voidError) {
+      // Not fatal: the money is recorded and the balance charge is paid. A
+      // stale scheduled row is visible and fixable; losing the payment is not.
+      console.error('[registration-fulfillment] could not void superseded charges', {
+        chargeId,
+        supersedes,
+        message: voidError.message,
+      });
+    }
   }
 
   const { data: registration, error: regError } = await supabase

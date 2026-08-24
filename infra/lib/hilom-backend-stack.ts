@@ -786,7 +786,13 @@ export class HilomBackendStack extends cdk.Stack {
     cmsRoutes(eventsTicketing, 'EventsTicketingInt', [['/events/{eventId}/ticketing', [GET]]]);
     cmsRoutes(eventRegistrations, 'EventRegistrationsInt', [
       ['/events/{eventId}/register', [POST]],
+      ['/me/registrations', [GET]],
+      // Literal suffixes before the bare {registrationId} route, same ordering
+      // rule as /admin/pages/trash.
       ['/registrations/{registrationId}/status', [GET]],
+      ['/registrations/{registrationId}/pay-balance', [POST]],
+      ['/registrations/{registrationId}/charges/{chargeId}/pay', [POST]],
+      ['/registrations/{registrationId}', [GET]],
     ]);
     cmsRoutes(adminEvents, 'AdminEventsInt', [
       ['/admin/events', [GET, POST]],

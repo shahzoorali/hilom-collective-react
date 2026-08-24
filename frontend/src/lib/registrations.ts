@@ -180,3 +180,97 @@ export function formatEventDates(startsAt: string, endsAt: string | null): strin
 /** What a plan asks for up front — the deposit, or the whole amount. */
 export const dueNow = (plan: EventPlan): number =>
   plan.installments.find((i) => i.is_deposit)?.amount_centavos ?? plan.total_centavos;
+
+// ---------------------------------------------------------------------------
+// Your own registrations
+// ---------------------------------------------------------------------------
+
+export type ChargeStatus =
+  | 'scheduled'
+  | 'awaiting_payment'
+  | 'paid'
+  | 'waived'
+  | 'void'
+  | 'refunded';
+
+export interface RegistrationCharge {
+  id: string;
+  seq: number;
+  label: string;
+  is_deposit: boolean;
+  amount_centavos: number;
+  currency: string;
+  due_at: string;
+  status: ChargeStatus;
+  paid_at: string | null;
+  receipt_no: string | null;
+}
+
+export interface MyRegistration {
+  id: string;
+  event_id: string;
+  status: 'pending_payment' | 'confirmed' | 'expired' | 'cancelled' | 'completed';
+  registrant_name: string;
+  registrant_email: string;
+  registrant_phone: string | null;
+  registrant_details: Record<string, string>;
+  plan_name: string;
+  plan_kind: PaymentPlanKind;
+  total_centavos: number;
+  currency: string;
+  hold_expires_at: string | null;
+  confirmed_at: string | null;
+  cancellation_requested_at: string | null;
+  cancellation_decided_at: string | null;
+  cancellation_decision: 'approved' | 'declined' | null;
+  created_at: string;
+  charges: RegistrationCharge[];
+  paidCentavos: number;
+  outstandingCentavos: number;
+  fullySettled: boolean;
+  /** The only charge the server will accept payment for right now. */
+  nextChargeId: string | null;
+  events: {
+    title: string;
+    starts_at: string;
+    ends_at: string | null;
+    location: string | null;
+    image_url: string | null;
+    venue_details?: string | null;
+  } | null;
+}
+
+export const listMyRegistrations = () =>
+  apiFetch<{ registrations: MyRegistration[] }>('/me/registrations', {
+    headers: authHeaders(),
+  }).then((r) => r.registrations);
+
+export const getMyRegistration = (registrationId: string) =>
+  apiFetch<{ registration: MyRegistration }>(`/registrations/${registrationId}`, {
+    headers: authHeaders(),
+  }).then((r) => r.registration);
+
+export interface PayResult {
+  chargeId: string;
+  checkoutUrl: string;
+  amountCentavos: number;
+  currency: string;
+  /** True when an already-open session was handed back instead of a new one. */
+  reused: boolean;
+}
+
+export const payCharge = (registrationId: string, chargeId: string) =>
+  apiFetch<PayResult>(`/registrations/${registrationId}/charges/${chargeId}/pay`, {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+  });
+
+export const payBalance = (registrationId: string) =>
+  apiFetch<PayResult>(`/registrations/${registrationId}/pay-balance`, {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+  });
+
+/** Whether a charge still represents money owed. */
+export const isOutstanding = (status: ChargeStatus): boolean =>
+  status === 'scheduled' || status === 'awaiting_payment';
