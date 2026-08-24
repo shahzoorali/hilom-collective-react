@@ -41,11 +41,13 @@ export default function RegistrationDetail() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    if (!registrationId) return;
+    // Not merely an optimization: fetching while signed out is what surfaced
+    // the uncaught-throw bug above, and there is nothing to fetch anyway.
+    if (!registrationId || !user) return;
     getMyRegistration(registrationId)
       .then(setRegistration)
       .catch((err: Error) => setError(err.message));
-  }, [registrationId]);
+  }, [registrationId, user]);
 
   useEffect(() => load(), [load]);
 

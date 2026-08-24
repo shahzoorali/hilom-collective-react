@@ -21,6 +21,22 @@ const jsonAuthHeaders = (): Record<string, string> => ({
   'Content-Type': 'application/json',
 });
 
+/**
+ * Runs a call that builds auth headers, turning a missing token into a
+ * *rejected promise* rather than a synchronous throw.
+ *
+ * Without this, `authHeaders()` throws while the call expression is still
+ * being evaluated — before `apiFetch` returns anything — so the `.catch()` a
+ * caller attached never gets the chance to attach at all. In a `useEffect`
+ * that escapes as an uncaught error and React unmounts the tree: a signed-out
+ * visitor following a link from a confirmation email got a blank white page
+ * instead of a sign-in prompt. Every authenticated call below goes through
+ * here so that failure mode cannot come back.
+ */
+async function withAuth<T>(call: () => Promise<T>): Promise<T> {
+  return await call();
+}
+
 export type PaymentPlanKind = 'full' | 'installment';
 
 export interface PlanInstallment {
@@ -117,11 +133,13 @@ export interface RegisterResult {
 }
 
 export const registerForEvent = (eventId: string, input: RegisterInput) =>
-  apiFetch<RegisterResult>(`/events/${eventId}/register`, {
-    method: 'POST',
-    headers: jsonAuthHeaders(),
-    body: JSON.stringify(input),
-  });
+  withAuth(() =>
+    apiFetch<RegisterResult>(`/events/${eventId}/register`, {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify(input),
+    }),
+  );
 
 export interface RegistrationStatus {
   registrationId: string;
@@ -135,9 +153,11 @@ export interface RegistrationStatus {
 }
 
 export const getRegistrationStatus = (registrationId: string) =>
-  apiFetch<RegistrationStatus>(`/registrations/${registrationId}/status`, {
-    headers: authHeaders(),
-  });
+  withAuth(() =>
+    apiFetch<RegistrationStatus>(`/registrations/${registrationId}/status`, {
+      headers: authHeaders(),
+    }),
+  );
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -241,14 +261,18 @@ export interface MyRegistration {
 }
 
 export const listMyRegistrations = () =>
-  apiFetch<{ registrations: MyRegistration[] }>('/me/registrations', {
-    headers: authHeaders(),
-  }).then((r) => r.registrations);
+  withAuth(() =>
+    apiFetch<{ registrations: MyRegistration[] }>('/me/registrations', {
+      headers: authHeaders(),
+    }).then((r) => r.registrations),
+  );
 
 export const getMyRegistration = (registrationId: string) =>
-  apiFetch<{ registration: MyRegistration }>(`/registrations/${registrationId}`, {
-    headers: authHeaders(),
-  }).then((r) => r.registration);
+  withAuth(() =>
+    apiFetch<{ registration: MyRegistration }>(`/registrations/${registrationId}`, {
+      headers: authHeaders(),
+    }).then((r) => r.registration),
+  );
 
 export interface PayResult {
   chargeId: string;
@@ -260,16 +284,20 @@ export interface PayResult {
 }
 
 export const payCharge = (registrationId: string, chargeId: string) =>
-  apiFetch<PayResult>(`/registrations/${registrationId}/charges/${chargeId}/pay`, {
-    method: 'POST',
-    headers: jsonAuthHeaders(),
-  });
+  withAuth(() =>
+    apiFetch<PayResult>(`/registrations/${registrationId}/charges/${chargeId}/pay`, {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+    }),
+  );
 
 export const payBalance = (registrationId: string) =>
-  apiFetch<PayResult>(`/registrations/${registrationId}/pay-balance`, {
-    method: 'POST',
-    headers: jsonAuthHeaders(),
-  });
+  withAuth(() =>
+    apiFetch<PayResult>(`/registrations/${registrationId}/pay-balance`, {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+    }),
+  );
 
 /** Whether a charge still represents money owed. */
 export const isOutstanding = (status: ChargeStatus): boolean =>
