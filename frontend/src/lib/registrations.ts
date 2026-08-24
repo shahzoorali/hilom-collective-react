@@ -302,3 +302,58 @@ export const payBalance = (registrationId: string) =>
 /** Whether a charge still represents money owed. */
 export const isOutstanding = (status: ChargeStatus): boolean =>
   status === 'scheduled' || status === 'awaiting_payment';
+
+// ---------------------------------------------------------------------------
+// Editing, transferring, cancelling, receipts
+// ---------------------------------------------------------------------------
+
+export interface UpdateRegistrantInput {
+  name: string;
+  email: string;
+  phone?: string;
+  details: Record<string, string>;
+}
+
+/**
+ * Edits the attendee's details. If the name or email changes, the server
+ * treats it as a transfer — blocked once the event has started, and both the
+ * outgoing and incoming attendee are emailed.
+ */
+export const updateRegistrant = (registrationId: string, registrant: UpdateRegistrantInput) =>
+  withAuth(() =>
+    apiFetch<{ registrationId: string; transferred: boolean }>(
+      `/registrations/${registrationId}/registrant`,
+      { method: 'PUT', headers: jsonAuthHeaders(), body: JSON.stringify({ registrant }) },
+    ),
+  );
+
+/**
+ * Asks an admin to cancel this registration. Never changes anything by
+ * itself — the place stays held until someone reviews it.
+ */
+export const requestCancellation = (registrationId: string, reason?: string) =>
+  withAuth(() =>
+    apiFetch<{ registrationId: string; cancellationRequested: boolean }>(
+      `/registrations/${registrationId}/cancel-request`,
+      { method: 'POST', headers: jsonAuthHeaders(), body: JSON.stringify({ reason }) },
+    ),
+  );
+
+export interface Receipt {
+  receiptNo: string | null;
+  label: string;
+  amountCentavos: number;
+  currency: string;
+  paidAt: string | null;
+  paidMethod: string | null;
+  registrantName: string;
+  buyerEmail: string;
+  event: { title: string; starts_at: string; ends_at: string | null; location: string | null } | null;
+}
+
+export const getReceipt = (registrationId: string, chargeId: string) =>
+  withAuth(() =>
+    apiFetch<Receipt>(`/registrations/${registrationId}/charges/${chargeId}/receipt`, {
+      headers: authHeaders(),
+    }),
+  );

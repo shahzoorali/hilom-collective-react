@@ -5,10 +5,8 @@ import FacilitatorProfile from './pages/FacilitatorProfile';
 import BookingFlow from './pages/BookingFlow';
 import BookingProcessing from './pages/BookingProcessing';
 import EventRegister from './pages/EventRegister';
-import AccountRegistrations from './pages/AccountRegistrations';
-import RegistrationDetail from './pages/RegistrationDetail';
+import AccountDashboard from './pages/AccountDashboard';
 import RegistrationProcessing from './pages/RegistrationProcessing';
-import AccountBookings from './pages/AccountBookings';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import CmsOrFallback from './components/CmsOrFallback';
@@ -93,11 +91,13 @@ export default function App() {
                 {/* Literal before the {eventId} route, and both above the
                     /:slug CMS catch-all so no page can shadow them. */}
                 <Route path="/events/registration/processing" element={<RegistrationProcessing />} />
-                {/* Literal before :registrationId, and both under /account,
-                    which is already reserved against CMS page slugs. */}
-                <Route path="/account/registrations" element={<AccountRegistrations />} />
-                <Route path="/account/registrations/:registrationId" element={<RegistrationDetail />} />
                 <Route path="/events/:eventId/register" element={<EventRegister />} />
+                {/* Everything signed-in lives under one shell — /account is
+                    already reserved against CMS page slugs, and the nested
+                    routes (registrations, registrations/:id, bookings,
+                    payments, details) are handled inside AccountDashboard
+                    itself, not enumerated here. */}
+                <Route path="/account/*" element={<AccountDashboard />} />
                 {/* Above the /:slug CMS catch-all, and mirrored in
                     RESERVED_SLUGS server-side so no CMS page can shadow them. */}
                 <Route path="/facilitators" element={<Facilitators />} />
@@ -113,7 +113,6 @@ export default function App() {
                 <Route path="/facilitators/:slug" element={<FacilitatorProfile />} />
                 <Route path="/book/:slug/:serviceId" element={<BookingFlow />} />
                 <Route path="/booking/processing" element={<BookingProcessing />} />
-                <Route path="/account/bookings" element={<AccountBookings />} />
                 <Route path="/blog" element={<Blog />} />
                 <Route path="/blog/category/:categorySlug" element={<Blog />} />
                 <Route path="/blog/:slug" element={<BlogPost />} />

@@ -547,3 +547,105 @@ export async function sendOverdueAdminAlert(input: {
     renderEmail({ heading, body }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Self-service: transfer and cancellation requests
+// ---------------------------------------------------------------------------
+
+/**
+ * Tells both the outgoing and incoming attendee that a place changed hands.
+ *
+ * Sent to both addresses, deliberately: the person stepping back should know
+ * their name is off the roster, and the person stepping in should know the
+ * change was intentional rather than a stranger's confirmation email landing
+ * in their inbox by mistake.
+ */
+export async function sendAttendeeTransferred(input: {
+  eventTitle: string;
+  oldName: string;
+  oldEmail: string;
+  newName: string;
+  newEmail: string;
+}): Promise<void> {
+  const { eventTitle, oldName, oldEmail, newName, newEmail } = input;
+  const heading = `A place at ${eventTitle} changed hands`;
+
+  const bodyFor = (recipient: 'old' | 'new') =>
+    p(
+      recipient === 'old'
+        ? `${escapeHtml(newName)} is now attending ${escapeHtml(eventTitle)} in your place. If this wasn't you, reply to this email right away.`
+        : `You're now down to attend ${escapeHtml(eventTitle)}, taking over from ${escapeHtml(oldName)}. If this wasn't expected, reply to this email.`,
+    );
+
+  await send(
+    oldEmail,
+    heading,
+    renderText(heading, [`${newName} is now attending ${eventTitle} in your place.`, 'If this was not you, reply to this email.']),
+    renderEmail({ heading, body: bodyFor('old') }),
+  );
+
+  await send(
+    newEmail,
+    heading,
+    renderText(heading, [`You're now down to attend ${eventTitle}, taking over from ${oldName}.`, 'If this was not expected, reply to this email.']),
+    renderEmail({ heading, body: bodyFor('new') }),
+  );
+}
+
+/** Confirms a cancellation request was received — not that it was approved. */
+export async function sendCancellationRequested(input: {
+  to: string;
+  registrantName: string;
+  eventTitle: string;
+}): Promise<void> {
+  const { to, registrantName, eventTitle } = input;
+  const heading = `We received your cancellation request`;
+
+  const body =
+    p(`Hello ${escapeHtml(registrantName)},`) +
+    p(
+      `We've received your request to cancel your place at ${escapeHtml(eventTitle)}. Someone will review it and ` +
+        `be in touch — nothing has changed yet, and your place is still held until then.`,
+    ) +
+    note('If you change your mind in the meantime, just reply to this email.');
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `We've received your request to cancel your place at ${eventTitle}.`,
+      'Nothing has changed yet — your place is still held until someone reviews this.',
+    ]),
+    renderEmail({ heading, body }),
+  );
+}
+
+/** Puts a cancellation request in front of an admin without waiting for the queue to be checked. */
+export async function sendCancellationRequestedAdminAlert(input: {
+  to: string;
+  registrationId: string;
+  registrantName: string;
+  eventTitle: string;
+  reason: string | null;
+}): Promise<void> {
+  const { to, registrationId, registrantName, eventTitle, reason } = input;
+  const heading = `Cancellation requested: ${eventTitle}`;
+
+  const body =
+    p(`${escapeHtml(registrantName)} has asked to cancel their place at ${escapeHtml(eventTitle)}.`) +
+    (reason ? p(escapeHtml(reason)) : '') +
+    button('Review in admin', `${SITE}/admin/registrations`);
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `${registrantName} has asked to cancel their place at ${eventTitle}.`,
+      ...(reason ? ['', reason] : []),
+      '',
+      `${SITE}/admin/registrations`,
+      `(registration ${registrationId})`,
+    ]),
+    renderEmail({ heading, body }),
+  );
+}

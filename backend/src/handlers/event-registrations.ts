@@ -7,6 +7,9 @@
  *   GET  /registrations/{registrationId}/status
  *   POST /registrations/{registrationId}/charges/{chargeId}/pay
  *   POST /registrations/{registrationId}/pay-balance
+ *   PUT  /registrations/{registrationId}/registrant
+ *   POST /registrations/{registrationId}/cancel-request
+ *   GET  /registrations/{registrationId}/charges/{chargeId}/receipt
  *
  * Cognito-authenticated throughout: `requireBuyer` gives a verified, confirmed
  * email, which is the identity a registration is keyed on — there is no users
@@ -25,6 +28,8 @@ import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json } from '../lib/http.js';
 import { requireBuyer, UnauthorizedError } from '../lib/auth.js';
 import { createHostedCheckout } from '../lib/paymongo-checkout.js';
+import { selfActor, recordAudit } from '../lib/audit.js';
+import { sendAttendeeTransferred, sendCancellationRequested, sendCancellationRequestedAdminAlert } from '../lib/registration-email.js';
 import {
   buildSchedule,
   activePlans,
@@ -127,6 +132,15 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (registrationId && method === 'POST' && path.endsWith('/pay-balance')) {
       return await payBalance(registrationId, buyer);
+    }
+    if (registrationId && method === 'PUT' && path.endsWith('/registrant')) {
+      return await updateRegistrant(event, registrationId, buyer);
+    }
+    if (registrationId && method === 'POST' && path.endsWith('/cancel-request')) {
+      return await requestCancellation(event, registrationId, buyer.email);
+    }
+    if (registrationId && chargeId && method === 'GET' && path.endsWith('/receipt')) {
+      return await receipt(registrationId, chargeId, buyer.email);
     }
     // Bare /registrations/{id} last: every literal-suffixed route above would
     // also match this one's shape.
@@ -366,6 +380,9 @@ const CHARGE_COLUMNS =
   'id, seq, label, is_deposit, amount_centavos, currency, due_at, status, paid_at, receipt_no, ' +
   'checkout_url, checkout_expires_at';
 
+/** For the admin nudge sent when a registrant asks to cancel. */
+const ADMIN_ALERT_EMAIL = process.env.ADMIN_ALERT_EMAIL;
+
 /**
  * Columns safe to hand a buyer.
  *
@@ -449,7 +466,7 @@ async function detail(registrationId: string, email: string): Promise<APIGateway
 
   const { data, error } = await supabase
     .from('event_registrations')
-    .select(`${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, image_url, venue_details)`)
+    .select(`${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, image_url, venue_details, registrant_fields)`)
     .eq('id', registrationId)
     .maybeSingle<OwnedRegistration>();
   if (error) throw error;
@@ -793,4 +810,257 @@ async function openCheckoutForCharge(input: {
     .in('status', ['scheduled', 'awaiting_payment']);
 
   return session;
+}
+
+// ---------------------------------------------------------------------------
+// Editing your own registrant details — and, when the identity changes, a
+// self-service transfer.
+// ---------------------------------------------------------------------------
+
+interface RegistrantEditRow extends OwnedRegistration {
+  event_id: string;
+  registrant_name: string;
+  registrant_email: string;
+  registrant_phone: string | null;
+  registrant_details: Record<string, string>;
+  events: { title: string; starts_at: string; registrant_fields: string[] } | null;
+}
+
+/**
+ * Updates who is attending, and what the event asked them for.
+ *
+ * A **transfer** — the name or email changing — is not a separate endpoint,
+ * because the attendee record is one thing whether three characters of a
+ * phone number change or the whole person does. What differs is the guard and
+ * the notification: changing who is attending is blocked once the event has
+ * started (there is no one left to hand a place to mid-retreat), and it emails
+ * *both* the outgoing and incoming attendee, because the roster is printed and
+ * handed to a venue — a silent change to who is coming is a safety issue, not
+ * only a data one. A dietary note or a phone number changing is neither
+ * blocked nor announced; it is simply saved.
+ */
+async function updateRegistrant(
+  event: APIGatewayProxyEventV2,
+  registrationId: string,
+  buyer: { email: string },
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const body = parseBody(event);
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(`${OWN_REGISTRATION_COLUMNS}, event_id, events(title, starts_at, registrant_fields)`)
+    .eq('id', registrationId)
+    .maybeSingle<RegistrantEditRow>();
+  if (error) throw error;
+  if (!registration || registration.buyer_email.toLowerCase() !== buyer.email.toLowerCase()) {
+    return notFound('Registration not found');
+  }
+  if (registration.status === 'cancelled' || registration.status === 'expired') {
+    return conflict('This registration is no longer active.');
+  }
+
+  const next = validateRegistrant({
+    requestedFields: registration.events?.registrant_fields ?? [],
+    body: (body.registrant ?? body) as Record<string, unknown>,
+  });
+
+  const identityChanged =
+    next.name.trim().toLowerCase() !== registration.registrant_name.trim().toLowerCase() ||
+    next.email.toLowerCase() !== registration.registrant_email.toLowerCase();
+
+  if (identityChanged) {
+    const startsAt = registration.events?.starts_at;
+    if (startsAt && Date.parse(startsAt) <= Date.now()) {
+      return conflict(
+        'This event has already started, so the place can no longer be handed to someone else. ' +
+          'Write to kumusta@hilomcollective.com if you need help.',
+      );
+    }
+  }
+
+  const before = {
+    name: registration.registrant_name,
+    email: registration.registrant_email,
+    phone: registration.registrant_phone,
+    details: registration.registrant_details,
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from('event_registrations')
+    .update({
+      registrant_name: next.name,
+      registrant_email: next.email,
+      registrant_phone: next.phone ?? null,
+      registrant_details: next.details,
+      ...(identityChanged ? { transferred_at: new Date().toISOString() } : {}),
+    })
+    .eq('id', registrationId)
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (updateError) throw updateError;
+  if (!updated) return notFound('Registration not found');
+
+  await recordAudit(selfActor(buyer.email, event), {
+    action: identityChanged ? 'registration.transferred' : 'registration.registrant_updated',
+    targetTable: 'event_registrations',
+    targetId: registrationId,
+    eventId: registration.event_id,
+    before,
+    after: { name: next.name, email: next.email, phone: next.phone ?? null, details: next.details },
+  });
+
+  if (identityChanged && registration.events) {
+    // Best-effort, and to both addresses: the person stepping back should know
+    // their place was handed off, and the person stepping in should know it
+    // was intentional and not a mistake landing in their inbox.
+    await sendAttendeeTransferred({
+      eventTitle: registration.events.title,
+      oldName: registration.registrant_name,
+      oldEmail: registration.registrant_email,
+      newName: next.name,
+      newEmail: next.email,
+    }).catch((err) => console.error('[eventRegistrations] transfer email failed', err));
+  }
+
+  return ok({ registrationId, transferred: identityChanged });
+}
+
+// ---------------------------------------------------------------------------
+// Requesting cancellation
+// ---------------------------------------------------------------------------
+
+/**
+ * Records that a registrant wants to cancel. Nothing else.
+ *
+ * Sets `cancellation_requested_at` and the reason, full stop — never `status`,
+ * never `hold_expires_at`. The seat stays exactly as held as it was a moment
+ * ago, because the decision belongs to an admin (Phase 5's cancel endpoint),
+ * and a request is not yet a decision.
+ */
+async function requestCancellation(
+  event: APIGatewayProxyEventV2,
+  registrationId: string,
+  email: string,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const body = parseBody(event);
+  const reason = String(body.reason ?? '').trim().slice(0, 500) || null;
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(`${OWN_REGISTRATION_COLUMNS}, event_id, events(title, starts_at, ends_at, location)`)
+    .eq('id', registrationId)
+    .maybeSingle<
+      OwnedRegistration & {
+        event_id: string;
+        cancellation_requested_at: string | null;
+        events: { title: string; starts_at: string; ends_at: string | null; location: string | null } | null;
+      }
+    >();
+  if (error) throw error;
+  if (!registration || registration.buyer_email.toLowerCase() !== email.toLowerCase()) {
+    return notFound('Registration not found');
+  }
+  if (registration.status === 'cancelled') return conflict('This registration is already cancelled.');
+  if (registration.status === 'expired') return conflict('This registration is no longer active.');
+  if (registration.cancellation_requested_at) {
+    return conflict("You've already asked to cancel — someone will be in touch.");
+  }
+
+  const { data: claimed, error: updateError } = await supabase
+    .from('event_registrations')
+    .update({ cancellation_requested_at: new Date().toISOString(), cancellation_reason: reason })
+    .eq('id', registrationId)
+    .is('cancellation_requested_at', null)
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (updateError) throw updateError;
+  if (!claimed) return conflict("You've already asked to cancel — someone will be in touch.");
+
+  if (registration.events) {
+    await sendCancellationRequested({
+      to: registration.buyer_email,
+      registrantName: (registration as unknown as { registrant_name: string }).registrant_name,
+      eventTitle: registration.events.title,
+    }).catch((err) => console.error('[eventRegistrations] cancellation-requested email failed', err));
+
+    if (ADMIN_ALERT_EMAIL) {
+      await sendCancellationRequestedAdminAlert({
+        to: ADMIN_ALERT_EMAIL,
+        registrationId,
+        registrantName: (registration as unknown as { registrant_name: string }).registrant_name,
+        eventTitle: registration.events.title,
+        reason,
+      }).catch((err) => console.error('[eventRegistrations] cancellation admin alert failed', err));
+    }
+  }
+
+  return ok({ registrationId, cancellationRequested: true });
+}
+
+// ---------------------------------------------------------------------------
+// Receipts
+// ---------------------------------------------------------------------------
+
+interface ReceiptChargeRow {
+  id: string;
+  label: string;
+  amount_centavos: number;
+  currency: string;
+  paid_at: string | null;
+  paid_method: string | null;
+  receipt_no: string | null;
+  status: ChargeStatus;
+}
+
+/**
+ * One payment's receipt, ownership-checked through the registration.
+ *
+ * Only ever answers for a charge that is actually `paid` — there is nothing to
+ * receipt for money that has not arrived, and returning one would look like
+ * proof of a payment that never happened.
+ */
+async function receipt(
+  registrationId: string,
+  chargeId: string,
+  email: string,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(`${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location)`)
+    .eq('id', registrationId)
+    .maybeSingle<
+      OwnedRegistration & {
+        registrant_name: string;
+        events: { title: string; starts_at: string; ends_at: string | null; location: string | null } | null;
+      }
+    >();
+  if (error) throw error;
+  if (!registration || registration.buyer_email.toLowerCase() !== email.toLowerCase()) {
+    return notFound('Registration not found');
+  }
+
+  const { data: charge, error: chargeError } = await supabase
+    .from('registration_charges')
+    .select('id, label, amount_centavos, currency, paid_at, paid_method, receipt_no, status')
+    .eq('registration_id', registrationId)
+    .eq('id', chargeId)
+    .maybeSingle<ReceiptChargeRow>();
+  if (chargeError) throw chargeError;
+  if (!charge || charge.status !== 'paid') return notFound('No receipt for this payment yet.');
+
+  return ok({
+    receiptNo: charge.receipt_no,
+    label: charge.label,
+    amountCentavos: charge.amount_centavos,
+    currency: charge.currency,
+    paidAt: charge.paid_at,
+    paidMethod: charge.paid_method,
+    registrantName: registration.registrant_name,
+    buyerEmail: registration.buyer_email,
+    event: registration.events,
+  });
 }

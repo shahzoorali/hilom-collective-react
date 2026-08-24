@@ -600,6 +600,9 @@ export class HilomBackendStack extends cdk.Stack {
     // Same address the DLQ alarm already notifies — one inbox for "something
     // needs a human", not a second one to remember to check.
     registrationSweep.addEnvironment('ADMIN_ALERT_EMAIL', props.alertEmail ?? DEFAULT_ALERT_EMAIL);
+    // eventRegistrations also sends one of these — the cancellation-request
+    // alert — the moment someone asks, rather than only via the sweep.
+    eventRegistrations.addEnvironment('ADMIN_ALERT_EMAIL', props.alertEmail ?? DEFAULT_ALERT_EMAIL);
 
     // Presigning can only sign what the signing role is itself allowed to do,
     // so these grants are what make the upload URL work — and what bound it.
@@ -827,7 +830,10 @@ export class HilomBackendStack extends cdk.Stack {
       // rule as /admin/pages/trash.
       ['/registrations/{registrationId}/status', [GET]],
       ['/registrations/{registrationId}/pay-balance', [POST]],
+      ['/registrations/{registrationId}/registrant', [PUT]],
+      ['/registrations/{registrationId}/cancel-request', [POST]],
       ['/registrations/{registrationId}/charges/{chargeId}/pay', [POST]],
+      ['/registrations/{registrationId}/charges/{chargeId}/receipt', [GET]],
       ['/registrations/{registrationId}', [GET]],
     ]);
     cmsRoutes(adminEvents, 'AdminEventsInt', [
