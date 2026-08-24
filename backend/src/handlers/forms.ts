@@ -5,9 +5,13 @@
  *   POST /forms/{slug}/submissions  — store one submission
  *
  * The community signup form does NOT come through here — it posts to
- * /community/submit and is emailed to the team via SES. This endpoint is for
- * forms an admin builds in the CMS, whose submissions are stored and read back
- * in the admin.
+ * /community/submit and is always emailed to the team. This endpoint is for
+ * forms an admin builds in the CMS: every submission is stored and readable in
+ * Admin → Forms regardless of configuration, and is *also* emailed if the form
+ * has a `notify_email` set (Admin → Forms → edit form). Until 2026-08-24 that
+ * field was configurable but silently did nothing — a submission landed only
+ * in the admin table, so a form nobody thought to check the admin for (like
+ * the retreat waitlist) could go unnoticed indefinitely.
  *
  * Submissions are validated against the stored field definitions rather than
  * trusted: this endpoint is unauthenticated and internet-facing, so the form
@@ -15,12 +19,14 @@
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { createHash } from 'node:crypto';
+import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, serverError, json } from '../lib/http.js';
 import { getSecret } from '../lib/secrets.js';
 import { stripTags } from '../lib/sanitize.js';
 import type { FormField } from '../lib/cms-blocks.js';
 import { verifyRecaptcha } from '../lib/recaptcha.js';
+import { buildFormNotificationEmail } from '../lib/form-notification.js';
 
 const MAX_TEXT_LENGTH = 5000;
 /** Submissions allowed from one IP within the window below. */
@@ -28,6 +34,10 @@ const RATE_LIMIT = 5;
 const RATE_WINDOW_MINUTES = 10;
 /** Bots fill every field they find, including one CSS-hidden from humans. */
 const HONEYPOT_FIELD = '_website';
+
+// Same region/identity as every other Hilom sender — see community.ts.
+const sesClient = new SESv2Client({ region: 'ap-south-1' });
+const SENDER = 'Hilom Collective Website <website@hilomcollective.com>';
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   const slug = event.pathParameters?.slug;
@@ -70,7 +80,7 @@ async function submit(
   const supabase = await getSupabase();
   const { data: form, error } = await supabase
     .from('forms')
-    .select('id, fields, success_message, requires_captcha')
+    .select('id, name, fields, success_message, requires_captcha, notify_email')
     .eq('slug', slug)
     .maybeSingle();
 
@@ -101,18 +111,66 @@ async function submit(
     return badRequest(err instanceof Error ? err.message : 'Invalid submission');
   }
 
+  const isSpam = Boolean(body[HONEYPOT_FIELD]);
   const { error: insertError } = await supabase.from('form_submissions').insert({
     form_id: form.id,
     data,
     ip_hash: ipHash,
     user_agent: (event.headers['user-agent'] ?? '').slice(0, 500),
-    is_spam: Boolean(body[HONEYPOT_FIELD]),
+    is_spam: isSpam,
   });
   if (insertError) throw insertError;
+
+  // Honeypot catches never notify — the whole point of a silent flag is that
+  // it costs the bot nothing to trip, and mailing the team on every trip would
+  // just teach them to ignore this inbox. A genuine submission is stored either
+  // way, so nothing is lost by not emailing the ones that failed the honeypot.
+  if (form.notify_email && !isSpam) {
+    // Best-effort: a submission the buyer was told succeeded must not become a
+    // 500 because the notification email happened to fail.
+    await notifySubmission(form.notify_email, form.name, fields, data).catch((err: unknown) =>
+      console.error(`[forms.notifySubmission] form=${slug}`, err),
+    );
+  }
 
   // The same response either way: telling a bot it was flagged just teaches it
   // to stop filling the honeypot.
   return ok({ ok: true, message: form.success_message });
+}
+
+/**
+ * Emails the form's configured recipient, branded like every other Hilom
+ * email even though this one goes to the team rather than a member — see the
+ * same note in community.ts. Content shaping lives in lib/form-notification.ts,
+ * where it can be tested without mocking SES.
+ */
+async function notifySubmission(
+  recipient: string,
+  formName: string,
+  fields: FormField[],
+  data: Record<string, unknown>,
+): Promise<void> {
+  const { subject, textBody, htmlBody, replyTo } = buildFormNotificationEmail(formName, fields, data);
+
+  await sesClient.send(
+    new SendEmailCommand({
+      FromEmailAddress: SENDER,
+      Destination: { ToAddresses: [recipient] },
+      // Lets the team just hit "Reply" to respond straight to the submitter,
+      // same as the community form — only set when a field on the form
+      // actually collected an email address.
+      ...(replyTo ? { ReplyToAddresses: [replyTo] } : {}),
+      Content: {
+        Simple: {
+          Subject: { Data: subject },
+          Body: {
+            Text: { Data: textBody },
+            Html: { Data: htmlBody },
+          },
+        },
+      },
+    }),
+  );
 }
 
 /** Copies only declared fields out of the request, enforcing each one's rules. */
