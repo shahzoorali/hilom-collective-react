@@ -607,7 +607,10 @@ export class HilomBackendStack extends cdk.Stack {
           apigw.CorsHttpMethod.DELETE,
           apigw.CorsHttpMethod.OPTIONS,
         ],
-        allowHeaders: ['content-type', 'x-admin-key', 'authorization'],
+        // x-admin-actor carries the operator's name for the audit log. Omitting
+        // it here does not degrade gracefully — the browser fails preflight and
+        // every admin write surfaces as an opaque "Failed to fetch".
+        allowHeaders: ['content-type', 'x-admin-key', 'authorization', 'x-admin-actor'],
         maxAge: cdk.Duration.hours(1),
       },
       ...(domainName
@@ -755,6 +758,9 @@ export class HilomBackendStack extends cdk.Stack {
     cmsRoutes(eventsPublic, 'EventsPublicInt', [['/events', [GET]]]);
     cmsRoutes(adminEvents, 'AdminEventsInt', [
       ['/admin/events', [GET, POST]],
+      // Literal before {param}: /plans has to be registered ahead of the bare
+      // {eventId} route, same ordering rule as /admin/pages/trash.
+      ['/admin/events/{eventId}/plans', [GET, PUT]],
       ['/admin/events/{eventId}', [GET, PUT, DELETE]],
     ]);
     cmsRoutes(postsPublic, 'PostsPublicInt', [

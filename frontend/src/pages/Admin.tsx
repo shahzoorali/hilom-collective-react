@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams, Link } from 'react-router-dom';
-import { adminListPages } from '../lib/cms';
+import { adminListPages, ADMIN_ACTOR_STORAGE } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
@@ -47,6 +47,11 @@ function PostEditorRoute({ adminKey }: { adminKey: string }) {
 export default function Admin() {
   const [adminKey, setAdminKey] = useState(() => sessionStorage.getItem(KEY_STORAGE) ?? '');
   const [showPassword, setShowPassword] = useState(false);
+  // Recorded against money-affecting actions in the audit log. The key is
+  // shared, so this is an attestation rather than proof of who acted — the
+  // labels below say so, because a name that looks like authentication and is
+  // not is worse than no name at all.
+  const [actor, setActor] = useState(() => sessionStorage.getItem(ADMIN_ACTOR_STORAGE) ?? '');
   const [authed, setAuthed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -78,6 +83,7 @@ export default function Admin() {
 
   function signOut() {
     sessionStorage.removeItem(KEY_STORAGE);
+    sessionStorage.removeItem(ADMIN_ACTOR_STORAGE);
     setAuthed(false);
     setAdminKey('');
     navigate('/admin/pages');
@@ -141,6 +147,25 @@ export default function Admin() {
                   {showPassword ? '👁️' : '🔒'}
                 </button>
               </div>
+            </div>
+
+            <div className="field" style={{ marginBottom: '1.25rem' }}>
+              <label htmlFor="actor" style={{ fontWeight: 600 }}>Your name</label>
+              <input
+                id="actor"
+                value={actor}
+                autoComplete="name"
+                placeholder="e.g. Rina"
+                onChange={(e) => {
+                  setActor(e.target.value);
+                  sessionStorage.setItem(ADMIN_ACTOR_STORAGE, e.target.value);
+                }}
+              />
+              <span className="small muted">
+                Recorded next to anything you do that moves money, so the ledger reads
+                “Rina marked this paid” instead of “someone did”. This key is shared, so it is a label
+                you are choosing — not a login.
+              </span>
             </div>
 
             <button

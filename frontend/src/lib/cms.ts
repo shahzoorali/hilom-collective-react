@@ -84,11 +84,32 @@ export const submitForm = (slug: string, data: Record<string, unknown>) =>
 
 // --- admin ---
 
-const adminInit = (adminKey: string, method?: string, body?: unknown): RequestInit => ({
-  method,
-  headers: { 'x-admin-key': adminKey, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-  ...(body ? { body: JSON.stringify(body) } : {}),
-});
+/**
+ * The name the operator typed at sign-in, recorded against money-affecting
+ * admin actions in the audit log.
+ *
+ * This is an attestation, not authentication: the admin key is shared, so
+ * anyone holding it can type any name. It is worth sending anyway — an audit
+ * row reading "Rina · shared key session · 112.198.x.x" is the difference
+ * between a usable reconciliation trail and "someone did this". The admin UI
+ * labels it honestly for the same reason.
+ */
+export const ADMIN_ACTOR_STORAGE = 'hilom.adminActor';
+
+export const adminActor = (): string => sessionStorage.getItem(ADMIN_ACTOR_STORAGE) ?? '';
+
+const adminInit = (adminKey: string, method?: string, body?: unknown): RequestInit => {
+  const actor = adminActor();
+  return {
+    method,
+    headers: {
+      'x-admin-key': adminKey,
+      ...(actor ? { 'x-admin-actor': actor } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  };
+};
 
 /** `trash` and `scheduled` share the enum `published`/`draft` already used
  *  everywhere status is checked — see db/migrations/0009 for why. */
@@ -314,6 +335,73 @@ export interface AdminEvent extends CmsEvent {
   status: 'draft' | 'published';
   created_at: string;
   updated_at: string;
+  // Ticketing (migration 0016). Null/false on every listing-only event, which
+  // is every event that existed before ticketing shipped.
+  ticketing_enabled: boolean;
+  format: EventFormat | null;
+  capacity: number | null;
+  currency: string;
+  registration_opens_at: string | null;
+  registration_closes_at: string | null;
+  hold_minutes: number;
+  venue_details: string | null;
+  terms_html: string | null;
+  registrant_fields: string[];
+}
+
+export type EventFormat = 'residential' | 'virtual' | 'day';
+export type PaymentPlanKind = 'full' | 'installment';
+
+/** Fields an event may ask a registrant for, beyond name/email/phone. */
+export const REGISTRANT_FIELDS = [
+  'dietary',
+  'emergency_contact',
+  'emergency_phone',
+  'room_preference',
+  'medical_notes',
+  'accessibility_needs',
+  'pronouns',
+  'how_did_you_hear',
+] as const;
+
+export const REGISTRANT_FIELD_LABELS: Record<string, string> = {
+  dietary: 'Dietary requirements',
+  emergency_contact: 'Emergency contact name',
+  emergency_phone: 'Emergency contact number',
+  room_preference: 'Room preference',
+  medical_notes: 'Medical notes',
+  accessibility_needs: 'Accessibility needs',
+  pronouns: 'Pronouns',
+  how_did_you_hear: 'How did you hear about us?',
+};
+
+export interface AdminInstallment {
+  id?: string;
+  seq: number;
+  label: string;
+  amount_centavos: number;
+  /** Absolute due date as a Manila calendar day. Null for the deposit. */
+  due_at: string | null;
+  due_offset_days: number | null;
+  is_deposit: boolean;
+}
+
+export interface AdminPlan {
+  id?: string;
+  name: string;
+  description: string | null;
+  kind: PaymentPlanKind;
+  total_centavos: number;
+  currency: string;
+  available_from: string | null;
+  available_until: string | null;
+  is_active: boolean;
+  sort_order: number;
+  installments: AdminInstallment[];
+  /** Read-only, returned by the API: how many people are on this plan. */
+  registration_count?: number;
+  /** True once anyone has registered — money and schedule become immutable. */
+  schedule_locked?: boolean;
 }
 
 /** The write shape: image travels as one {id,url,alt} object (same MediaRef
@@ -331,6 +419,18 @@ export type AdminEventInput = {
   link_label?: string;
   note?: string;
   status?: 'draft' | 'published';
+  // Ticketing. Omitted entirely by the listing-only form; the backend's
+  // validateTicketing returns null when none of these keys are present, so a
+  // save from that form cannot clear a configured event's capacity.
+  ticketing_enabled?: boolean;
+  format?: EventFormat | null;
+  capacity?: number | null;
+  registration_opens_at?: string | null;
+  registration_closes_at?: string | null;
+  hold_minutes?: number;
+  venue_details?: string | null;
+  terms_html?: string | null;
+  registrant_fields?: string[];
 };
 
 export const adminListEvents = (adminKey: string) =>
@@ -347,6 +447,25 @@ export const adminUpdateEvent = (adminKey: string, eventId: string, input: Admin
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>
   apiFetch<{ deleted: boolean }>(`/admin/events/${eventId}`, adminInit(adminKey, 'DELETE'));
+
+export const adminGetEventPlans = (adminKey: string, eventId: string) =>
+  apiFetch<{ plans: AdminPlan[] }>(
+    `/admin/events/${eventId}/plans`,
+    adminInit(adminKey),
+  ).then((r) => r.plans);
+
+/**
+ * Writes the whole plan set at once.
+ *
+ * Not a per-plan endpoint: the database's totals trigger is deferred to commit,
+ * so a schedule has to arrive complete or it never adds up. See
+ * replace_event_plans in migration 0017.
+ */
+export const adminReplaceEventPlans = (adminKey: string, eventId: string, plans: AdminPlan[]) =>
+  apiFetch<{ plans: AdminPlan[] }>(
+    `/admin/events/${eventId}/plans`,
+    adminInit(adminKey, 'PUT', { plans }),
+  ).then((r) => r.plans);
 
 // --- blog (public) ---
 

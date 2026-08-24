@@ -16,6 +16,12 @@ import {
 import type { MediaRef } from '../../cms/blocks';
 import MediaField from './MediaField';
 import RichTextEditor from './RichTextEditor';
+import EventTicketingEditor, {
+  blankTicketing,
+  ticketingToDraft,
+  ticketingToInput,
+  type TicketingDraft,
+} from './EventTicketingEditor';
 
 function toLocalInput(iso: string | null): string {
   if (!iso) return '';
@@ -42,6 +48,10 @@ interface Draft {
   link_label: string;
   note: string;
   status: 'draft' | 'published';
+  /** Null until the admin opens the ticketing section, which is what keeps a
+   *  save from this form from touching a listing-only event's ticketing at
+   *  all — the backend only applies ticketing when the body mentions it. */
+  ticketing: TicketingDraft | null;
 }
 
 const blankDraft: Draft = {
@@ -55,6 +65,7 @@ const blankDraft: Draft = {
   link_label: '',
   note: '',
   status: 'draft',
+  ticketing: null,
 };
 
 function toDraft(event: AdminEvent): Draft {
@@ -70,6 +81,9 @@ function toDraft(event: AdminEvent): Draft {
     link_label: event.link_label ?? '',
     note: event.note ?? '',
     status: event.status,
+    // Only pre-load ticketing for an event that already has it. Leaving this
+    // null for a plain listing event means a save cannot disturb it.
+    ticketing: event.ticketing_enabled ? ticketingToDraft(event) : null,
   };
 }
 
@@ -86,6 +100,7 @@ function toInput(draft: Draft): AdminEventInput {
     link_label: draft.link_label.trim() || undefined,
     note: draft.note.trim() || undefined,
     status: draft.status,
+    ...(draft.ticketing ? ticketingToInput(draft.ticketing) : {}),
   };
 }
 
@@ -426,6 +441,34 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                 <option value="draft">Draft (Private)</option>
                 <option value="published">Published (Live on site)</option>
               </select>
+            </div>
+
+            <div className="field" style={{ gridColumn: 'span 2' }}>
+              <label>Registration &amp; payment</label>
+              {draft.ticketing === null ? (
+                <div className="panel" style={{ padding: 12 }}>
+                  <p className="small muted" style={{ margin: '0 0 10px' }}>
+                    This event is a listing only — people read about it and follow the link below. Turn on
+                    registration to sell places, take payment, and track who has paid.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() =>
+                      setDraft((d) => ({ ...d, ticketing: { ...blankTicketing, ticketing_enabled: true } }))
+                    }
+                  >
+                    Set up registration
+                  </button>
+                </div>
+              ) : (
+                <EventTicketingEditor
+                  adminKey={adminKey}
+                  eventId={openId === 'new' ? null : openId}
+                  value={draft.ticketing}
+                  onChange={(next) => setDraft((d) => ({ ...d, ticketing: next }))}
+                />
+              )}
             </div>
 
             <div className="field">
