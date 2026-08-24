@@ -22,6 +22,7 @@ import { verifyWebhookSignature, parseWebhookEvent, SignatureVerificationError }
 import { getSupabase } from '../lib/supabase.js';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
+import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import { enqueueRetry } from '../lib/retry-queue.js';
 import { ok, badRequest, serverError } from '../lib/http.js';
 
@@ -127,16 +128,20 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     paymentData,
   );
 
-  // Two things are sold through this endpoint now: courses and facilitator
-  // sessions. `kind` is set in the checkout session's metadata by whichever
-  // flow created it.
+  // Three things are sold through this endpoint now: courses, facilitator
+  // sessions, and places at ticketed events. `kind` is set in the checkout
+  // session's metadata by whichever flow created it.
   //
   // Its *absence* means a course order. That is not a fallback for tidiness —
   // `checkout.ts` writes no `kind` at all, so treating missing as 'product' is
   // what keeps course checkout working unchanged, including sessions already
   // in flight when this deployed.
   if (metadata.kind === 'booking') {
-    return handleBooking(paymentId, metadata.booking_id, eventType);
+    return await handleBooking(paymentId, metadata.booking_id, eventType);
+  }
+
+  if (metadata.kind === 'event_registration') {
+    return await handleRegistrationCharge(paymentId, metadata.charge_id, eventType);
   }
 
   const productId = metadata.product_id;
@@ -236,6 +241,41 @@ async function handleBooking(
     const message = err instanceof Error ? err.message : String(err);
     console.error('[paymongo-webhook] booking confirmation failed, queuing retry', { bookingId, message });
     await enqueueRetry(bookingId, message, 'booking');
+    return ok({ received: true, handled: true, status: 'queued_for_retry' });
+  }
+}
+
+/**
+ * A payment against one registration charge — a deposit, an instalment, or a
+ * balance settled early.
+ *
+ * Same contract as the two paths above: once the signature verifies, always
+ * 200, and business failures go to the retry queue rather than to PayMongo's
+ * backoff. The charge row already exists (claim_event_seat wrote the whole
+ * schedule before checkout opened), so this only ever transitions one, never
+ * creates one — which is what makes a redelivered payment a no-op instead of a
+ * duplicate charge.
+ */
+async function handleRegistrationCharge(
+  paymentId: string | undefined,
+  chargeId: string | undefined,
+  eventType: string,
+): Promise<APIGatewayProxyResultV2> {
+  if (!chargeId) {
+    // Expected for the sibling `payment.paid` event: metadata lives on the
+    // checkout session, so only `checkout_session.payment.paid` carries it.
+    // Missing metadata never becomes present on redelivery, so no retry.
+    console.warn('[paymongo-webhook] registration event without charge_id, skipping', { eventType, paymentId });
+    return ok({ received: true, handled: false, error: 'missing_charge_id' });
+  }
+
+  try {
+    const result = await applyChargePayment(chargeId, paymentId);
+    return ok({ received: true, handled: true, status: result.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[paymongo-webhook] registration charge failed, queuing retry', { chargeId, message });
+    await enqueueRetry(chargeId, message, 'registration_charge');
     return ok({ received: true, handled: true, status: 'queued_for_retry' });
   }
 }

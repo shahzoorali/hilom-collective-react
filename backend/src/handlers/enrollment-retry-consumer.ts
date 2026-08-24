@@ -11,6 +11,7 @@
 import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
+import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import type { RetryKind } from '../lib/retry-queue.js';
 
 interface RetryMessage {
@@ -39,6 +40,13 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
       if (kind === 'booking') {
         const result = await confirmBooking(message.orderId);
         console.log(`[enrollment-retry-consumer] booking ${message.orderId} -> ${result.status}`);
+      } else if (kind === 'registration_charge') {
+        // `orderId` carries the charge id — the field keeps its original name
+        // for in-flight compatibility, as retry-queue.ts explains. No payment
+        // id is passed: the webhook stamped it on the row before it failed,
+        // which is exactly why applyChargePayment stamps it first.
+        const result = await applyChargePayment(message.orderId);
+        console.log(`[enrollment-retry-consumer] charge ${message.orderId} -> ${result.status}`);
       } else {
         const result = await fulfillOrder(message.orderId);
         console.log(`[enrollment-retry-consumer] order ${message.orderId} -> ${result.status}`);
