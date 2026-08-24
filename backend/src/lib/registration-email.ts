@@ -436,3 +436,114 @@ export async function sendRegistrationCancelled(
     renderEmail({ preheader: `Your place at ${event.title} has been cancelled.`, heading, body }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Sweep-triggered
+// ---------------------------------------------------------------------------
+
+type ReminderTier = 'due_in_7d' | 'due_today' | 'overdue_3d' | 'overdue_7d';
+
+const TIER_COPY: Record<ReminderTier, { subject: (label: string) => string; lead: string }> = {
+  due_in_7d: {
+    subject: (label) => `Coming up: ${label}`,
+    lead: 'Just a heads up — this is coming up in a week.',
+  },
+  due_today: {
+    subject: (label) => `Due today: ${label}`,
+    lead: 'This is due today.',
+  },
+  overdue_3d: {
+    subject: (label) => `We missed a payment — ${label}`,
+    lead: "We haven't received this yet. Your place is still held — there's no rush, just a nudge.",
+  },
+  overdue_7d: {
+    subject: (label) => `Please get in touch — ${label}`,
+    lead:
+      "This has been outstanding a week now. Your place is still held and nothing is at risk — " +
+      'if anything about the timing is difficult, just reply to this email and we will sort it out.',
+  },
+};
+
+/**
+ * One of the four instalment reminder emails.
+ *
+ * A single template rather than four, differing only in heading and lead
+ * line — the four tiers are one message getting gradually more direct, not
+ * four different messages, and writing them as one template is what keeps
+ * that consistent.
+ */
+export async function sendChargeReminder(input: {
+  tier: ReminderTier;
+  to: string;
+  registrantName: string;
+  eventTitle: string;
+  label: string;
+  amountCentavos: number;
+  currency: string;
+  dueAt: string;
+  registrationId: string;
+}): Promise<void> {
+  const { tier, to, registrantName, eventTitle, label, amountCentavos, currency, dueAt, registrationId } = input;
+  const copy = TIER_COPY[tier];
+  const heading = copy.subject(`${peso(amountCentavos, currency)} for ${eventTitle}`);
+
+  const body =
+    p(`Hello ${escapeHtml(registrantName)},`) +
+    p(escapeHtml(copy.lead)) +
+    details([
+      { label: 'Event', value: escapeHtml(eventTitle) },
+      { label: 'Payment', value: escapeHtml(label) },
+      { label: 'Amount', value: escapeHtml(peso(amountCentavos, currency)) },
+      { label: 'Due', value: escapeHtml(dueDay(dueAt)) },
+    ]) +
+    button('Pay now', registrationUrl(registrationId));
+
+  await send(
+    to,
+    copy.subject(`${peso(amountCentavos, currency)} for ${eventTitle}`),
+    renderText(heading, [
+      copy.lead,
+      '',
+      `${label}: ${peso(amountCentavos, currency)}, due ${dueDay(dueAt)}`,
+      '',
+      registrationUrl(registrationId),
+    ]),
+    renderEmail({ preheader: copy.lead, heading, body }),
+  );
+}
+
+/**
+ * Tells an admin a charge just crossed into overdue.
+ *
+ * One per flagged charge rather than a daily digest: for thirteen people a
+ * digest would arrive as a wall of names by December, and a single-line email
+ * the moment it happens is the one that actually gets read and acted on.
+ */
+export async function sendOverdueAdminAlert(input: {
+  to: string;
+  registrationId: string;
+  label: string;
+  amountCentavos: number;
+  currency: string;
+  dueAt: string;
+}): Promise<void> {
+  const { to, registrationId, label, amountCentavos, currency, dueAt } = input;
+  const heading = `Overdue: ${peso(amountCentavos, currency)}`;
+
+  const body =
+    p(`${escapeHtml(label)} — ${escapeHtml(peso(amountCentavos, currency))} — went overdue on ${escapeHtml(dueDay(dueAt))}.`) +
+    p('The seat is still held. This is a flag for review, not an automatic cancellation.') +
+    button('Open in admin', `${SITE}/admin/registrations`);
+
+  await send(
+    to,
+    `Overdue: ${peso(amountCentavos, currency)} — ${label}`,
+    renderText(heading, [
+      `${label} (${peso(amountCentavos, currency)}) went overdue on ${dueDay(dueAt)}.`,
+      'The seat is still held. This is a flag for review, not an automatic cancellation.',
+      '',
+      `${SITE}/admin/registrations`,
+    ]),
+    renderEmail({ heading, body }),
+  );
+}

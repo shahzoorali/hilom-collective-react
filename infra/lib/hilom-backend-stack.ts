@@ -382,9 +382,15 @@ export class HilomBackendStack extends cdk.Stack {
     // Admin side of the same tables: roster, money, offline payments,
     // cancellations and the audit trail.
     const adminRegistrations = makeFn('AdminRegistrationsFn', 'handlers/admin-registrations.ts', 'handler');
+    // Scheduled, not routed: releases lapsed holds, flags overdue instalments,
+    // sends the four reminder tiers, and completes past events. Never touches
+    // status on a missed payment — see the header comment in
+    // registration-sweep.ts for why that is the product rule, not a gap.
+    const registrationSweep = makeFn('RegistrationSweepFn', 'handlers/registration-sweep.ts', 'handler');
     supabaseSecret.grantRead(eventRegistrations);
     supabaseSecret.grantRead(eventsTicketing);
     supabaseSecret.grantRead(adminRegistrations);
+    supabaseSecret.grantRead(registrationSweep);
     adminKeySecret.grantRead(adminRegistrations);
 
     // Not behind API Gateway — invoked on a schedule (below), not by a
@@ -460,6 +466,14 @@ export class HilomBackendStack extends cdk.Stack {
     new events.Rule(this, 'BookingSweepRule', {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
       targets: [new eventsTargets.LambdaFunction(bookingSweep)],
+    });
+
+    // Same cadence and the same reasoning: five minutes bounds how long an
+    // abandoned deposit checkout can keep a place past its hold, and a reminder
+    // window is a day wide, so a missed cycle here is harmless either way.
+    new events.Rule(this, 'RegistrationSweepRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+      targets: [new eventsTargets.LambdaFunction(registrationSweep)],
     });
 
     // Least privilege: only the functions that read a given secret can read it.
@@ -562,7 +576,7 @@ export class HilomBackendStack extends cdk.Stack {
     // failure mode if it were left out is exactly the one this comment warns
     // about: reminders would fail with AccessDenied on a schedule, where
     // nobody is watching a response code.
-    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep, eventRegistrations, adminRegistrations]) {
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep, eventRegistrations, adminRegistrations, registrationSweep]) {
       fn.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ['ses:SendEmail'],
@@ -582,6 +596,10 @@ export class HilomBackendStack extends cdk.Stack {
       fn.addEnvironment('FRONTEND_URL', props.frontendUrl ?? 'https://www.hilomcollective.com');
       fn.addEnvironment('CHECKOUT_PAYMENT_METHODS', props.checkoutPaymentMethods ?? 'qrph');
     }
+
+    // Same address the DLQ alarm already notifies — one inbox for "something
+    // needs a human", not a second one to remember to check.
+    registrationSweep.addEnvironment('ADMIN_ALERT_EMAIL', props.alertEmail ?? DEFAULT_ALERT_EMAIL);
 
     // Presigning can only sign what the signing role is itself allowed to do,
     // so these grants are what make the upload URL work — and what bound it.
