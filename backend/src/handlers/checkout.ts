@@ -27,7 +27,7 @@
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
-import { getPayMongoSecret } from '../lib/secrets.js';
+import { createHostedCheckout } from '../lib/paymongo-checkout.js';
 import { ok, badRequest, notFound, serverError, unauthorized } from '../lib/http.js';
 import { requireBuyer, UnauthorizedError } from '../lib/auth.js';
 import { accessUrl } from '../lib/access-url.js';
@@ -42,17 +42,6 @@ interface CreateSessionBody {
    */
   name?: string;
 }
-
-/**
- * Which methods the hosted page offers. Env-driven so that enabling GCash or
- * card later is a config change, not a redeploy of code — the only hard
- * requirement is that every value here is actually activated on the PayMongo
- * account, or session creation 400s.
- */
-const PAYMENT_METHODS = (process.env.CHECKOUT_PAYMENT_METHODS ?? 'qrph')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 export async function createSession(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   let buyer;
@@ -122,61 +111,30 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
       return ok({ alreadyOwned: true, accessUrl: accessUrl(overlap) });
     }
 
-    const { secretKey } = await getPayMongoSecret();
-
-    const res = await fetch('https://api.paymongo.com/v1/checkout_sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}`,
-        'Content-Type': 'application/json',
+    const session = await createHostedCheckout({
+      name: product.name,
+      description: product.name,
+      amountCentavos: product.price_centavos,
+      currency: product.currency,
+      billing: { email, name },
+      // The webhook reads these back to know what to fulfill and for whom —
+      // without them a paid session cannot be mapped to a product. Note the
+      // absence of `kind`: the webhook treats that as the product path, which
+      // is what keeps in-flight sessions working across a deploy.
+      metadata: {
+        product_id: product.id,
+        buyer_email: email,
+        product_slug: product.slug,
       },
-      body: JSON.stringify({
-        data: {
-          attributes: {
-            payment_method_types: PAYMENT_METHODS,
-            line_items: [
-              {
-                name: product.name,
-                amount: product.price_centavos,
-                currency: product.currency,
-                quantity: 1,
-              },
-            ],
-            // Prefilled so the buyer does not retype what they just gave us,
-            // and so the receipt goes to the same address we enroll.
-            billing: { email, ...(name ? { name } : {}) },
-            description: product.name,
-            send_email_receipt: true,
-            show_line_items: true,
-            // The webhook reads these back to know what to fulfill and for
-            // whom — without them a paid session cannot be mapped to a product.
-            metadata: {
-              product_id: product.id,
-              buyer_email: email,
-              product_slug: product.slug,
-            },
-            // PayMongo cannot template the session id into these, so the
-            // browser stashes it before redirecting (see Checkout.tsx).
-            success_url: `${origin}/checkout/processing`,
-            cancel_url: `${origin}/courses/${product.slug}`,
-          },
-        },
-      }),
+      // PayMongo cannot template the session id into these, so the browser
+      // stashes it before redirecting (see Checkout.tsx).
+      successUrl: `${origin}/checkout/processing`,
+      cancelUrl: `${origin}/courses/${product.slug}`,
     });
 
-    const json = (await res.json()) as {
-      data?: { id: string; attributes: { checkout_url: string } };
-      errors?: unknown;
-    };
-
-    if (!res.ok || !json.data) {
-      console.error('[checkout.createSession] PayMongo rejected session', JSON.stringify(json.errors ?? json));
-      return serverError('checkout.createSession', new Error('PayMongo session creation failed'));
-    }
-
     return ok({
-      sessionId: json.data.id,
-      checkoutUrl: json.data.attributes.checkout_url,
+      sessionId: session.sessionId,
+      checkoutUrl: session.checkoutUrl,
       amountCentavos: product.price_centavos,
       currency: product.currency,
       productName: product.name,

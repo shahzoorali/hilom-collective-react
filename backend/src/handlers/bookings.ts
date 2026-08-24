@@ -21,7 +21,7 @@
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
-import { getPayMongoSecret } from '../lib/secrets.js';
+import { createHostedCheckout } from '../lib/paymongo-checkout.js';
 import { ok, json, notFound, badRequest, unauthorized, serverError } from '../lib/http.js';
 import { requireUser, UnauthorizedError } from '../lib/auth.js';
 import {
@@ -42,11 +42,6 @@ import {
 } from '../lib/booking-domain.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
 import { sendBookingCancelled, sendBookingRescheduled } from '../lib/booking-email.js';
-
-const PAYMENT_METHODS = (process.env.CHECKOUT_PAYMENT_METHODS ?? 'qrph')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 /** 409 — the request was well-formed but the world moved. */
 const conflict = (message: string) => json(409, { error: message });
@@ -252,64 +247,39 @@ async function create(
   // PayMongo session leaves a hold that lapses on its own — no orphaned
   // payment is possible, because no payment has been started.
   const origin = process.env.FRONTEND_URL ?? 'https://www.hilomcollective.com';
-  const { secretKey } = await getPayMongoSecret();
 
-  const res = await fetch('https://api.paymongo.com/v1/checkout_sessions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      data: {
-        attributes: {
-          payment_method_types: PAYMENT_METHODS,
-          line_items: [
-            {
-              name: `${service.title} with ${facilitator.display_name}`,
-              amount: fee.priceCentavos,
-              currency: service.currency,
-              quantity: 1,
-            },
-          ],
-          billing: { email: user.email, ...(name ? { name } : {}) },
-          description: service.title,
-          send_email_receipt: true,
-          show_line_items: true,
-          // `kind` is what the webhook branches on. Course checkout writes no
-          // `kind` at all, and its absence is treated as 'product' — which is
-          // what keeps existing in-flight course sessions working.
-          metadata: {
-            kind: 'booking',
-            booking_id: booking.id,
-            buyer_email: user.email,
-          },
-          success_url: `${origin}/booking/processing`,
-          cancel_url: `${origin}/facilitators/${facilitator.slug}`,
-        },
+  let session;
+  try {
+    session = await createHostedCheckout({
+      name: `${service.title} with ${facilitator.display_name}`,
+      description: service.title,
+      amountCentavos: fee.priceCentavos,
+      currency: service.currency,
+      billing: { email: user.email, name },
+      // `kind` is what the webhook branches on. Course checkout writes no
+      // `kind` at all, and its absence is treated as 'product' — which is
+      // what keeps existing in-flight course sessions working.
+      metadata: {
+        kind: 'booking',
+        booking_id: booking.id,
+        buyer_email: user.email,
       },
-    }),
-  });
-
-  const payload = (await res.json()) as {
-    data?: { id: string; attributes: { checkout_url: string } };
-    errors?: unknown;
-  };
-
-  if (!res.ok || !payload.data) {
-    console.error('[bookings.create] PayMongo rejected session', JSON.stringify(payload.errors ?? payload));
+      successUrl: `${origin}/booking/processing`,
+      cancelUrl: `${origin}/facilitators/${facilitator.slug}`,
+    });
+  } catch (err) {
     // Release the hold rather than leaving a slot blocked for 20 minutes over
     // a failure that had nothing to do with the client.
     await supabase.from('bookings').delete().eq('id', booking.id).eq('status', 'pending_payment');
-    return serverError('bookings.create', new Error('PayMongo session creation failed'));
+    return serverError('bookings.create', err);
   }
 
-  await supabase.from('bookings').update({ paymongo_session_id: payload.data.id }).eq('id', booking.id);
+  await supabase.from('bookings').update({ paymongo_session_id: session.sessionId }).eq('id', booking.id);
 
   return ok({
     bookingId: booking.id,
     free: false,
-    checkoutUrl: payload.data.attributes.checkout_url,
+    checkoutUrl: session.checkoutUrl,
     amountCentavos: fee.priceCentavos,
     currency: service.currency,
     serviceTitle: service.title,
