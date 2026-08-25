@@ -22,7 +22,7 @@ import {
 } from '../lib/event-ticketing.js';
 
 const COLUMNS =
-  'id, title, subtitle, description, image_url, image_alt, location, starts_at, ends_at, link_url, link_label, note, ' +
+  'id, title, subtitle, description, excerpt, image_url, image_alt, location, starts_at, ends_at, link_url, link_label, note, ' +
   // Enough for the events list to render a "From ₱30,000 · 13 places" card and
   // a Register button instead of the generic outbound link. The prices
   // themselves come from the plans, so only the flag travels here.

@@ -63,6 +63,9 @@ export interface CmsEvent {
   title: string;
   subtitle: string | null;
   description: string | null;
+  /** Short blurb for listing cards. Falls back to the description's first
+   *  paragraph when unset — see excerptFrom() in cms/BlockRenderer.tsx. */
+  excerpt: string | null;
   image_url: string | null;
   image_alt: string | null;
   location: string | null;
@@ -430,6 +433,7 @@ export type AdminEventInput = {
   title: string;
   subtitle?: string;
   description?: string;
+  excerpt?: string;
   image?: { id: string; url: string; alt: string };
   location?: string;
   starts_at: string;

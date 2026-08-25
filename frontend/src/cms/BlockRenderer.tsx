@@ -359,7 +359,21 @@ function formatEventWhen(startsAt: string, endsAt: string | null, location: stri
   return [date, timeRange, location].filter(Boolean).join(' | ');
 }
 
+/**
+ * Falls back to the description's first paragraph when an event has no
+ * admin-written excerpt — plain text, not HTML, so it renders the same as a
+ * typed excerpt and can't drag in a multi-paragraph itinerary onto a card.
+ */
+function excerptFrom(description: string | null): string | null {
+  if (!description) return null;
+  const doc = new DOMParser().parseFromString(description, 'text/html');
+  const first = doc.body.querySelector('p, li, h1, h2, h3, h4') ?? doc.body.firstElementChild;
+  const text = (first?.textContent ?? doc.body.textContent ?? '').trim();
+  return text || null;
+}
+
 function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
+  const excerpt = event.excerpt || excerptFrom(event.description);
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden', opacity: past ? 0.75 : undefined }}>
       {event.image_url ? (
@@ -376,7 +390,7 @@ function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
             {event.subtitle}
           </p>
         ) : null}
-        {event.description ? <RichText html={event.description} /> : null}
+        {excerpt ? <p className="desc">{excerpt}</p> : null}
         <p className="small" style={{ fontWeight: 600, color: 'var(--forest)' }}>
           {formatEventWhen(event.starts_at, event.ends_at, event.location)}
         </p>
