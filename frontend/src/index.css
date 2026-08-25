@@ -1584,3 +1584,19 @@ div[class*="_PuckCanvas-root_"],
     grid-template-columns: repeat(7, 60px);
   }
 }
+
+/* Print: the receipt page (account/Receipt.tsx) is the only thing meant to be
+   printed on this site, so this hides everything else — site header/footer,
+   the account shell's tab bar, and any on-page controls marked .no-print —
+   leaving just the receipt itself. */
+@media print {
+  header,
+  footer,
+  .admin-tabs,
+  .no-print {
+    display: none !important;
+  }
+  .print-area {
+    max-width: 100% !important;
+  }
+}

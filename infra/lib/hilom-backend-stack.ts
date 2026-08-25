@@ -374,6 +374,25 @@ export class HilomBackendStack extends cdk.Stack {
     // sessions completed so they become payable.
     const bookingSweep = makeFn('BookingSweepFn', 'handlers/booking-sweep.ts', 'handler');
 
+    // Ticketed events: buyer-facing registration, and the public read the
+    // registration page loads. The latter is a second export of the same
+    // handler file that serves GET /events.
+    const eventRegistrations = makeFn('EventRegistrationsFn', 'handlers/event-registrations.ts', 'handler');
+    const eventsTicketing = makeFn('EventsTicketingFn', 'handlers/events.ts', 'ticketing');
+    // Admin side of the same tables: roster, money, offline payments,
+    // cancellations and the audit trail.
+    const adminRegistrations = makeFn('AdminRegistrationsFn', 'handlers/admin-registrations.ts', 'handler');
+    // Scheduled, not routed: releases lapsed holds, flags overdue instalments,
+    // sends the four reminder tiers, and completes past events. Never touches
+    // status on a missed payment — see the header comment in
+    // registration-sweep.ts for why that is the product rule, not a gap.
+    const registrationSweep = makeFn('RegistrationSweepFn', 'handlers/registration-sweep.ts', 'handler');
+    supabaseSecret.grantRead(eventRegistrations);
+    supabaseSecret.grantRead(eventsTicketing);
+    supabaseSecret.grantRead(adminRegistrations);
+    supabaseSecret.grantRead(registrationSweep);
+    adminKeySecret.grantRead(adminRegistrations);
+
     // Not behind API Gateway — invoked on a schedule (below), not by a
     // request. Publishes posts/pages whose scheduled_at has arrived.
     const scheduledPublishSweep = makeFn(
@@ -407,6 +426,10 @@ export class HilomBackendStack extends cdk.Stack {
     // welcome email (backend/src/lib/email.ts, via ensureCognitoUser) and the
     // enrollment-confirmation email (backend/src/lib/enrollment-email.ts) —
     // both plain SES API calls, so neither is tied to this Lambda's own region.
+    //
+    // These two also reach applyChargePayment now (a paid event registration
+    // arrives through the same webhook and the same retry queue), which sends
+    // registration confirmations and receipts through this identity as well.
     for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
       fn.addToRolePolicy(
         new iam.PolicyStatement({
@@ -443,6 +466,14 @@ export class HilomBackendStack extends cdk.Stack {
     new events.Rule(this, 'BookingSweepRule', {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
       targets: [new eventsTargets.LambdaFunction(bookingSweep)],
+    });
+
+    // Same cadence and the same reasoning: five minutes bounds how long an
+    // abandoned deposit checkout can keep a place past its hold, and a reminder
+    // window is a day wide, so a missed cycle here is harmless either way.
+    new events.Rule(this, 'RegistrationSweepRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+      targets: [new eventsTargets.LambdaFunction(registrationSweep)],
     });
 
     // Least privilege: only the functions that read a given secret can read it.
@@ -499,9 +530,16 @@ export class HilomBackendStack extends cdk.Stack {
       supabaseSecret.grantRead(fn);
     }
 
-    // Booking creation opens a PayMongo checkout session, exactly as course
-    // checkout does.
-    paymongoSecret.grantRead(bookings);
+    // Booking creation and event registration both open a PayMongo checkout
+    // session, exactly as course checkout does. Grant and env var travel
+    // together for the reason the paymongoSecretId prop documents: the grant
+    // alone controls nothing at runtime, so a function with the grant but no
+    // env var silently reads the *test* secret while holding a live grant.
+    // `bookings` was in exactly that state.
+    for (const fn of [bookings, eventRegistrations]) {
+      paymongoSecret.grantRead(fn);
+      fn.addEnvironment('PAYMONGO_SECRET_ID', paymongoSecretId);
+    }
 
     // Both accept an admin-group token *or* the legacy shared key, so both
     // need to be able to read the key to compare against.
@@ -509,7 +547,7 @@ export class HilomBackendStack extends cdk.Stack {
 
     // Every function that authenticates a caller from a Cognito id token needs
     // the pool id and SPA client id to build the verifier.
-    for (const fn of [bookings, facilitatorPortal, adminFacilitators]) {
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators, eventRegistrations]) {
       fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
       fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
     }
@@ -531,13 +569,14 @@ export class HilomBackendStack extends cdk.Stack {
     //
     // paymongoWebhook and enrollmentRetryConsumer are absent because the
     // fulfillOrder loop above already grants them this exact statement; both
-    // now also send booking confirmations through the same identity.
+    // now also send booking confirmations and event-registration receipts
+    // through the same identity.
     // bookingSweep joined this list when it started sending pre-session
     // reminders. It had no reason to send anything before that, and the
     // failure mode if it were left out is exactly the one this comment warns
     // about: reminders would fail with AccessDenied on a schedule, where
     // nobody is watching a response code.
-    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep]) {
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators, bookingSweep, eventRegistrations, adminRegistrations, registrationSweep]) {
       fn.addToRolePolicy(
         new iam.PolicyStatement({
           actions: ['ses:SendEmail'],
@@ -553,8 +592,17 @@ export class HilomBackendStack extends cdk.Stack {
     // for its PayMongo success/cancel URLs — see the note in checkout.ts about
     // why the apex domain breaks the return path — and the same activated
     // payment methods, since it opens sessions on the same account.
-    bookings.addEnvironment('FRONTEND_URL', props.frontendUrl ?? 'https://www.hilomcollective.com');
-    bookings.addEnvironment('CHECKOUT_PAYMENT_METHODS', props.checkoutPaymentMethods ?? 'qrph');
+    for (const fn of [bookings, eventRegistrations]) {
+      fn.addEnvironment('FRONTEND_URL', props.frontendUrl ?? 'https://www.hilomcollective.com');
+      fn.addEnvironment('CHECKOUT_PAYMENT_METHODS', props.checkoutPaymentMethods ?? 'qrph');
+    }
+
+    // Same address the DLQ alarm already notifies — one inbox for "something
+    // needs a human", not a second one to remember to check.
+    registrationSweep.addEnvironment('ADMIN_ALERT_EMAIL', props.alertEmail ?? DEFAULT_ALERT_EMAIL);
+    // eventRegistrations also sends one of these — the cancellation-request
+    // alert — the moment someone asks, rather than only via the sweep.
+    eventRegistrations.addEnvironment('ADMIN_ALERT_EMAIL', props.alertEmail ?? DEFAULT_ALERT_EMAIL);
 
     // Presigning can only sign what the signing role is itself allowed to do,
     // so these grants are what make the upload URL work — and what bound it.
@@ -565,8 +613,8 @@ export class HilomBackendStack extends cdk.Stack {
     adminMedia.addEnvironment('MEDIA_CDN_BASE', `https://${mediaDistribution.distributionDomainName}`);
 
     // Every path that can fulfill an order needs the full fulfillment
-    // dependency set: Supabase (orders), Moodle (enrollment), Cognito (buyer
-    // identity). SES is granted separately above — the same ap-south-1 grant
+    // dependency set: Supabase (orders, and now registration charges), Moodle
+    // (enrollment), Cognito (buyer identity). SES is granted separately above — the same ap-south-1 grant
     // already covers both the account-created welcome email and the
     // enrollment-confirmation email (enrollment-email.ts), since both are
     // plain SES API calls with no region tie to the function's own region.
@@ -612,7 +660,10 @@ export class HilomBackendStack extends cdk.Stack {
           apigw.CorsHttpMethod.DELETE,
           apigw.CorsHttpMethod.OPTIONS,
         ],
-        allowHeaders: ['content-type', 'x-admin-key', 'authorization'],
+        // x-admin-actor carries the operator's name for the audit log. Omitting
+        // it here does not degrade gracefully — the browser fails preflight and
+        // every admin write surfaces as an opaque "Failed to fetch".
+        allowHeaders: ['content-type', 'x-admin-key', 'authorization', 'x-admin-actor'],
         maxAge: cdk.Duration.hours(1),
       },
       ...(domainName
@@ -758,8 +809,41 @@ export class HilomBackendStack extends cdk.Stack {
       ['/admin/forms/{formId}/submissions/{submissionId}', [DELETE]],
     ]);
     cmsRoutes(eventsPublic, 'EventsPublicInt', [['/events', [GET]]]);
+    cmsRoutes(eventsTicketing, 'EventsTicketingInt', [['/events/{eventId}/ticketing', [GET]]]);
+    cmsRoutes(adminRegistrations, 'AdminRegistrationsInt', [
+      // Literal suffixes before the bare {registrationId} route.
+      ['/admin/events/{eventId}/roster', [GET]],
+      ['/admin/events/{eventId}/roster.csv', [GET]],
+      ['/admin/audit-log', [GET]],
+      ['/admin/registrations', [GET]],
+      ['/admin/registrations/{registrationId}/cancel', [POST]],
+      ['/admin/registrations/{registrationId}/cancellation-decision', [POST]],
+      ['/admin/registrations/{registrationId}/refund-sent', [POST]],
+      ['/admin/registrations/{registrationId}/price-override', [POST]],
+      ['/admin/registrations/{registrationId}/nudge', [POST]],
+      ['/admin/registrations/{registrationId}/charges/{chargeId}/mark-paid', [POST]],
+      ['/admin/registrations/{registrationId}/charges/{chargeId}/waive', [POST]],
+      ['/admin/registrations/{registrationId}/charges/{chargeId}/void', [POST]],
+      ['/admin/registrations/{registrationId}', [GET]],
+    ]);
+    cmsRoutes(eventRegistrations, 'EventRegistrationsInt', [
+      ['/events/{eventId}/register', [POST]],
+      ['/me/registrations', [GET]],
+      // Literal suffixes before the bare {registrationId} route, same ordering
+      // rule as /admin/pages/trash.
+      ['/registrations/{registrationId}/status', [GET]],
+      ['/registrations/{registrationId}/pay-balance', [POST]],
+      ['/registrations/{registrationId}/registrant', [PUT]],
+      ['/registrations/{registrationId}/cancel-request', [POST]],
+      ['/registrations/{registrationId}/charges/{chargeId}/pay', [POST]],
+      ['/registrations/{registrationId}/charges/{chargeId}/receipt', [GET]],
+      ['/registrations/{registrationId}', [GET]],
+    ]);
     cmsRoutes(adminEvents, 'AdminEventsInt', [
       ['/admin/events', [GET, POST]],
+      // Literal before {param}: /plans has to be registered ahead of the bare
+      // {eventId} route, same ordering rule as /admin/pages/trash.
+      ['/admin/events/{eventId}/plans', [GET, PUT]],
       ['/admin/events/{eventId}', [GET, PUT, DELETE]],
     ]);
     cmsRoutes(postsPublic, 'PostsPublicInt', [
