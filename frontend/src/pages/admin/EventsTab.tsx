@@ -40,6 +40,7 @@ interface Draft {
   title: string;
   subtitle: string;
   description: string;
+  excerpt: string;
   image?: MediaRef;
   location: string;
   starts_at: string;
@@ -58,6 +59,7 @@ const blankDraft: Draft = {
   title: '',
   subtitle: '',
   description: '',
+  excerpt: '',
   location: '',
   starts_at: '',
   ends_at: '',
@@ -73,6 +75,7 @@ function toDraft(event: AdminEvent): Draft {
     title: event.title,
     subtitle: event.subtitle ?? '',
     description: event.description ?? '',
+    excerpt: event.excerpt ?? '',
     image: event.image_url ? { id: event.image_id ?? '', url: event.image_url, alt: event.image_alt ?? '' } : undefined,
     location: event.location ?? '',
     starts_at: toLocalInput(event.starts_at),
@@ -92,6 +95,7 @@ function toInput(draft: Draft): AdminEventInput {
     title: draft.title.trim(),
     subtitle: draft.subtitle.trim() || undefined,
     description: draft.description || undefined,
+    excerpt: draft.excerpt.trim() || undefined,
     image: draft.image,
     location: draft.location.trim() || undefined,
     starts_at: fromLocalInput(draft.starts_at) ?? '',
@@ -504,6 +508,17 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                 adminKey={adminKey}
                 value={draft.image}
                 onChange={(img) => setDraft((d) => ({ ...d, image: img }))}
+              />
+            </div>
+
+            <div className="field" style={{ gridColumn: 'span 2' }}>
+              <label>Card Excerpt</label>
+              <textarea
+                rows={2}
+                maxLength={500}
+                value={draft.excerpt}
+                onChange={(e) => setDraft((d) => ({ ...d, excerpt: e.target.value }))}
+                placeholder="Short blurb shown on the events listing card. Leave blank to use the description's first paragraph."
               />
             </div>
 

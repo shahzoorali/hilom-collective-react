@@ -31,6 +31,7 @@ export interface EventInput {
   title: string;
   subtitle: string | null;
   description: string | null;
+  excerpt: string | null;
   image_id: string | null;
   image_url: string | null;
   image_alt: string | null;
@@ -154,6 +155,7 @@ export function validateEvent(body: Record<string, unknown>): EventInput {
     title: title.slice(0, 200),
     subtitle: optionalText(body.subtitle, 300),
     description: body.description ? sanitizeRichText(String(body.description).slice(0, 10000)) : null,
+    excerpt: optionalText(body.excerpt, 500),
     image_id: hasImage && typeof image!.id === 'string' ? image!.id : null,
     image_url: hasImage ? String(image!.url) : null,
     image_alt: hasImage ? stripTags(String(image!.alt ?? '')).slice(0, 500) : null,
