@@ -47,8 +47,6 @@ const NAV_GROUPS = [
   },
 ] as const;
 
-const TABS = NAV_GROUPS.flatMap((g) => g.items);
-
 function PageEditorRoute({ adminKey }: { adminKey: string }) {
   const { pageId } = useParams<{ pageId: string }>();
   const navigate = useNavigate();
