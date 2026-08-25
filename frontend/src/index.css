@@ -271,6 +271,9 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   color: var(--ink);
   font-family: inherit;
 }
+.admin-shell--sidebar {
+  flex-direction: row;
+}
 
 /* Admin Auth Screen */
 .admin-auth-page {
@@ -419,6 +422,89 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
 }
 .admin-view-site-link:hover {
   background: #e9ece4;
+}
+
+/* Admin Left Sidebar */
+.admin-sidebar {
+  flex: none;
+  width: 240px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  box-shadow: 1px 0 3px rgba(0, 0, 0, 0.03);
+  z-index: 10;
+  overflow-y: auto;
+}
+.admin-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.admin-sidebar .brand-logo {
+  height: 30px;
+  width: auto;
+}
+.admin-sidebar-nav {
+  flex: 1;
+  padding: 0.9rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.admin-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.admin-sidebar-group-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  padding: 0.35rem 0.6rem;
+}
+.admin-sidebar-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  font-size: 0.87rem;
+  font-weight: 600;
+  color: var(--ink-light);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  width: 100%;
+}
+.admin-sidebar-btn:hover {
+  background: rgba(47, 94, 62, 0.06);
+  color: var(--forest);
+}
+.admin-sidebar-btn--active {
+  background: var(--forest) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(47, 94, 62, 0.25);
+}
+.admin-sidebar-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem 0.9rem 1.1rem;
+  border-top: 1px solid var(--line);
+}
+.admin-sidebar-actions .admin-view-site-link {
+  justify-content: center;
 }
 
 /* Admin Content Area */

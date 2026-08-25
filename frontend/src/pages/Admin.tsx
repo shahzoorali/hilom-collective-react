@@ -18,19 +18,36 @@ import { MediaGrid } from './admin/MediaLibrary';
 
 const KEY_STORAGE = 'hilom.adminKey';
 
-const TABS = [
-  { label: 'Pages', path: 'pages', icon: '📄' },
-  { label: 'Posts', path: 'posts', icon: '✍️' },
-  { label: 'Events', path: 'events', icon: '📅' },
-  { label: 'Media', path: 'media', icon: '🖼️' },
-  { label: 'Menus', path: 'menus', icon: '🧭' },
-  { label: 'Forms', path: 'forms', icon: '📋' },
-  { label: 'Commerce', path: 'commerce', icon: '💳' },
-  { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
-  { label: 'Bookings', path: 'bookings', icon: '🗓️' },
-  { label: 'Registrations', path: 'registrations', icon: '🎟️' },
-  { label: 'Payouts', path: 'payouts', icon: '🏦' },
+const NAV_GROUPS = [
+  {
+    label: 'Content',
+    items: [
+      { label: 'Pages', path: 'pages', icon: '📄' },
+      { label: 'Posts', path: 'posts', icon: '✍️' },
+      { label: 'Events', path: 'events', icon: '📅' },
+      { label: 'Media', path: 'media', icon: '🖼️' },
+      { label: 'Menus', path: 'menus', icon: '🧭' },
+    ],
+  },
+  {
+    label: 'Engagement',
+    items: [
+      { label: 'Forms', path: 'forms', icon: '📋' },
+      { label: 'Bookings', path: 'bookings', icon: '🗓️' },
+      { label: 'Registrations', path: 'registrations', icon: '🎟️' },
+      { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
+    ],
+  },
+  {
+    label: 'Commerce',
+    items: [
+      { label: 'Commerce', path: 'commerce', icon: '💳' },
+      { label: 'Payouts', path: 'payouts', icon: '🏦' },
+    ],
+  },
 ] as const;
+
+const TABS = NAV_GROUPS.flatMap((g) => g.items);
 
 function PageEditorRoute({ adminKey }: { adminKey: string }) {
   const { pageId } = useParams<{ pageId: string }>();
@@ -190,10 +207,10 @@ export default function Admin() {
   const flushChrome = editingPage || editingPost;
 
   return (
-    <div className="admin-shell">
-      {/* Elevated Admin Topbar */}
-      <header className="admin-topbar">
-        <Link to="/admin/pages" className="admin-topbar-brand">
+    <div className="admin-shell admin-shell--sidebar">
+      {/* Left Sidebar Navigation */}
+      <aside className="admin-sidebar">
+        <Link to="/admin/pages" className="admin-sidebar-brand">
           <img src={hilomLogo} alt="Hilom" className="brand-logo" />
           <div className="admin-brand-text">
             <span className="admin-brand-title">Hilom CMS</span>
@@ -201,23 +218,28 @@ export default function Admin() {
           </div>
         </Link>
 
-        <nav className="admin-tabs" aria-label="Admin Navigation">
-          {TABS.map((t) => {
-            const isActive = activeTab === t.path;
-            return (
-              <button
-                key={t.path}
-                className={`admin-tab-btn ${isActive ? 'admin-tab-btn--active' : ''}`}
-                onClick={() => navigate(`/admin/${t.path}`)}
-              >
-                <span>{t.icon}</span>
-                <span>{t.label}</span>
-              </button>
-            );
-          })}
+        <nav className="admin-sidebar-nav" aria-label="Admin Navigation">
+          {NAV_GROUPS.map((group) => (
+            <div className="admin-sidebar-group" key={group.label}>
+              <div className="admin-sidebar-group-label">{group.label}</div>
+              {group.items.map((t) => {
+                const isActive = activeTab === t.path;
+                return (
+                  <button
+                    key={t.path}
+                    className={`admin-sidebar-btn ${isActive ? 'admin-sidebar-btn--active' : ''}`}
+                    onClick={() => navigate(`/admin/${t.path}`)}
+                  >
+                    <span>{t.icon}</span>
+                    <span>{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
-        <div className="admin-topbar-actions">
+        <div className="admin-sidebar-actions">
           <a
             href="/"
             target="_blank"
@@ -232,13 +254,13 @@ export default function Admin() {
             className="btn btn-ghost small"
             onClick={signOut}
             title="Sign out of admin"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', justifyContent: 'center' }}
           >
             <span>🚪</span>
             <span>Sign out</span>
           </button>
         </div>
-      </header>
+      </aside>
 
       {/* Main Admin Body */}
       <main className={flushChrome ? 'admin-content admin-content--flush' : 'admin-content'}>
@@ -266,7 +288,7 @@ export default function Admin() {
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
           <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
-            <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
+          <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>
