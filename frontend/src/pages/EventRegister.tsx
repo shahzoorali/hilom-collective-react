@@ -166,7 +166,10 @@ export default function EventRegister() {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [extras, setExtras] = useState<Record<string, string>>({});
+  const [onBehalf, setOnBehalf] = useState('');
   const [agreed, setAgreed] = useState(false);
+  const [medicalAck, setMedicalAck] = useState(false);
+  const [consentAck, setConsentAck] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -264,7 +267,15 @@ export default function EventRegister() {
     try {
       const result = await registerForEvent(eventId, {
         planId,
-        registrant: { name: name.trim(), email: email.trim(), phone: phone.trim() || undefined, details: extras },
+        registrant: {
+          name: name.trim(),
+          email: email.trim(),
+          phone: phone.trim() || undefined,
+          // `on_behalf_of` is collected here but not yet a recognised registrant
+          // field on the backend, so validateRegistrant currently drops it.
+          // Kept in the payload so it flows through once the column lands.
+          details: { ...extras, ...(onBehalf.trim() ? { on_behalf_of: onBehalf.trim() } : {}) },
+        },
       });
       // Stash before redirecting: PayMongo cannot template the registration id
       // into its return URL, so the processing screen reads it back from here.
@@ -320,11 +331,11 @@ export default function EventRegister() {
 
               <div className="row">
                 <label className="field">
-                  <span>Who is attending?</span>
+                  <span>Full Name</span>
                   <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={200} />
                 </label>
                 <label className="field">
-                  <span>Their email</span>
+                  <span>Email address</span>
                   <input
                     type="email"
                     value={email}
@@ -340,6 +351,25 @@ export default function EventRegister() {
                 <input value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={40} />
               </label>
 
+              <fieldset style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius)', padding: 14, margin: 0 }}>
+                <legend className="small" style={{ fontWeight: 600, padding: '0 6px' }}>
+                  Registering on behalf of others (optional)
+                </legend>
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="small muted">
+                    If you are signing up other people as well as, or instead of, yourself, list their full
+                    names and email addresses here. We will contact them directly with joining details.
+                  </span>
+                  <textarea
+                    rows={3}
+                    value={onBehalf}
+                    maxLength={1000}
+                    onChange={(e) => setOnBehalf(e.target.value)}
+                    placeholder="e.g. Jane Dela Cruz — jane@example.com&#10;Mark Santos — mark@example.com"
+                  />
+                </label>
+              </fieldset>
+
               {event.registrant_fields.map((field) => (
                 <label className="field" key={field}>
                   <span>{REGISTRANT_FIELD_LABELS[field] ?? field}</span>
@@ -351,6 +381,60 @@ export default function EventRegister() {
                   />
                 </label>
               ))}
+
+              {event.medical_disclaimer_html && (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <div className="card" style={{ padding: 12, maxHeight: 220, overflowY: 'auto' }}>
+                    <strong className="small">Medical &amp; psychological disclaimer</strong>
+                    <div
+                      className="small"
+                      style={{ marginTop: 6 }}
+                      dangerouslySetInnerHTML={{ __html: event.medical_disclaimer_html }}
+                    />
+                  </div>
+                  <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <input
+                      type="checkbox"
+                      checked={medicalAck}
+                      onChange={(e) => setMedicalAck(e.target.checked)}
+                      style={{ width: 'auto', marginTop: 3 }}
+                      required
+                    />
+                    <span>
+                      I have read the medical and psychological disclaimer. Any physical, psychological, or
+                      psychiatric condition relevant to my participation is disclosed in my medical notes above,
+                      and I accept that Hilom Collective and its facilitators are not liable for conditions I
+                      have not disclosed.
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              {event.liability_consent_html && (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <div className="card" style={{ padding: 12, maxHeight: 220, overflowY: 'auto' }}>
+                    <strong className="small">Liability &amp; participation consent</strong>
+                    <div
+                      className="small"
+                      style={{ marginTop: 6 }}
+                      dangerouslySetInnerHTML={{ __html: event.liability_consent_html }}
+                    />
+                  </div>
+                  <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <input
+                      type="checkbox"
+                      checked={consentAck}
+                      onChange={(e) => setConsentAck(e.target.checked)}
+                      style={{ width: 'auto', marginTop: 3 }}
+                      required
+                    />
+                    <span>
+                      I have read and agree to the liability and participation consent above, and I am taking
+                      part in this event voluntarily and at my own risk.
+                    </span>
+                  </label>
+                </div>
+              )}
 
               {event.terms_html && (
                 <div className="card" style={{ padding: 12, maxHeight: 200, overflowY: 'auto' }}>
@@ -374,7 +458,17 @@ export default function EventRegister() {
 
               {error && <div className="alert alert-error">{error}</div>}
 
-              <button type="submit" className="btn btn-accent btn-block" disabled={submitting || !planId || !agreed}>
+              <button
+                type="submit"
+                className="btn btn-accent btn-block"
+                disabled={
+                  submitting ||
+                  !planId ||
+                  !agreed ||
+                  (!!event.medical_disclaimer_html && !medicalAck) ||
+                  (!!event.liability_consent_html && !consentAck)
+                }
+              >
                 {submitting ? 'Reserving your place…' : selectedLabel(plans, planId)}
               </button>
 

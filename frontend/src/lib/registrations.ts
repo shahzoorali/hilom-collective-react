@@ -91,6 +91,8 @@ export interface TicketedEvent {
   registration_closes_at: string | null;
   venue_details: string | null;
   terms_html: string | null;
+  medical_disclaimer_html: string | null;
+  liability_consent_html: string | null;
   registrant_fields: string[];
   facilitators: EventFacilitator[];
   gallery: EventGalleryImage[];

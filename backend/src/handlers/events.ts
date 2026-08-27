@@ -68,7 +68,8 @@ export async function handler(): Promise<APIGatewayProxyResultV2> {
 const TICKETING_COLUMNS =
   'id, title, subtitle, description, image_url, image_alt, location, starts_at, ends_at, ' +
   'status, ticketing_enabled, capacity, currency, registration_opens_at, registration_closes_at, ' +
-  'hold_minutes, venue_details, terms_html, registrant_fields, facilitators, gallery';
+  'hold_minutes, venue_details, terms_html, medical_disclaimer_html, liability_consent_html, ' +
+  'registrant_fields, facilitators, gallery';
 
 interface TicketingEventRow {
   id: string;

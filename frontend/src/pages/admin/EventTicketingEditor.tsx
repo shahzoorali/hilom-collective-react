@@ -44,6 +44,8 @@ export interface TicketingDraft {
   registration_opens_at: string;
   registration_closes_at: string;
   venue_details: string;
+  medical_disclaimer_html: string;
+  liability_consent_html: string;
   registrant_fields: string[];
 }
 
@@ -55,6 +57,8 @@ export const blankTicketing: TicketingDraft = {
   registration_opens_at: '',
   registration_closes_at: '',
   venue_details: '',
+  medical_disclaimer_html: '',
+  liability_consent_html: '',
   registrant_fields: [],
 };
 
@@ -74,6 +78,8 @@ export function ticketingToDraft(event: AdminEvent): TicketingDraft {
     registration_opens_at: manilaDay(event.registration_opens_at),
     registration_closes_at: manilaDay(event.registration_closes_at),
     venue_details: event.venue_details ?? '',
+    medical_disclaimer_html: event.medical_disclaimer_html ?? '',
+    liability_consent_html: event.liability_consent_html ?? '',
     registrant_fields: event.registrant_fields ?? [],
   };
 }
@@ -95,6 +101,8 @@ export function ticketingToInput(draft: TicketingDraft): Partial<AdminEventInput
     registration_opens_at: draft.registration_opens_at || null,
     registration_closes_at: draft.registration_closes_at || null,
     venue_details: draft.venue_details.trim() || null,
+    medical_disclaimer_html: draft.medical_disclaimer_html.trim() || null,
+    liability_consent_html: draft.liability_consent_html.trim() || null,
     registrant_fields: draft.registrant_fields,
   };
 }
@@ -328,6 +336,34 @@ export default function EventTicketingEditor({ adminKey, eventId, value, onChang
               placeholder="Shared rooms, all meals included. Transport not provided."
             />
             <span className="small muted">Shown on the registration page and in the confirmation email.</span>
+          </label>
+
+          <label className="field">
+            <span>Medical / psychological disclaimer</span>
+            <textarea
+              rows={4}
+              value={value.medical_disclaimer_html}
+              onChange={(e) => set('medical_disclaimer_html', e.target.value)}
+              placeholder="This retreat includes emotionally demanding work. If you have a diagnosed physical, psychological, or psychiatric condition, please consult your own practitioner before registering. Hilom Collective and its facilitators are not medical providers and accept no liability for undisclosed conditions."
+            />
+            <span className="small muted">
+              Shown on the registration page above its own required checkbox. Leave blank to hide the block.
+              Basic HTML (paragraphs, lists, links, bold) is allowed.
+            </span>
+          </label>
+
+          <label className="field">
+            <span>Liability &amp; participation consent</span>
+            <textarea
+              rows={4}
+              value={value.liability_consent_html}
+              onChange={(e) => set('liability_consent_html', e.target.value)}
+              placeholder="I take part in this event voluntarily and at my own risk. I release Hilom Collective, its facilitators, and the venue from liability for any loss, injury, or damage except where caused by gross negligence. I agree to follow the facilitators' guidance and the venue's house rules."
+            />
+            <span className="small muted">
+              Shown on the registration page above its own required checkbox. Leave blank to hide the block.
+              Basic HTML is allowed.
+            </span>
           </label>
 
           <div className="field">

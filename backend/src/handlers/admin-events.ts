@@ -32,7 +32,8 @@ const COLUMNS =
   'id, title, subtitle, description, excerpt, image_id, image_url, image_alt, location, starts_at, ends_at, ' +
   'link_url, link_label, note, status, created_at, updated_at, ' +
   'ticketing_enabled, format, capacity, currency, registration_opens_at, registration_closes_at, ' +
-  'hold_minutes, venue_details, terms_html, registrant_fields, facilitators, gallery';
+  'hold_minutes, venue_details, terms_html, medical_disclaimer_html, liability_consent_html, ' +
+  'registrant_fields, facilitators, gallery';
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +

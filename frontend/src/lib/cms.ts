@@ -368,6 +368,8 @@ export interface AdminEvent extends CmsEvent {
   hold_minutes: number;
   venue_details: string | null;
   terms_html: string | null;
+  medical_disclaimer_html: string | null;
+  liability_consent_html: string | null;
   registrant_fields: string[];
 }
 
@@ -453,6 +455,8 @@ export type AdminEventInput = {
   hold_minutes?: number;
   venue_details?: string | null;
   terms_html?: string | null;
+  medical_disclaimer_html?: string | null;
+  liability_consent_html?: string | null;
   registrant_fields?: string[];
   facilitators?: EventFacilitator[];
   gallery?: EventGalleryImage[];

@@ -188,6 +188,8 @@ export interface TicketingInput {
   hold_minutes: number;
   venue_details: string | null;
   terms_html: string | null;
+  medical_disclaimer_html: string | null;
+  liability_consent_html: string | null;
   registrant_fields: string[];
 }
 
@@ -200,6 +202,8 @@ const TICKETING_KEYS = [
   'hold_minutes',
   'venue_details',
   'terms_html',
+  'medical_disclaimer_html',
+  'liability_consent_html',
   'registrant_fields',
 ] as const;
 
@@ -303,6 +307,12 @@ export function validateTicketing(body: Record<string, unknown>): TicketingInput
     hold_minutes: holdMinutes,
     venue_details: optionalText(body.venue_details, 2000),
     terms_html: body.terms_html ? sanitizeRichText(String(body.terms_html).slice(0, 20000)) : null,
+    medical_disclaimer_html: body.medical_disclaimer_html
+      ? sanitizeRichText(String(body.medical_disclaimer_html).slice(0, 20000))
+      : null,
+    liability_consent_html: body.liability_consent_html
+      ? sanitizeRichText(String(body.liability_consent_html).slice(0, 20000))
+      : null,
     registrant_fields: registrantFields,
   };
 }
