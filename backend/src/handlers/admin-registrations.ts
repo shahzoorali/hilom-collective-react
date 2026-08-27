@@ -31,6 +31,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAuthorizedAdmin } from '../lib/http.js';
 import { actorFromEvent, recordAudit, type AuditActor } from '../lib/audit.js';
+import { csvResponse, csvSlug } from '../lib/csv.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import {
   sendRegistrationCancelled,
@@ -392,24 +393,21 @@ async function rosterCsv(eventId: string, actor: AuditActor): Promise<APIGateway
     ...detailKeys.map((k) => k.replace(/_/g, ' ')),
   ];
 
-  const lines = [header.map(csvCell).join(',')];
-  for (const r of rows) {
+  const lines = rows.map((r) => {
     const charges = byRegistration.get(r.id) ?? [];
     const details = (r.registrant_details ?? {}) as Record<string, string>;
-    lines.push(
-      [
-        r.seat_no,
-        r.registrant_name,
-        r.registrant_email,
-        r.registrant_phone ?? '',
-        r.status,
-        r.plan_name,
-        (paidCentavos(charges) / 100).toFixed(2),
-        (outstandingCentavos(charges) / 100).toFixed(2),
-        ...detailKeys.map((k) => details[k] ?? ''),
-      ].map(csvCell).join(','),
-    );
-  }
+    return [
+      r.seat_no,
+      r.registrant_name,
+      r.registrant_email,
+      r.registrant_phone ?? '',
+      r.status,
+      r.plan_name,
+      (paidCentavos(charges) / 100).toFixed(2),
+      (outstandingCentavos(charges) / 100).toFixed(2),
+      ...detailKeys.map((k) => details[k] ?? ''),
+    ];
+  });
 
   await recordAudit(actor, {
     action: 'event.roster_exported',
@@ -419,27 +417,8 @@ async function rosterCsv(eventId: string, actor: AuditActor): Promise<APIGateway
     note: `${rows.length} attendee${rows.length === 1 ? '' : 's'}, including ${detailKeys.length} personal-detail column${detailKeys.length === 1 ? '' : 's'}`,
   });
 
-  const slug = String(eventRow.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const stamp = now.toISOString().slice(0, 10);
-
-  return {
-    statusCode: 200,
-    headers: {
-      'Access-Control-Allow-Origin': process.env.CORS_ORIGIN ?? '*',
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${slug}-roster-${stamp}.csv"`,
-    },
-    // A leading BOM so Excel opens UTF-8 correctly — without it a name with a
-    // ñ in it arrives mangled, which is not a detail to get wrong on a list of
-    // people's names.
-    body: `﻿${lines.join('\r\n')}`,
-  };
-}
-
-/** RFC 4180 quoting: double the quotes, wrap anything with a separator in them. */
-function csvCell(value: unknown): string {
-  const text = value === null || value === undefined ? '' : String(value);
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return csvResponse(`${csvSlug(String(eventRow.title))}-roster-${stamp}.csv`, header, lines);
 }
 
 // ---------------------------------------------------------------------------
