@@ -12,6 +12,7 @@ import MenusTab from './admin/MenusTab';
 import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
 import RegistrationsTab from './admin/RegistrationsTab';
+import PeopleTab from './admin/PeopleTab';
 import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
 import { MediaGrid } from './admin/MediaLibrary';
@@ -36,6 +37,9 @@ const NAV_GROUPS = [
       { label: 'Bookings', path: 'bookings', icon: '🗓️' },
       { label: 'Registrations', path: 'registrations', icon: '🎟️' },
       { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
+      // Last in the group because it is the read across the four above it,
+      // not a fifth thing alongside them.
+      { label: 'People', path: 'people', icon: '👥' },
     ],
   },
   {
@@ -287,6 +291,7 @@ export default function Admin() {
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
           <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
           <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
+          <Route path="people" element={<PeopleTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>

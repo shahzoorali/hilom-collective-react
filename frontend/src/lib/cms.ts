@@ -862,3 +862,96 @@ export const adminOverridePrice = (
     paidCentavos: number;
     overpaidCentavos: number;
   }>(`/admin/registrations/${registrationId}/price-override`, adminInit(adminKey, 'POST', body));
+
+// --- admin: people ---
+
+/**
+ * A person, assembled from every table that knows their email.
+ *
+ * There is no users table behind this (db/migrations/0022 says why), so a
+ * person exists here exactly as long as one of their records does. `scope` on
+ * the list response says the same thing in words, and the UI shows it —
+ * a directory called "People" that quietly omits some of them would be worse
+ * than no directory.
+ */
+export type PersonSource =
+  | 'course_order'
+  | 'event_registration'
+  | 'event_attendee'
+  | 'booking'
+  | 'enquiry';
+
+export interface Person {
+  email: string;
+  full_name: string | null;
+  /** Set only for someone who has actually signed in at least once. */
+  cognito_sub: string | null;
+  sources: PersonSource[];
+  course_orders: number;
+  event_registrations: number;
+  events_attending: number;
+  bookings: number;
+  enquiries: number;
+  lifetime_centavos: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface PersonDetail {
+  person: Person;
+  orders: {
+    id: string;
+    amount_centavos: number;
+    currency: string;
+    status: string;
+    created_at: string;
+    products: { name: string } | null;
+  }[];
+  registrations: {
+    id: string;
+    event_id: string;
+    status: string;
+    seat_no: number;
+    buyer_email: string;
+    registrant_name: string;
+    registrant_email: string;
+    plan_name: string;
+    total_centavos: number;
+    currency: string;
+    created_at: string;
+    events: { title: string; starts_at: string } | null;
+  }[];
+  bookings: {
+    id: string;
+    status: string;
+    starts_at: string;
+    price_centavos: number;
+    currency: string;
+    created_at: string;
+    facilitators: { display_name: string } | null;
+  }[];
+  enquiries: {
+    id: string;
+    data: Record<string, unknown>;
+    created_at: string;
+    forms: { name: string } | null;
+  }[];
+}
+
+export type PeopleSort = 'recent' | 'oldest' | 'value' | 'name' | 'email';
+
+export const adminListPeople = (
+  adminKey: string,
+  params: { q?: string; source?: string; sort?: PeopleSort } = {},
+) => {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v) as [string, string][],
+  ).toString();
+  return apiFetch<{ people: Person[]; truncated: boolean; scope: string }>(
+    `/admin/people${qs ? `?${qs}` : ''}`,
+    adminInit(adminKey),
+  );
+};
+
+export const adminGetPerson = (adminKey: string, email: string) =>
+  apiFetch<PersonDetail>(`/admin/people/${encodeURIComponent(email)}`, adminInit(adminKey));

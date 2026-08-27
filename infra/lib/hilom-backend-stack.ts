@@ -387,11 +387,16 @@ export class HilomBackendStack extends cdk.Stack {
     // status on a missed payment — see the header comment in
     // registration-sweep.ts for why that is the product rule, not a gap.
     const registrationSweep = makeFn('RegistrationSweepFn', 'handlers/registration-sweep.ts', 'handler');
+    // The cross-source people directory. Read-only, and no SES grant: it never
+    // contacts anybody, it only says who there is to contact.
+    const adminPeople = makeFn('AdminPeopleFn', 'handlers/admin-people.ts', 'handler');
     supabaseSecret.grantRead(eventRegistrations);
     supabaseSecret.grantRead(eventsTicketing);
     supabaseSecret.grantRead(adminRegistrations);
     supabaseSecret.grantRead(registrationSweep);
+    supabaseSecret.grantRead(adminPeople);
     adminKeySecret.grantRead(adminRegistrations);
+    adminKeySecret.grantRead(adminPeople);
 
     // Not behind API Gateway — invoked on a schedule (below), not by a
     // request. Publishes posts/pages whose scheduled_at has arrived.
@@ -825,6 +830,13 @@ export class HilomBackendStack extends cdk.Stack {
       ['/admin/registrations/{registrationId}/charges/{chargeId}/waive', [POST]],
       ['/admin/registrations/{registrationId}/charges/{chargeId}/void', [POST]],
       ['/admin/registrations/{registrationId}', [GET]],
+    ]);
+    cmsRoutes(adminPeople, 'AdminPeopleInt', [
+      // '.csv' before the bare collection, and both before {email} — an email
+      // is a greedy-looking path segment and would otherwise swallow them.
+      ['/admin/people.csv', [GET]],
+      ['/admin/people', [GET]],
+      ['/admin/people/{email}', [GET]],
     ]);
     cmsRoutes(eventRegistrations, 'EventRegistrationsInt', [
       ['/events/{eventId}/register', [POST]],
