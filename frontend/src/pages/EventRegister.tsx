@@ -124,7 +124,7 @@ function EventHeader({ event }: { event: TicketedEvent }) {
             <h2>Who's holding the space</h2>
             <div
               className="grid"
-              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', marginTop: '1.5rem' }}
+              style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', marginTop: '1.5rem' }}
             >
               {event.facilitators.map((f, i) => (
                 <div key={i} className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -220,14 +220,34 @@ export default function EventRegister() {
   const { event, plans, placesRemaining, open } = data;
 
   if (!user) {
+    const showPlans = open && plans.length > 0;
+    const noPlaces = placesRemaining <= 0;
     return (
       <>
         <EventHeader event={event} />
         <section className="section" style={{ background: 'var(--cream)' }}>
-          <div className="container" style={{ maxWidth: 560, textAlign: 'center' }}>
+          <div className="container" style={{ maxWidth: 720, textAlign: 'center' }}>
             <p className="badge">Join Us</p>
-            <h2>Ready to reserve your place?</h2>
-            <p className="lede" style={{ margin: '0 auto 1.5rem' }}>
+            <h2 style={{ marginBottom: showPlans ? '0.5rem' : undefined }}>Ready to reserve your place?</h2>
+
+            {showPlans && (
+              <>
+                {!noPlaces && (
+                  <p className="small" style={{ marginBottom: '1.5rem' }}>
+                    <span className="pill pill-warn">
+                      {placesRemaining} {placesRemaining === 1 ? 'place' : 'places'} left
+                    </span>
+                  </p>
+                )}
+                <div style={{ display: 'grid', gap: 10, textAlign: 'left', marginBottom: '1.75rem' }}>
+                  {plans.map((plan) => (
+                    <PlanOption key={plan.id} plan={plan} selected={false} onSelect={() => {}} readOnly />
+                  ))}
+                </div>
+              </>
+            )}
+
+            <p className="lede" style={{ margin: '0 auto 1.5rem', maxWidth: 480 }}>
               Sign in to reserve your place. You will need an account to manage your payments later.
             </p>
             <button type="button" className="btn btn-accent" onClick={() => void login(`/events/${eventId}/register`)}>
@@ -506,10 +526,12 @@ function PlanOption({
   plan,
   selected,
   onSelect,
+  readOnly = false,
 }: {
   plan: EventPlan;
   selected: boolean;
   onSelect: () => void;
+  readOnly?: boolean;
 }) {
   const schedule = [...plan.installments].sort((a, b) => a.seq - b.seq);
   const upfront = dueNow(plan);
@@ -520,20 +542,22 @@ function PlanOption({
       style={{
         padding: 14,
         display: 'block',
-        cursor: 'pointer',
+        cursor: readOnly ? 'default' : 'pointer',
         borderColor: selected ? 'var(--forest)' : 'var(--line)',
         borderWidth: selected ? 2 : 1,
         borderStyle: 'solid',
       }}
     >
       <span style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <input
-          type="radio"
-          name="plan"
-          checked={selected}
-          onChange={onSelect}
-          style={{ width: 'auto', marginTop: 4 }}
-        />
+        {!readOnly && (
+          <input
+            type="radio"
+            name="plan"
+            checked={selected}
+            onChange={onSelect}
+            style={{ width: 'auto', marginTop: 4 }}
+          />
+        )}
         <span style={{ flex: 1 }}>
           <strong>{plan.name}</strong>
           <span style={{ float: 'right' }}>{money(plan.total_centavos, plan.currency)}</span>
