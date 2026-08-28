@@ -9,6 +9,7 @@ import AccountDashboard from './pages/AccountDashboard';
 import RegistrationProcessing from './pages/RegistrationProcessing';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import ScrollToTop from './components/ScrollToTop';
 import CmsOrFallback from './components/CmsOrFallback';
 import Home from './pages/Home';
 import Courses from './pages/Courses';
@@ -54,6 +55,7 @@ import Community from './pages/Community';
 export default function App() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <Routes>
         <Route
           path="/admin/*"
