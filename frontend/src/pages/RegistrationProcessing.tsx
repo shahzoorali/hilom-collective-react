@@ -30,7 +30,7 @@ export default function RegistrationProcessing() {
 
   useEffect(() => {
     if (!registrationId) {
-      setError("We couldn't find that registration. Check your email for confirmation.");
+      setError('lost-id');
       return;
     }
 
@@ -72,7 +72,27 @@ export default function RegistrationProcessing() {
   return (
     <section className="section">
       <div className="container" style={{ maxWidth: 560 }}>
-        {error && <div className="alert alert-error">{error}</div>}
+        {error === 'lost-id' && (
+          <div className="panel">
+            <h1 style={{ marginTop: 0 }}>We've lost track of this page — but not your payment</h1>
+            <p>
+              This can happen if you press back or reopen the tab after paying. If your payment went
+              through, <strong>it's safe and recorded</strong> — a confirmation email and receipt are on
+              their way.
+            </p>
+            <p className="small muted">
+              Your registration appears in your account within a minute or two of paying. If nothing
+              arrives, write to us at{' '}
+              <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a> with the name
+              and email you used — nothing is lost. Please don't register or pay again.
+            </p>
+            <Link className="btn btn-accent" to="/account/registrations">
+              View your registrations
+            </Link>
+          </div>
+        )}
+
+        {error && error !== 'lost-id' && <div className="alert alert-error">{error}</div>}
 
         {!error && result?.status === 'confirmed' && (
           <div className="panel">
