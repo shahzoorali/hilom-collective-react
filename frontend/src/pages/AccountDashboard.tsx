@@ -23,7 +23,7 @@
  * does, because `bookings` is still the literal path segment under `/account`.
  */
 import { Suspense, lazy } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { currentUser, login } from '../lib/auth';
 
 const Overview = lazy(() => import('./account/Overview'));
@@ -34,18 +34,9 @@ const BookingsTab = lazy(() => import('./account/BookingsTab'));
 const PaymentsTab = lazy(() => import('./account/PaymentsTab'));
 const DetailsTab = lazy(() => import('./account/DetailsTab'));
 
-const TABS = [
-  { label: 'Overview', path: 'overview', icon: '🏠' },
-  { label: 'Retreats & events', path: 'registrations', icon: '🌿' },
-  { label: 'Sessions', path: 'bookings', icon: '📅' },
-  { label: 'Payments', path: 'payments', icon: '🧾' },
-  { label: 'My details', path: 'details', icon: '👤' },
-] as const;
-
 export default function AccountDashboard() {
   const user = currentUser();
   const location = useLocation();
-  const navigate = useNavigate();
 
   if (!user) {
     return (
@@ -67,27 +58,9 @@ export default function AccountDashboard() {
     );
   }
 
-  // Third path segment: /account/registrations/abc123 and
-  // /account/registrations both read as 'registrations', which is what keeps
-  // the tab highlighted correctly on the detail and receipt pages too.
-  const active = location.pathname.split('/')[2] ?? 'overview';
-
   return (
     <section className="section" style={{ paddingTop: '1.5rem' }}>
       <div className="container">
-        <nav className="admin-tabs" style={{ marginBottom: '1.5rem', borderBottom: '1px solid var(--line)', paddingBottom: '0.75rem' }}>
-          {TABS.map((tab) => (
-            <button
-              key={tab.path}
-              type="button"
-              className={`admin-tab-btn${active === tab.path ? ' admin-tab-btn--active' : ''}`}
-              onClick={() => navigate(`/account/${tab.path}`)}
-            >
-              <span aria-hidden="true">{tab.icon}</span> {tab.label}
-            </button>
-          ))}
-        </nav>
-
         <Suspense fallback={<div className="spinner" aria-label="Loading" />}>
           <Routes>
             <Route index element={<Navigate to="overview" replace />} />

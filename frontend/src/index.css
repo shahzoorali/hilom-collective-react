@@ -74,6 +74,33 @@ a { color: var(--forest); }
 .nav a:hover { color: var(--forest); }
 .nav .who { color: var(--muted); font-size: 0.85rem; }
 
+/* Username dropdown holding the /account sub-navigation. */
+.user-menu { position: relative; }
+.user-menu-trigger {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  background: none; border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.4rem 0.7rem; cursor: pointer; color: var(--forest); font-family: var(--sans);
+}
+.user-menu-panel {
+  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 30;
+  min-width: 210px; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.35rem; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+}
+.user-menu-item {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  padding: 0.55rem 0.7rem; border-radius: 7px; cursor: pointer;
+  font: inherit; font-size: 0.9rem; color: var(--ink); text-decoration: none;
+}
+.user-menu-item:hover { background: var(--sand, rgba(0, 0, 0, 0.05)); color: var(--forest); }
+.user-menu-item--active { color: var(--forest); font-weight: 600; }
+
+@media (max-width: 780px) {
+  .user-menu { width: 100%; }
+  .user-menu-trigger { width: 100%; justify-content: space-between; }
+  .user-menu-panel { position: static; box-shadow: none; min-width: 0; margin-top: 0.4rem; }
+}
+
 /* Hamburger — hidden on desktop, revealed at the breakpoint below. */
 .nav-toggle {
   display: none; margin-left: auto; background: none; border: 1px solid var(--line);

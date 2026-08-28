@@ -1,5 +1,5 @@
-import { Link, useLocation } from 'react-router-dom';
-import { useEffect, useState, type ReactNode } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { currentUser, login, logout } from '../lib/auth';
 import hilomLogo from '../assets/hilom-logo.png';
 import { useMenus } from '../cms/useMenus';
@@ -20,6 +20,67 @@ function MenuLinkView({ item }: { item: MenuLink }) {
     );
   }
   return <Link to={item.href}>{item.label}</Link>;
+}
+
+/** The `/account/*` sub-navigation, surfaced here under the username dropdown
+ *  rather than as an in-page tab bar on AccountDashboard. */
+const ACCOUNT_MENU = [
+  { label: 'Overview', to: '/account/overview' },
+  { label: 'Retreats & events', to: '/account/registrations' },
+  { label: 'Sessions', to: '/account/bookings' },
+  { label: 'Payments', to: '/account/payments' },
+  { label: 'My details', to: '/account/details' },
+] as const;
+
+function UserMenu({ email }: { email: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const { pathname } = useLocation();
+
+  // Close on route change and on any click outside the menu.
+  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  return (
+    <div className="user-menu" ref={ref}>
+      <button
+        type="button"
+        className="user-menu-trigger"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="who">{email}</span>
+        <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="user-menu-panel" role="menu">
+          {ACCOUNT_MENU.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              role="menuitem"
+              className={({ isActive }) =>
+                isActive ? 'user-menu-item user-menu-item--active' : 'user-menu-item'
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+          <button type="button" className="user-menu-item" role="menuitem" onClick={logout}>
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -51,12 +112,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <MenuLinkView key={`${item.label}-${item.href}`} item={item} />
             ))}
             {user ? (
-              <>
-                <span className="who">{user.email}</span>
-                <button className="btn btn-ghost" onClick={logout}>
-                  Log out
-                </button>
-              </>
+              <UserMenu email={user.email} />
             ) : (
               <button
                 className="btn btn-primary"
