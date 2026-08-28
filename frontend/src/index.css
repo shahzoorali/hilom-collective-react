@@ -180,12 +180,42 @@ th, td { text-align: left; padding: 0.6rem 0.5rem; border-bottom: 1px solid var(
 th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.04em; }
 .mono { font-family: 'Courier New', monospace; font-size: 0.82rem; }
 
-/* spinner */
-.spinner {
-  width: 34px; height: 34px; border: 3px solid var(--cream); border-top-color: var(--forest);
-  border-radius: 50%; animation: spin 0.9s linear infinite; margin: 0 auto 1rem;
+/* Route transition veil — see components/RouteTransition.tsx.
+   Deliberately empty and fixed-size: it never relayouts, so its opacity tween
+   stays on the compositor while the page swaps skeletons for real content
+   underneath it. z-index sits above page content but below .site-header
+   (z-index 20), because the header persists across routes and should not be
+   dissolved along with the page. pointer-events:none so an idle (or
+   mid-tween) veil can never swallow a click. */
+.route-veil {
+  position: fixed;
+  inset: 0;
+  background: var(--page);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 15;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+
+/* "The breathing wait" — see Motion Lab (/motion-lab), demo 6.
+   The three post-payment polling screens (Processing.tsx, BookingProcessing.tsx,
+   RegistrationProcessing.tsx) all render <div className="spinner" /> while
+   waiting on a webhook, so retiming this one rule retimes all three: a soft
+   leaf-green circle on a 4s-in / 6s-out box-breath, instead of a spin. It's
+   the only animation placed on a money path, and it's safe there because it
+   doesn't gate anything — the poll behind it runs exactly the same either way. */
+.spinner {
+  width: 64px; height: 64px; border-radius: 50%; margin: 0 auto 1rem;
+  background: radial-gradient(circle at 35% 32%, #a8c793, var(--leaf) 62%, var(--forest));
+  animation: breathe 10s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%   { transform: scale(1);    opacity: 0.5; }
+  40%  { transform: scale(1.25); opacity: 0.9; }
+  100% { transform: scale(1);    opacity: 0.5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; opacity: 0.75; }
+}
 
 /* Skeleton loading placeholders — see components/Skeleton.tsx.
    A pale base with a light band sweeping across it. Colours come from the

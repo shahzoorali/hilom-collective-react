@@ -5,7 +5,7 @@
  * panel. It is the lowest-friction way into the whole marketplace, and burying
  * it as the cheapest row in a price list would waste that.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { money } from '../components/Layout';
 import {
@@ -15,6 +15,7 @@ import {
   type FacilitatorService,
 } from '../lib/booking';
 import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton';
+import { playFlip } from '../lib/pageFlip';
 
 export default function FacilitatorProfile() {
   const { slug = '' } = useParams();
@@ -22,6 +23,7 @@ export default function FacilitatorProfile() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const root = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -34,6 +36,12 @@ export default function FacilitatorProfile() {
       live = false;
     };
   }, [slug]);
+
+  // Mirrors ProductDetail.tsx: fires once the real content — and its
+  // matching data-flip-id elements — replace the skeleton.
+  useLayoutEffect(() => {
+    if (data) playFlip(root.current);
+  }, [data]);
 
   if (error) {
     return (
@@ -77,23 +85,23 @@ export default function FacilitatorProfile() {
   const paid = services.filter((s) => s.kind !== 'exploratory');
 
   return (
-    <section className="section">
+    <section className="section" ref={root}>
       <div className="container">
         <Link to="/facilitators" className="linklike small">← All facilitators</Link>
 
         <div className="split split-narrow" style={{ marginTop: '1rem' }}>
           <div>
             {f.photo_url ? (
-              <img src={f.photo_url} alt={f.display_name} className="facilitator-photo" />
+              <img src={f.photo_url} alt={f.display_name} className="facilitator-photo" data-flip-id={`facilitator-photo-${slug}`} />
             ) : (
-              <div className="facilitator-photo facilitator-card__monogram" aria-hidden="true">
+              <div className="facilitator-photo facilitator-card__monogram" data-flip-id={`facilitator-photo-${slug}`} aria-hidden="true">
                 {f.display_name.slice(0, 1).toUpperCase()}
               </div>
             )}
           </div>
 
           <div>
-            <h1 style={{ marginBottom: '0.25rem' }}>{f.display_name}</h1>
+            <h1 style={{ marginBottom: '0.25rem' }} data-flip-id={`facilitator-title-${slug}`}>{f.display_name}</h1>
             {f.headline && <p className="desc" style={{ marginTop: 0 }}>{f.headline}</p>}
 
             <p className="small muted">

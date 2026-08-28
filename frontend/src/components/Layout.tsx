@@ -4,6 +4,7 @@ import { currentUser, login, logout } from '../lib/auth';
 import hilomLogo from '../assets/hilom-logo.png';
 import { useMenus } from '../cms/useMenus';
 import type { MenuLink } from '../lib/cms';
+import RouteTransition from './RouteTransition';
 
 export function money(centavos: number, currency = 'PHP'): string {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(centavos / 100);
@@ -68,7 +69,9 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main>{children}</main>
+      <main>
+        <RouteTransition>{children}</RouteTransition>
+      </main>
 
       <footer className="site-footer">
         <div className="container">

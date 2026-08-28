@@ -5,11 +5,12 @@
  * coach": the specialty filter is the first thing on the page because what
  * brings someone here is a situation, not a name they already know.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../components/Layout';
 import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { SkeletonCardGrid } from '../components/Skeleton';
+import { captureFlip } from '../lib/pageFlip';
 
 export default function Facilitators() {
   const [facilitators, setFacilitators] = useState<FacilitatorCard[] | null>(null);
@@ -109,21 +110,31 @@ export default function Facilitators() {
 function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) {
   const { slug, display_name, headline, photo_url, specialties, location, hasFreeCall, fromCentavos } =
     facilitator;
+  const cardRef = useRef<HTMLAnchorElement>(null);
 
   return (
-    <Link to={`/facilitators/${slug}`} className="card facilitator-card">
+    <Link
+      to={`/facilitators/${slug}`}
+      className="card facilitator-card"
+      ref={cardRef}
+      onClick={() => captureFlip(cardRef.current)}
+    >
       {photo_url ? (
-        <img src={photo_url} alt="" className="facilitator-card__photo" loading="lazy" />
+        <img src={photo_url} alt="" className="facilitator-card__photo" data-flip-id={`facilitator-photo-${slug}`} loading="lazy" />
       ) : (
         // A neutral monogram rather than a stock silhouette: an obviously
         // generic stand-in photo reads as a fake profile.
-        <div className="facilitator-card__photo facilitator-card__monogram" aria-hidden="true">
+        <div
+          className="facilitator-card__photo facilitator-card__monogram"
+          data-flip-id={`facilitator-photo-${slug}`}
+          aria-hidden="true"
+        >
           {display_name.slice(0, 1).toUpperCase()}
         </div>
       )}
 
       <div className="facilitator-card__body">
-        <h3 style={{ margin: '0 0 0.25rem' }}>{display_name}</h3>
+        <h3 style={{ margin: '0 0 0.25rem' }} data-flip-id={`facilitator-title-${slug}`}>{display_name}</h3>
         {headline && <p className="small muted" style={{ margin: '0 0 0.6rem' }}>{headline}</p>}
 
         {specialties.length > 0 && (
