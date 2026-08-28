@@ -43,7 +43,9 @@ import {
   outstandingCentavos,
   paidCentavos,
   nextDueCharge,
+  assessRefund,
   type ChargeStatus,
+  type RefundAssessment,
 } from '../lib/event-ticketing.js';
 
 const conflict = (message: string) => json(409, { error: message });
@@ -149,6 +151,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return badRequest(`Unsupported action ${path}`);
     }
 
+    if (registrationId && method === 'GET' && path.endsWith('/refund-assessment')) {
+      return await refundAssessment(registrationId, event.queryStringParameters ?? {});
+    }
     if (registrationId && method === 'GET') {
       return await registrationDetail(registrationId);
     }
@@ -574,13 +579,77 @@ async function settleWithout(
   return ok({ chargeId, status: outcome });
 }
 
+/** The deposit charge's amount, or 0 if one is somehow absent. */
+function depositCentavosOf(charges: ChargeRow[]): number {
+  return charges.find((c) => c.is_deposit)?.amount_centavos ?? 0;
+}
+
+/** `nonRecoverableCentavos` from a query string or body: 0 default, or 'invalid'. */
+function parseNonRecoverable(raw: unknown): number | 'invalid' {
+  if (raw === undefined || raw === null || raw === '') return 0;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : 'invalid';
+}
+
+/**
+ * `GET /admin/registrations/{id}/refund-assessment[?nonRecoverableCentavos=]`
+ *
+ * The Participant Agreement §III position for cancelling this registration
+ * right now, so the admin screen starts from the contract rather than a blank
+ * prompt. Read-only — `cancel` recomputes it server-side and never trusts a
+ * number the client sends for this.
+ */
+async function refundAssessment(
+  registrationId: string,
+  query: Record<string, string | undefined>,
+): Promise<APIGatewayProxyResultV2> {
+  const nonRecoverable = parseNonRecoverable(query.nonRecoverableCentavos);
+  if (nonRecoverable === 'invalid') {
+    return badRequest('nonRecoverableCentavos must be a whole number of centavos.');
+  }
+
+  const supabase = await getSupabase();
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select('id, currency, status, event_id, events(starts_at)')
+    .eq('id', registrationId)
+    .maybeSingle<{
+      id: string;
+      currency: string;
+      status: string;
+      event_id: string;
+      events: { starts_at: string } | null;
+    }>();
+  if (error) throw error;
+  if (!registration || !registration.events) return notFound('Registration not found');
+
+  const charges = (await chargesFor(supabase, [registrationId])).get(registrationId) ?? [];
+
+  const assessment = assessRefund({
+    eventStartsAt: registration.events.starts_at,
+    now: new Date(),
+    paidCentavos: paidCentavos(charges),
+    depositCentavos: depositCentavosOf(charges),
+    nonRecoverableCentavos: nonRecoverable,
+    currency: registration.currency,
+  });
+
+  return ok({ registrationId, status: registration.status, assessment });
+}
+
 /**
  * Cancels a place and frees the seat.
  *
  * The refund is *recorded*, never executed — consistent with the standing
- * "manual revoke, no automation" rule and with how booking refunds work. Note
- * that the retreat product has no refund policy at all, so nothing computes
- * this number: a non-zero value means a human decided on an exception.
+ * "manual revoke, no automation" rule and with how booking refunds work.
+ *
+ * The starting number, though, is no longer a guess: `assessRefund` applies
+ * Participant Agreement §III (see event-ticketing.ts). When the caller sends
+ * no `refundCentavos`, the tier's figure is used; when they send one, it wins
+ * and the divergence from the tier is written to the audit trail and the
+ * registration's notes. A tier-2 cancellation also produces a *credit* toward
+ * a future retreat — recorded in the notes and told to the registrant, but
+ * with no redemption mechanism yet, so a human still arranges it.
  */
 async function cancel(
   registrationId: string,
@@ -591,10 +660,14 @@ async function cancel(
 
   const reason = String(body.reason ?? '').trim().slice(0, 500);
   const refundRaw = body.refundCentavos;
-  const refundCentavos =
+  const refundOverride =
     refundRaw === undefined || refundRaw === null || refundRaw === '' ? null : Number(refundRaw);
-  if (refundCentavos !== null && (!Number.isInteger(refundCentavos) || refundCentavos < 0)) {
+  if (refundOverride !== null && (!Number.isInteger(refundOverride) || refundOverride < 0)) {
     return badRequest('A refund must be a whole number of centavos, or left blank.');
+  }
+  const nonRecoverable = parseNonRecoverable(body.nonRecoverableCentavos);
+  if (nonRecoverable === 'invalid') {
+    return badRequest('nonRecoverableCentavos must be a whole number of centavos, or left blank.');
   }
 
   const { data: registration, error } = await supabase
@@ -606,7 +679,44 @@ async function cancel(
   if (!registration) return notFound('Registration not found');
   if (registration.status === 'cancelled') return conflict('That registration is already cancelled.');
 
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+
+  // Fetched before the update: only outstanding charges are about to change,
+  // and the assessment is a function of the *paid* ones, which do not.
+  const charges = (await chargesFor(supabase, [registrationId])).get(registrationId) ?? [];
+
+  const eventStartsAt = (registration.events?.starts_at as string | undefined) ?? null;
+  const assessment: RefundAssessment | null = eventStartsAt
+    ? assessRefund({
+        eventStartsAt,
+        now: nowDate,
+        paidCentavos: paidCentavos(charges),
+        depositCentavos: depositCentavosOf(charges),
+        nonRecoverableCentavos: nonRecoverable,
+        currency: registration.currency,
+      })
+    : null;
+
+  const refundCentavos = refundOverride ?? assessment?.refundCentavos ?? null;
+  const creditCentavos = assessment?.creditCentavos ?? 0;
+
+  // A note is worth keeping only when something still needs a human: a credit
+  // to arrange, or an override to explain. A tier-matching cash refund is
+  // already fully described by the audit row.
+  const overridden =
+    assessment !== null && refundOverride !== null && refundOverride !== assessment.refundCentavos;
+  const noteParts: string[] = [];
+  if (assessment) noteParts.push(`§III ${assessment.tier}: ${assessment.summary}`);
+  if (creditCentavos > 0) noteParts.push('Retreat credit to arrange manually.');
+  if (overridden) {
+    noteParts.push(`Refund set to ${refundCentavos} (tier suggested ${assessment!.refundCentavos}).`);
+  }
+  const priorNotes = typeof registration.admin_notes === 'string' ? registration.admin_notes : '';
+  const adminNotes =
+    creditCentavos > 0 || overridden
+      ? [priorNotes, `[${now.slice(0, 10)}] ${noteParts.join(' ')}`].filter(Boolean).join('\n')
+      : (priorNotes || null);
 
   const { data: claimed, error: updateError } = await supabase
     .from('event_registrations')
@@ -618,6 +728,7 @@ async function cancel(
       cancellation_decided_at: registration.cancellation_requested_at ? now : null,
       cancellation_decision: registration.cancellation_requested_at ? 'approved' : null,
       refund_centavos: refundCentavos,
+      admin_notes: adminNotes,
       hold_expires_at: null,
       flagged_at: null,
       flag_reason: null,
@@ -638,8 +749,6 @@ async function cancel(
     .eq('registration_id', registrationId)
     .in('status', ['scheduled', 'awaiting_payment']);
 
-  const charges = (await chargesFor(supabase, [registrationId])).get(registrationId) ?? [];
-
   await recordAudit(actor, {
     action: 'registration.cancel',
     targetTable: 'event_registrations',
@@ -647,7 +756,17 @@ async function cancel(
     eventId: registration.event_id,
     ...(refundCentavos ? { amountCentavos: refundCentavos, currency: registration.currency } : {}),
     before: { status: registration.status, seat_no: registration.seat_no },
-    after: { status: 'cancelled', refund_centavos: refundCentavos },
+    after: {
+      status: 'cancelled',
+      refund_centavos: refundCentavos,
+      ...(assessment
+        ? {
+            refund_tier: assessment.tier,
+            refund_credit_centavos: creditCentavos,
+            refund_tier_suggested_centavos: assessment.refundCentavos,
+          }
+        : {}),
+    },
     note: reason || null,
   });
 
@@ -661,11 +780,18 @@ async function cancel(
       registration: registration as never,
       charges: charges as never,
       refundCentavos,
+      creditCentavos: creditCentavos || null,
       reason: reason || null,
     });
   }
 
-  return ok({ registrationId, status: 'cancelled', seatFreed: registration.seat_no });
+  return ok({
+    registrationId,
+    status: 'cancelled',
+    seatFreed: registration.seat_no,
+    refundCentavos,
+    ...(assessment ? { assessment } : {}),
+  });
 }
 
 /**

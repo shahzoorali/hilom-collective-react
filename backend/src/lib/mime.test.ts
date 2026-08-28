@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRawEmail } from './mime.ts';
+import { buildRawEmail } from './mime.js';
 
 /** Pull one part's decoded body out of a raw MIME string by its Content-Type. */
 function decodePart(raw: string, contentType: string): string {

@@ -302,6 +302,175 @@ export function isFullySettled(charges: Charge[]): boolean {
   return charges.length > 0 && charges.every((c) => !isOutstanding(c.status));
 }
 
+// ---------------------------------------------------------------------------
+// Cancellation refund tiers — Participant Agreement §III
+// ---------------------------------------------------------------------------
+// The retreat's written agreement (docs/participant-agreement.md, and the
+// attached PDF) commits to three outcomes keyed on how far ahead of the
+// retreat the cancellation lands. Before this, `cancel()` computed nothing and
+// an admin free-typed a peso figure — which is how the signed terms and what
+// actually happens drift apart. This is the one place that arithmetic lives.
+//
+//   * > 60 days before   — refund of payments received, LESS the deposit and
+//                          any non-recoverable third-party cost already paid.
+//   * 31–60 days before  — 50% of payments received, as a CREDIT toward
+//                          another Hilom retreat within 12 months (not cash).
+//                          The deposit and the remaining balance are forfeited.
+//   * 30 days or fewer    — payments are non-refundable (incl. non-attendance
+//     (or already started)  or early departure), "except where required by
+//                          law" — which stays an admin override, not a branch.
+//
+// Everything is a suggestion the admin can override; the point is that the
+// starting number matches the contract instead of a guess.
+
+export type RefundTier = 'gt_60_days' | '31_to_60_days' | '30_days_or_fewer';
+
+export interface RefundAssessment {
+  tier: RefundTier;
+  /** Whole days from `now` to the event start; negative once it has started. */
+  daysUntilEvent: number;
+  paidCentavos: number;
+  depositCentavos: number;
+  nonRecoverableCentavos: number;
+  /** Cash to return. */
+  refundCentavos: number;
+  /** Credit toward another Hilom retreat within 12 months — tier 2 only. */
+  creditCentavos: number;
+  /** Retained by Hilom (paid − refund − credit). */
+  forfeitCentavos: number;
+  currency: string;
+  /** One sentence, written to be shown to an admin and quoted to a registrant. */
+  summary: string;
+}
+
+const DAY_MS = 86_400_000;
+
+function pesos(centavos: number, currency: string): string {
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+  }).format(centavos / 100);
+}
+
+/**
+ * The refund position for a cancellation, per Participant Agreement §III.
+ *
+ * Pure: `now` is a parameter so the 60- and 30-day edges are testable without
+ * waiting for a calendar. `depositCentavos` is the amount of the deposit
+ * charge (whether or not it is the only thing paid); `nonRecoverableCentavos`
+ * is an admin-supplied figure for costs already forwarded to a third party and
+ * defaults to zero.
+ */
+export function assessRefund(input: {
+  eventStartsAt: string;
+  now: Date;
+  paidCentavos: number;
+  depositCentavos: number;
+  nonRecoverableCentavos?: number;
+  currency?: string;
+}): RefundAssessment {
+  const currency = input.currency ?? 'PHP';
+  const paid = requireWholeCentavos(input.paidCentavos, 'paidCentavos');
+  const deposit = requireWholeCentavos(input.depositCentavos, 'depositCentavos');
+  const nonRecoverable = requireWholeCentavos(
+    input.nonRecoverableCentavos ?? 0,
+    'nonRecoverableCentavos',
+  );
+
+  const startMs = Date.parse(input.eventStartsAt);
+  if (Number.isNaN(startMs)) {
+    throw new TicketingValidationError(`"${input.eventStartsAt}" is not a valid event start`);
+  }
+  const daysUntilEvent = Math.floor((startMs - input.now.getTime()) / DAY_MS);
+
+  let tier: RefundTier;
+  let refundCentavos: number;
+  let creditCentavos: number;
+
+  if (daysUntilEvent > 60) {
+    tier = 'gt_60_days';
+    refundCentavos = Math.max(0, paid - deposit - nonRecoverable);
+    creditCentavos = 0;
+  } else if (daysUntilEvent > 30) {
+    tier = '31_to_60_days';
+    refundCentavos = 0;
+    // Half of what was received, rounded so credit + forfeit sum back exactly.
+    creditCentavos = Math.round(paid / 2);
+  } else {
+    tier = '30_days_or_fewer';
+    refundCentavos = 0;
+    creditCentavos = 0;
+  }
+
+  const forfeitCentavos = paid - refundCentavos - creditCentavos;
+
+  const summary = buildRefundSummary({
+    tier,
+    paid,
+    deposit,
+    nonRecoverable,
+    refundCentavos,
+    creditCentavos,
+    forfeitCentavos,
+    currency,
+  });
+
+  return {
+    tier,
+    daysUntilEvent,
+    paidCentavos: paid,
+    depositCentavos: deposit,
+    nonRecoverableCentavos: nonRecoverable,
+    refundCentavos,
+    creditCentavos,
+    forfeitCentavos,
+    currency,
+    summary,
+  };
+}
+
+function requireWholeCentavos(value: number, field: string): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TicketingValidationError(`${field} must be a whole number of centavos`);
+  }
+  return value;
+}
+
+function buildRefundSummary(x: {
+  tier: RefundTier;
+  paid: number;
+  deposit: number;
+  nonRecoverable: number;
+  refundCentavos: number;
+  creditCentavos: number;
+  forfeitCentavos: number;
+  currency: string;
+}): string {
+  const c = x.currency;
+  if (x.tier === 'gt_60_days') {
+    const less =
+      x.nonRecoverable > 0
+        ? `, less the ${pesos(x.deposit, c)} deposit and ${pesos(x.nonRecoverable, c)} in non-recoverable costs`
+        : `, less the ${pesos(x.deposit, c)} deposit`;
+    return (
+      `More than 60 days before the retreat: ${pesos(x.refundCentavos, c)} refunded ` +
+      `of ${pesos(x.paid, c)} paid${less}.`
+    );
+  }
+  if (x.tier === '31_to_60_days') {
+    return (
+      `31–60 days before the retreat: ${pesos(x.creditCentavos, c)} (50% of ${pesos(x.paid, c)} paid) ` +
+      `credited once toward another Hilom retreat within 12 months. ` +
+      `The deposit and the balance are forfeited; no cash refund.`
+    );
+  }
+  return (
+    `30 days or fewer before the retreat: payments are non-refundable, ` +
+    `so ${pesos(x.paid, c)} is forfeited (except where required by law).`
+  );
+}
+
 /**
  * Registrant fields an event may ask for beyond name, email and phone.
  *

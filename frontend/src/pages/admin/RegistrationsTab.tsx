@@ -23,6 +23,7 @@ import {
   adminMarkChargePaid,
   adminSettleChargeWithout,
   adminCancelRegistration,
+  adminGetRefundAssessment,
   adminNudgeRegistration,
   adminDecideCancellation,
   adminMarkRefundSent,
@@ -33,6 +34,7 @@ import {
   type AdminCharge,
   type RosterMoney,
   type AuditEntry,
+  type RefundAssessment,
 } from '../../lib/cms';
 
 type Filter = 'attention' | 'all' | 'confirmed' | 'cancelled';
@@ -280,6 +282,70 @@ function RegistrationRow({
     }
   }
 
+  /**
+   * Walks the operator through the Participant Agreement §III refund position
+   * before a cancel or an approval: fetches the tier, offers a
+   * non-recoverable-cost figure where §III allows one, and pre-fills the cash
+   * refund with the contract's number rather than a blank. Returns the values
+   * to send, or null if they backed out.
+   */
+  async function promptRefund(
+    intro: string,
+  ): Promise<{ refundCentavos: number; nonRecoverableCentavos: number | null } | null> {
+    let assessment: RefundAssessment;
+    try {
+      ({ assessment } = await adminGetRefundAssessment(adminKey, r.id));
+    } catch (e) {
+      onError((e as Error).message);
+      return null;
+    }
+
+    let nonRecoverableCentavos: number | null = null;
+    if (assessment.tier === 'gt_60_days') {
+      const nr = window.prompt(
+        `${assessment.summary}\n\n` +
+          'Non-recoverable third-party costs already paid, in pesos — deducted on top of the ' +
+          'deposit. Leave blank for none.',
+        '',
+      );
+      if (nr === null) return null;
+      if (nr.trim()) {
+        const c = Math.round(Number(nr) * 100);
+        if (!Number.isFinite(c) || c < 0) {
+          onError('That non-recoverable amount is not a number.');
+          return null;
+        }
+        nonRecoverableCentavos = c;
+        try {
+          ({ assessment } = await adminGetRefundAssessment(adminKey, r.id, c));
+        } catch (e) {
+          onError((e as Error).message);
+          return null;
+        }
+      }
+    }
+
+    const creditLine =
+      assessment.creditCentavos > 0
+        ? `\n\nSeparately, a retreat credit of ${money(assessment.creditCentavos, assessment.currency)} ` +
+          'is owed toward a future Hilom retreat (12 months) — arranged by hand, not by this form.'
+        : '';
+
+    const refundPesos = window.prompt(
+      `${intro}\n\n${assessment.summary}${creditLine}\n\n` +
+        'Cash refund in pesos — recorded only, a person still sends it. The figure below matches ' +
+        'the agreement; change it only for a deliberate exception.',
+      (assessment.refundCentavos / 100).toString(),
+    );
+    if (refundPesos === null) return null;
+    const refundCentavos = refundPesos.trim() ? Math.round(Number(refundPesos) * 100) : 0;
+    if (!Number.isFinite(refundCentavos) || refundCentavos < 0) {
+      onError('That refund amount is not a number.');
+      return null;
+    }
+    return { refundCentavos, nonRecoverableCentavos };
+  }
+
   return (
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <button
@@ -337,25 +403,20 @@ function RegistrationRow({
                   className="btn btn-ghost small"
                   disabled={busy}
                   onClick={() => {
-                    const refundPesos = window.prompt(
-                      `Approve — cancel ${r.registrant_name}'s place and free seat #${r.seat_no}.\n\n` +
-                        `They have paid ${money(r.paidCentavos, r.currency)}.\n` +
-                        'Refund amount in pesos, or leave blank for none. Recorded only — a person still sends it.',
-                      '',
-                    );
-                    if (refundPesos === null) return;
-                    const refundCentavos = refundPesos.trim() ? Math.round(Number(refundPesos) * 100) : null;
-                    if (refundCentavos !== null && !Number.isFinite(refundCentavos)) {
-                      onError('That refund amount is not a number.');
-                      return;
-                    }
-                    void run('Cancellation approved — the place is free again.', () =>
-                      adminDecideCancellation(adminKey, r.id, {
-                        decision: 'approved',
-                        reason: r.cancellation_reason ?? undefined,
-                        refundCentavos,
-                      }),
-                    );
+                    void (async () => {
+                      const picked = await promptRefund(
+                        `Approve — cancel ${r.registrant_name}'s place and free seat #${r.seat_no}.`,
+                      );
+                      if (!picked) return;
+                      await run('Cancellation approved — the place is free again.', () =>
+                        adminDecideCancellation(adminKey, r.id, {
+                          decision: 'approved',
+                          reason: r.cancellation_reason ?? undefined,
+                          refundCentavos: picked.refundCentavos,
+                          nonRecoverableCentavos: picked.nonRecoverableCentavos,
+                        }),
+                      );
+                    })();
                   }}
                 >
                   Approve
@@ -439,33 +500,31 @@ function RegistrationRow({
                 className="btn btn-ghost small"
                 disabled={busy}
                 onClick={() => {
-                  const reason = window.prompt('Why is this being cancelled? (recorded, and emailed to them)');
-                  if (reason === null) return;
-                  const refundPesos = window.prompt(
-                    `They have paid ${money(r.paidCentavos, r.currency)}.\n\n` +
-                      'Refund amount in pesos, or leave blank for none.\n' +
-                      'This is recorded only — a person still has to send the money.',
-                    '',
-                  );
-                  if (refundPesos === null) return;
-                  const refundCentavos = refundPesos.trim()
-                    ? Math.round(Number(refundPesos) * 100)
-                    : null;
-                  if (refundCentavos !== null && !Number.isFinite(refundCentavos)) {
-                    onError('That refund amount is not a number.');
-                    return;
-                  }
-                  if (
-                    !window.confirm(
-                      `Cancel ${r.registrant_name}'s place and free seat #${r.seat_no}?\n\n` +
-                        `Refund recorded: ${refundCentavos ? money(refundCentavos, r.currency) : 'none'}`,
-                    )
-                  ) {
-                    return;
-                  }
-                  void run('Registration cancelled and the place freed.', () =>
-                    adminCancelRegistration(adminKey, r.id, { reason, refundCentavos }),
-                  );
+                  void (async () => {
+                    const reason = window.prompt(
+                      'Why is this being cancelled? (recorded, and emailed to them)',
+                    );
+                    if (reason === null) return;
+                    const picked = await promptRefund(
+                      `Cancel ${r.registrant_name}'s place and free seat #${r.seat_no}?`,
+                    );
+                    if (!picked) return;
+                    if (
+                      !window.confirm(
+                        `Cancel ${r.registrant_name}'s place and free seat #${r.seat_no}?\n\n` +
+                          `Refund recorded: ${picked.refundCentavos ? money(picked.refundCentavos, r.currency) : 'none'}`,
+                      )
+                    ) {
+                      return;
+                    }
+                    await run('Registration cancelled and the place freed.', () =>
+                      adminCancelRegistration(adminKey, r.id, {
+                        reason,
+                        refundCentavos: picked.refundCentavos,
+                        nonRecoverableCentavos: picked.nonRecoverableCentavos,
+                      }),
+                    );
+                  })();
                 }}
               >
                 Cancel this place

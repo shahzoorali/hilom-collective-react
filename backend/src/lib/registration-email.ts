@@ -438,34 +438,51 @@ export async function sendPaymentNudge(
  * rather than a timeline the system cannot keep.
  */
 export async function sendRegistrationCancelled(
-  ctx: RegistrationEmailContext & { refundCentavos: number | null; reason?: string | null },
+  ctx: RegistrationEmailContext & {
+    refundCentavos: number | null;
+    /** A credit toward a future retreat (Agreement §III, 31–60 day tier). */
+    creditCentavos?: number | null;
+    reason?: string | null;
+  },
 ): Promise<void> {
   const { event, registration, charges, refundCentavos } = ctx;
   const currency = registration.currency;
+  const credit = ctx.creditCentavos ?? 0;
   const paid = charges
     .filter((c) => c.status === 'paid')
     .reduce((acc, c) => acc + c.amount_centavos, 0);
 
   const heading = `Your place at ${event.title} has been cancelled`;
 
+  const rows = [
+    { label: 'Event', value: escapeHtml(event.title) },
+    { label: 'Total paid', value: escapeHtml(peso(paid, currency)) },
+    {
+      label: 'Refund',
+      value:
+        refundCentavos && refundCentavos > 0 ? escapeHtml(peso(refundCentavos, currency)) : 'None',
+    },
+  ];
+  if (credit > 0) {
+    rows.push({
+      label: 'Retreat credit',
+      value: `${escapeHtml(peso(credit, currency))} — toward a future Hilom retreat, valid 12 months`,
+    });
+  }
+
+  const followUp =
+    credit > 0
+      ? p('Someone will be in touch to confirm your credit and how to use it.')
+      : refundCentavos && refundCentavos > 0
+        ? p('Someone will be in touch to arrange the transfer.')
+        : '';
+
   const body =
     p(`Hello ${escapeHtml(ctx.registrantName)},`) +
     p(`Your place at ${escapeHtml(event.title)} has been cancelled and is no longer held.`) +
     (ctx.reason ? p(escapeHtml(ctx.reason)) : '') +
-    details([
-      { label: 'Event', value: escapeHtml(event.title) },
-      { label: 'Total paid', value: escapeHtml(peso(paid, currency)) },
-      {
-        label: 'Refund',
-        value:
-          refundCentavos && refundCentavos > 0
-            ? escapeHtml(peso(refundCentavos, currency))
-            : 'None',
-      },
-    ]) +
-    (refundCentavos && refundCentavos > 0
-      ? p('Someone will be in touch to arrange the transfer.')
-      : '') +
+    details(rows) +
+    followUp +
     note('If any of this looks wrong, reply to this email and a person will pick it up.');
 
   await send(
@@ -477,7 +494,14 @@ export async function sendRegistrationCancelled(
       '',
       `Total paid: ${peso(paid, currency)}`,
       `Refund: ${refundCentavos && refundCentavos > 0 ? peso(refundCentavos, currency) : 'None'}`,
-      ...(refundCentavos && refundCentavos > 0 ? ['', 'Someone will be in touch to arrange the transfer.'] : []),
+      ...(credit > 0
+        ? [`Retreat credit: ${peso(credit, currency)} (toward a future Hilom retreat, valid 12 months)`]
+        : []),
+      ...(credit > 0
+        ? ['', 'Someone will be in touch to confirm your credit and how to use it.']
+        : refundCentavos && refundCentavos > 0
+          ? ['', 'Someone will be in touch to arrange the transfer.']
+          : []),
     ]),
     renderEmail({ preheader: `Your place at ${event.title} has been cancelled.`, heading, body }),
   );

@@ -26,6 +26,28 @@ directly. It is run through `sanitizeRichText` on save — allowed tags are
 `p h2 h3 h4 strong em u ul ol li a br blockquote`, everything else is
 stripped, 20 000-char cap. Keep the canonical copy below updated too.
 
+## Refund tiers on cancellation (§III)
+
+`assessRefund` in `backend/src/lib/event-ticketing.ts` is the one place §III's
+arithmetic lives. Keyed on whole days from `now` to the event start:
+
+| Days before | Outcome |
+|---|---|
+| > 60 | Cash refund of payments received, **less the deposit** and any admin-supplied non-recoverable third-party cost. |
+| 31–60 | **50% of payments as a credit** toward another Hilom retreat within 12 months. No cash; deposit and balance forfeited. |
+| ≤ 30 (or already started) | Non-refundable. "Except where required by law" stays a manual admin override. |
+
+`GET /admin/registrations/{id}/refund-assessment[?nonRecoverableCentavos=]`
+returns the position for the admin screen; the admin **Cancel** / **Approve**
+prompts pre-fill the cash figure with it. `cancel()` recomputes it server-side
+— when no `refundCentavos` is sent it uses the tier's figure; an override wins
+but is written to the audit trail and the registration's `admin_notes`.
+
+The **credit** has no redemption mechanism yet: it is recorded in `admin_notes`
+and the audit `after` block (`refund_tier`, `refund_credit_centavos`), and the
+cancellation email tells the registrant a credit is owed — but arranging it is
+still a person's job.
+
 ## Email attachment
 
 `sendRegistrationConfirmed` attaches the PDF for any event id in

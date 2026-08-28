@@ -807,15 +807,52 @@ export const adminSettleChargeWithout = (
     adminInit(adminKey, 'POST', { reason }),
   );
 
+/** Participant Agreement §III refund position — mirrors backend RefundAssessment. */
+export interface RefundAssessment {
+  tier: 'gt_60_days' | '31_to_60_days' | '30_days_or_fewer';
+  daysUntilEvent: number;
+  paidCentavos: number;
+  depositCentavos: number;
+  nonRecoverableCentavos: number;
+  refundCentavos: number;
+  creditCentavos: number;
+  forfeitCentavos: number;
+  currency: string;
+  summary: string;
+}
+
+/**
+ * The §III refund position for cancelling this registration now. Read-only —
+ * `cancel` recomputes it server-side; this just lets the admin screen show the
+ * contract's number before they commit.
+ */
+export const adminGetRefundAssessment = (
+  adminKey: string,
+  registrationId: string,
+  nonRecoverableCentavos?: number,
+) => {
+  const qs =
+    nonRecoverableCentavos && nonRecoverableCentavos > 0
+      ? `?nonRecoverableCentavos=${nonRecoverableCentavos}`
+      : '';
+  return apiFetch<{ registrationId: string; status: string; assessment: RefundAssessment }>(
+    `/admin/registrations/${registrationId}/refund-assessment${qs}`,
+    adminInit(adminKey),
+  );
+};
+
 export const adminCancelRegistration = (
   adminKey: string,
   registrationId: string,
-  body: { reason?: string; refundCentavos?: number | null },
+  body: { reason?: string; refundCentavos?: number | null; nonRecoverableCentavos?: number | null },
 ) =>
-  apiFetch<{ registrationId: string; status: string; seatFreed: number }>(
-    `/admin/registrations/${registrationId}/cancel`,
-    adminInit(adminKey, 'POST', body),
-  );
+  apiFetch<{
+    registrationId: string;
+    status: string;
+    seatFreed: number;
+    refundCentavos: number | null;
+    assessment?: RefundAssessment;
+  }>(`/admin/registrations/${registrationId}/cancel`, adminInit(adminKey, 'POST', body));
 
 export const adminNudgeRegistration = (adminKey: string, registrationId: string, note?: string) =>
   apiFetch<{ registrationId: string; sent: boolean }>(
@@ -837,7 +874,12 @@ export const adminRosterCsvUrl = (eventId: string) => `/admin/events/${eventId}/
 export const adminDecideCancellation = (
   adminKey: string,
   registrationId: string,
-  body: { decision: 'approved' | 'declined'; reason?: string; refundCentavos?: number | null },
+  body: {
+    decision: 'approved' | 'declined';
+    reason?: string;
+    refundCentavos?: number | null;
+    nonRecoverableCentavos?: number | null;
+  },
 ) =>
   apiFetch<{ registrationId: string; decision: string }>(
     `/admin/registrations/${registrationId}/cancellation-decision`,

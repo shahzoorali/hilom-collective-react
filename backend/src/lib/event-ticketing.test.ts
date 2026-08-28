@@ -31,6 +31,7 @@ import {
   validateRegistrantDetails,
   registrationOpen,
   depositClearedLate,
+  assessRefund,
   TicketingValidationError,
   type PaymentPlan,
   type PlanInstallment,
@@ -379,6 +380,102 @@ describe('depositClearedLate — the midnight edge', () => {
         clearedAt: new Date('2026-10-01T00:03:00+08:00'),
       }),
       false,
+    );
+  });
+});
+
+describe('assessRefund — Participant Agreement §III refund tiers', () => {
+  // Return to Self starts 22 January 2027. Deposit ₱5,000; the worked cases
+  // below assume ₱13,333.33 paid (deposit + one ₱8,333.33 instalment).
+  const EVENT_START = '2027-01-22T02:00:00.000Z';
+  const PAID = 1_333_333;
+  const DEPOSIT = 500_000;
+
+  it('more than 60 days out: refunds payments less the deposit', () => {
+    const a = assessRefund({
+      eventStartsAt: EVENT_START,
+      now: new Date('2026-11-01T00:00:00+08:00'), // ~82 days out
+      paidCentavos: PAID,
+      depositCentavos: DEPOSIT,
+    });
+    assert.equal(a.tier, 'gt_60_days');
+    assert.equal(a.refundCentavos, PAID - DEPOSIT); // 833,333
+    assert.equal(a.creditCentavos, 0);
+    assert.equal(a.forfeitCentavos, DEPOSIT);
+    assert.equal(a.refundCentavos + a.creditCentavos + a.forfeitCentavos, PAID);
+  });
+
+  it('more than 60 days out: also subtracts non-recoverable costs, floored at zero', () => {
+    const a = assessRefund({
+      eventStartsAt: EVENT_START,
+      now: new Date('2026-11-01T00:00:00+08:00'),
+      paidCentavos: PAID,
+      depositCentavos: DEPOSIT,
+      nonRecoverableCentavos: 2_000_000, // more than what is left after the deposit
+    });
+    assert.equal(a.refundCentavos, 0);
+    assert.equal(a.forfeitCentavos, PAID);
+  });
+
+  it('31 to 60 days out: 50% as retreat credit, no cash, rest forfeited', () => {
+    const a = assessRefund({
+      eventStartsAt: EVENT_START,
+      now: new Date('2026-12-05T00:00:00+08:00'), // ~48 days out
+      paidCentavos: PAID,
+      depositCentavos: DEPOSIT,
+    });
+    assert.equal(a.tier, '31_to_60_days');
+    assert.equal(a.refundCentavos, 0);
+    assert.equal(a.creditCentavos, Math.round(PAID / 2)); // 666,667 (rounds up on the odd centavo)
+    assert.equal(a.forfeitCentavos, PAID - a.creditCentavos);
+    assert.equal(a.creditCentavos + a.forfeitCentavos, PAID);
+  });
+
+  it('exactly 60 whole days out is still the 31–60 tier', () => {
+    const a = assessRefund({
+      eventStartsAt: EVENT_START,
+      now: new Date(Date.parse(EVENT_START) - 60 * 86_400_000 - 3_600_000), // 60d 1h
+      paidCentavos: PAID,
+      depositCentavos: DEPOSIT,
+    });
+    assert.equal(a.daysUntilEvent, 60);
+    assert.equal(a.tier, '31_to_60_days');
+  });
+
+  it('30 days or fewer out: nothing is refundable', () => {
+    const a = assessRefund({
+      eventStartsAt: EVENT_START,
+      now: new Date('2027-01-05T00:00:00+08:00'), // ~17 days out
+      paidCentavos: PAID,
+      depositCentavos: DEPOSIT,
+    });
+    assert.equal(a.tier, '30_days_or_fewer');
+    assert.equal(a.refundCentavos, 0);
+    assert.equal(a.creditCentavos, 0);
+    assert.equal(a.forfeitCentavos, PAID);
+  });
+
+  it('treats an event that has already started as the non-refundable tier', () => {
+    const a = assessRefund({
+      eventStartsAt: EVENT_START,
+      now: new Date('2027-01-23T00:00:00+08:00'),
+      paidCentavos: PAID,
+      depositCentavos: DEPOSIT,
+    });
+    assert.ok(a.daysUntilEvent < 0);
+    assert.equal(a.tier, '30_days_or_fewer');
+  });
+
+  it('rejects a fractional or negative centavo figure', () => {
+    assert.throws(
+      () =>
+        assessRefund({
+          eventStartsAt: EVENT_START,
+          now: new Date('2026-11-01T00:00:00+08:00'),
+          paidCentavos: 100.5,
+          depositCentavos: DEPOSIT,
+        }),
+      TicketingValidationError,
     );
   });
 });

@@ -251,6 +251,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/registrations', [GET]],
       ['/admin/registrations/{registrationId}/cancel', [POST]],
       ['/admin/registrations/{registrationId}/cancellation-decision', [POST]],
+      ['/admin/registrations/{registrationId}/refund-assessment', [GET]],
       ['/admin/registrations/{registrationId}/refund-sent', [POST]],
       ['/admin/registrations/{registrationId}/price-override', [POST]],
       ['/admin/registrations/{registrationId}/nudge', [POST]],
