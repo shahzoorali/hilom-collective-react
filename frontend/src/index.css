@@ -1967,6 +1967,70 @@ div[class*="_PuckCanvas-root_"],
   .lightbox-figure { max-width: 96vw; }
 }
 
+/* The participant agreement, opened from the registration consent checkbox.
+   A centred native <dialog> — same focus/stacking guarantees as .lightbox,
+   sized for reading rather than a full-bleed image. Scoped to [open] for the
+   reason spelled out on .lightbox[open] above. */
+.agreement-modal {
+  width: min(680px, 92vw);
+  max-height: 84dvh;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.agreement-modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.agreement-modal::backdrop {
+  background: rgba(20, 28, 21, 0.6);
+}
+
+.agreement-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.agreement-modal-head strong {
+  font-family: var(--serif);
+  color: var(--forest);
+}
+
+.agreement-modal-close {
+  background: none;
+  border: 0;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--ink);
+  padding: 0.25rem;
+  flex-shrink: 0;
+}
+
+.agreement-modal-close:focus-visible {
+  outline: 2px solid var(--forest);
+  outline-offset: 2px;
+}
+
+.agreement-modal-body {
+  padding: 1.25rem;
+  overflow-y: auto;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.agreement-modal-body :first-child { margin-top: 0; }
+.agreement-modal-body :last-child { margin-bottom: 0; }
+
 /* Cards that are entirely one link (BlockRenderer.tsx EventCard).
    --------------------------------------------------------------------------
    The whole card is the click target, but there is still only ONE anchor in

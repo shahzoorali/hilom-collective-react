@@ -34,6 +34,12 @@ const common = {
   // paymongoSecretId doc comment. Going live:
   //   cdk deploy -c paymongoSecretId=hilom/paymongo/live
   paymongoSecretId: app.node.tryGetContext('paymongoSecretId') as string | undefined,
+  // Event ids whose confirmation email attaches the participant agreement PDF.
+  // Defaults to the Return to Self retreat inside the stack. Override with:
+  //   cdk deploy -c participantAgreementEventIds=id1,id2
+  participantAgreementEventIds: app.node.tryGetContext('participantAgreementEventIds') as
+    | string
+    | undefined,
 };
 
 // ---------------------------------------------------------------------------

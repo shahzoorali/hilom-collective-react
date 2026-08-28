@@ -167,6 +167,77 @@ function GalleryLightbox({
 }
 
 /**
+ * The participant agreement, shown on demand rather than inline.
+ *
+ * The registration form links to this from the consent checkbox instead of
+ * embedding the full text on the page: the agreement runs to a couple of
+ * thousand words, and a scroll box that long buried in a form is read by
+ * nobody. Opening it in a modal makes "read the agreement" a deliberate act,
+ * which is also what lets the tick that follows it mean something.
+ *
+ * Same native <dialog> mechanics as GalleryLightbox — showModal() handles
+ * focus trapping, Escape and top-layer stacking; the body scroll lock and
+ * routing a native close back into React are done by hand.
+ */
+function AgreementDialog({
+  title,
+  html,
+  onClose,
+}: {
+  title: string;
+  html: string;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!el.open) el.showModal();
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onNativeClose = () => closeRef.current();
+    el.addEventListener('close', onNativeClose);
+    return () => {
+      el.removeEventListener('close', onNativeClose);
+      document.body.style.overflow = previous;
+      if (el.open) el.close();
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={ref}
+      className="agreement-modal"
+      aria-label={title}
+      onClose={onClose}
+      onCancel={onClose}
+      // The dialog is not full-viewport, but a click that lands on the element
+      // itself rather than its content is still a click on the backdrop margin.
+      onClick={(e) => {
+        if (e.target === ref.current) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+    >
+      <div className="agreement-modal-head">
+        <strong>{title}</strong>
+        <button type="button" className="agreement-modal-close" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+      <div className="agreement-modal-body" dangerouslySetInnerHTML={{ __html: html }} />
+    </dialog>
+  );
+}
+
+/**
  * The event's own marketing content — hero, cover photo, description, gallery
  * and facilitators — identical whether or not someone is signed in. It fills
  * the width of the page: no `.container` wrapper here, because each block
@@ -320,6 +391,7 @@ export default function EventRegister() {
   const [agreed, setAgreed] = useState(false);
   const [medicalAck, setMedicalAck] = useState(false);
   const [consentAck, setConsentAck] = useState(false);
+  const [agreementOpen, setAgreementOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -584,29 +656,22 @@ export default function EventRegister() {
               )}
 
               {event.liability_consent_html && (
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <div className="card" style={{ padding: 12, maxHeight: 220, overflowY: 'auto' }}>
-                    <strong className="small">Liability &amp; participation consent</strong>
-                    <div
-                      className="small"
-                      style={{ marginTop: 6 }}
-                      dangerouslySetInnerHTML={{ __html: event.liability_consent_html }}
-                    />
-                  </div>
-                  <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    <input
-                      type="checkbox"
-                      checked={consentAck}
-                      onChange={(e) => setConsentAck(e.target.checked)}
-                      style={{ width: 'auto', marginTop: 3 }}
-                      required
-                    />
-                    <span>
-                      I have read and agree to the liability and participation consent above, and I am taking
-                      part in this event voluntarily and at my own risk.
-                    </span>
-                  </label>
-                </div>
+                <label className="small" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <input
+                    type="checkbox"
+                    checked={consentAck}
+                    onChange={(e) => setConsentAck(e.target.checked)}
+                    style={{ width: 'auto', marginTop: 3 }}
+                    required
+                  />
+                  <span>
+                    I have read and agree to the{' '}
+                    <button type="button" className="linklike" onClick={() => setAgreementOpen(true)}>
+                      Participant Agreement
+                    </button>
+                    , and I am taking part in this event voluntarily and at my own risk.
+                  </span>
+                </label>
               )}
 
               {event.terms_html && (
@@ -658,6 +723,14 @@ export default function EventRegister() {
           </p>
         </div>
       </section>
+
+      {agreementOpen && event.liability_consent_html && (
+        <AgreementDialog
+          title={`${event.title} — Participant Agreement`}
+          html={event.liability_consent_html}
+          onClose={() => setAgreementOpen(false)}
+        />
+      )}
     </>
   );
 }

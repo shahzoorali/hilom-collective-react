@@ -22,3 +22,6 @@ amplify_outputs*.json
 
 # Amplify manual-deploy artifact
 frontend/dist.zip
+
+# TypeScript incremental build info
+*.tsbuildinfo

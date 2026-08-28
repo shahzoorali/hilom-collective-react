@@ -49,6 +49,7 @@ import {
   DEFAULT_COGNITO_SPA_CLIENT_ID,
   DEFAULT_COGNITO_USER_POOL_ID,
   DEFAULT_FRONTEND_URL,
+  DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS,
   lambdaFactory,
   sesSendPolicy,
   type HilomCommonProps,
@@ -310,6 +311,13 @@ export class HilomCoreStack extends cdk.Stack {
     // registration confirmations and receipts through this identity as well.
     for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
       fn.addToRolePolicy(sesSendPolicy(this));
+      // Which events' confirmation email attaches the participant agreement.
+      // Read by backend/src/lib/participant-agreement.ts; the PDF bytes ride
+      // in the bundle via the esbuild binary loader, this only gates them.
+      fn.addEnvironment(
+        'PARTICIPANT_AGREEMENT_EVENT_IDS',
+        props.participantAgreementEventIds ?? DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS,
+      );
     }
 
     paymongoWebhook.addEnvironment('ENROLLMENT_RETRY_QUEUE_URL', enrollmentRetryQueue.queueUrl);

@@ -48,6 +48,15 @@ export const DEFAULT_FRONTEND_URL = 'https://www.hilomcollective.com';
 export const DEFAULT_CHECKOUT_PAYMENT_METHODS = 'qrph';
 
 /**
+ * Event ids whose registration-confirmed email carries the participant
+ * agreement PDF (backend/src/lib/participant-agreement.ts). Comma-separated.
+ * Just the Return to Self retreat today; a course confirmation must never get
+ * a retreat waiver, so this is an explicit allowlist rather than "any event
+ * with consent text".
+ */
+export const DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS = '780002bf-573e-47c0-a77c-c5f32f9f20dd';
+
+/**
  * SES sends from Mumbai, not this stack's Singapore: hilomcollective.com is
  * already a verified, DKIM-signed domain identity there with production
  * access, so no new identity or DNS work was needed.
@@ -90,6 +99,12 @@ export interface HilomCommonProps extends cdk.StackProps {
    * path via a separate redirect microservice rather than reaching the app.
    */
   readonly frontendUrl?: string;
+
+  /**
+   * Comma-separated event ids whose confirmation email attaches the
+   * participant agreement PDF. Defaults to the Return to Self retreat.
+   */
+  readonly participantAgreementEventIds?: string;
 
   /**
    * Which PayMongo credential set the checkout/webhook/order-status functions
@@ -158,6 +173,10 @@ export function lambdaFactory(
         // Top-level await in ESM output requires this banner workaround for
         // esbuild's CJS interop shims.
         banner: "import{createRequire}from'module';const require=createRequire(import.meta.url);",
+        // `import pdf from './x.pdf'` -> a Uint8Array of the file's bytes,
+        // embedded in the bundle. Only registration-fulfillment does this, for
+        // the participant-agreement attachment; see backend/src/lib/mime.ts.
+        loader: { '.pdf': 'binary' },
       },
     });
   };

@@ -25,6 +25,7 @@ import {
   escapeHtml,
 } from './email-layout.js';
 import { isOutstanding, type ChargeStatus } from './event-ticketing.js';
+import { buildRawEmail, type RawEmailAttachment } from './mime.js';
 
 // ap-south-1 is where the verified SES identity with production access lives;
 // the rest of the stack is ap-southeast-1. Same as every other sender here.
@@ -151,18 +152,36 @@ const nextDue = (charges: EmailCharge[]): EmailCharge | undefined =>
     .filter((c) => isOutstanding(c.status))
     .sort((a, b) => a.seq - b.seq)[0];
 
-async function send(to: string, subject: string, text: string, html: string): Promise<void> {
+async function send(
+  to: string,
+  subject: string,
+  text: string,
+  html: string,
+  attachments?: RawEmailAttachment[],
+): Promise<void> {
   try {
+    // Content.Simple has no attachment support, so an email that carries one
+    // is composed as raw MIME instead. Everything else stays on the simple
+    // path — it is less to get wrong.
+    const content =
+      attachments && attachments.length > 0
+        ? {
+            Raw: {
+              Data: buildRawEmail({ from: SENDER, to, subject, text, html, attachments }),
+            },
+          }
+        : {
+            Simple: {
+              Subject: { Data: subject },
+              Body: { Text: { Data: text }, Html: { Data: html } },
+            },
+          };
+
     await sesClient.send(
       new SendEmailCommand({
         FromEmailAddress: SENDER,
         Destination: { ToAddresses: [to] },
-        Content: {
-          Simple: {
-            Subject: { Data: subject },
-            Body: { Text: { Data: text }, Html: { Data: html } },
-          },
-        },
+        Content: content,
       }),
     );
   } catch (err) {
@@ -185,9 +204,17 @@ async function send(to: string, subject: string, text: string, html: string): Pr
  * message people keep. It also states plainly that a missed payment does not
  * automatically cancel a place — that is the actual policy, and someone who
  * believes otherwise will panic quietly instead of getting in touch.
+ *
+ * For events that have one, the participant agreement PDF is attached here and
+ * only here — the confirmation is the copy someone keeps and refers back to,
+ * and re-attaching 2 MB to every instalment receipt would earn nothing.
  */
 export async function sendRegistrationConfirmed(
-  ctx: RegistrationEmailContext & { charge: EmailCharge; receiptNo: string },
+  ctx: RegistrationEmailContext & {
+    charge: EmailCharge;
+    receiptNo: string;
+    agreement?: { filename: string; pdf: Uint8Array } | null;
+  },
 ): Promise<void> {
   const { event, registration, charges, charge, receiptNo } = ctx;
   const currency = registration.currency;
@@ -210,6 +237,13 @@ export async function sendRegistrationConfirmed(
     details(rows);
 
   if (event.venue_details) body += p(escapeHtml(event.venue_details));
+
+  if (ctx.agreement) {
+    body += note(
+      'Your Participant Agreement is attached to this email — the same terms you agreed to when you ' +
+        'registered. Please keep it for your records; there is nothing to send back.',
+    );
+  }
 
   if (owing > 0) {
     body +=
@@ -247,6 +281,9 @@ export async function sendRegistrationConfirmed(
           'A late payment does not cancel your place automatically — we will get in touch.',
         ]
       : ['Nothing further is due.']),
+    ...(ctx.agreement
+      ? ['', 'Your Participant Agreement is attached — please keep it. Nothing to send back.']
+      : []),
     '',
     registrationUrl(ctx.registrationId),
   ];
@@ -256,6 +293,15 @@ export async function sendRegistrationConfirmed(
     `You're going to ${event.title}`,
     renderText(heading, textLines),
     renderEmail({ preheader: `Your place at ${event.title} is confirmed.`, heading, body }),
+    ctx.agreement
+      ? [
+          {
+            filename: ctx.agreement.filename,
+            contentType: 'application/pdf',
+            content: ctx.agreement.pdf,
+          },
+        ]
+      : undefined,
   );
 }
 

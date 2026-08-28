@@ -21,6 +21,7 @@ import {
   sendPaymentReceipt,
   sendFullySettled,
 } from './registration-email.js';
+import { AGREEMENT_PDF_FILENAME, agreementPdfForEvent } from './participant-agreement.js';
 
 export interface ChargeResult {
   chargeId: string;
@@ -350,8 +351,15 @@ async function notify(
   if (confirmed) {
     // One email, not two: the confirmation carries the receipt for the deposit
     // and the whole remaining schedule, because that is the message someone
-    // keeps and refers back to.
-    await sendRegistrationConfirmed({ ...context, charge, receiptNo });
+    // keeps and refers back to — and, for events configured for it, the
+    // participant agreement PDF.
+    const pdf = agreementPdfForEvent(registration.event_id);
+    await sendRegistrationConfirmed({
+      ...context,
+      charge,
+      receiptNo,
+      agreement: pdf ? { filename: AGREEMENT_PDF_FILENAME, pdf } : null,
+    });
   } else {
     await sendPaymentReceipt({ ...context, charge, receiptNo });
   }
