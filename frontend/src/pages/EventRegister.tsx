@@ -22,7 +22,7 @@
  * refusal is an ordinary outcome with a clear message rather than an error
  * state — nothing has been charged at that point, and saying so matters.
  */
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { currentUser, login } from '../lib/auth';
 import { money } from '../components/Layout';
@@ -33,10 +33,137 @@ import {
   formatDueDate,
   formatEventDates,
   dueNow,
+  type EventGalleryImage,
   type EventPlan,
   type TicketingResponse,
   type TicketedEvent,
 } from '../lib/registrations';
+
+/**
+ * The venue gallery at full size.
+ *
+ * Built on the native `<dialog>` rather than a hand-rolled overlay, because
+ * `showModal()` already provides the three things such an overlay usually gets
+ * wrong: focus is trapped inside it, Escape closes it, and it renders in the
+ * top layer so nothing on the page can stack above it. That leaves only the
+ * arrow keys and the click-outside-to-close to wire up by hand.
+ *
+ * The thumbnails are a 4:3 `object-fit: cover` crop; this shows the whole
+ * frame instead, which is the actual point of enlarging a photo of a room.
+ */
+function GalleryLightbox({
+  images,
+  index,
+  onClose,
+  onMove,
+}: {
+  images: EventGalleryImage[];
+  index: number;
+  onClose: () => void;
+  onMove: (delta: number) => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  // Read through a ref so the mount-only effect below never captures a stale
+  // callback.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!el.open) el.showModal();
+    // showModal() does not reliably stop the page behind from scrolling.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // Belt and braces: whatever closes the dialog — the keydown handler, the
+    // backdrop, or the browser itself — unmounting is what releases the scroll
+    // lock, so any close that did not come through React is routed back into it.
+    const onNativeClose = () => closeRef.current();
+    el.addEventListener('close', onNativeClose);
+    return () => {
+      el.removeEventListener('close', onNativeClose);
+      document.body.style.overflow = previous;
+      if (el.open) el.close();
+    };
+  }, []);
+
+  const image = images[index];
+  if (!image) return null;
+
+  return (
+    <dialog
+      ref={ref}
+      className="lightbox"
+      aria-label="Venue photographs"
+      onClose={onClose}
+      onCancel={onClose}
+      // The dialog box fills the viewport, so anything that lands on the
+      // dialog itself rather than the figure inside it is a click outside.
+      onClick={(e) => {
+        if (e.target === ref.current) onClose();
+      }}
+      onKeyDown={(e) => {
+        // Escape is handled here rather than left to the browser so that React
+        // stays the single source of truth for whether this is open. Letting
+        // the dialog close natively takes the element out of the top layer
+        // without unmounting the component, which strands the body scroll lock.
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+          return;
+        }
+        if (images.length < 2) return;
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          onMove(1);
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          onMove(-1);
+        }
+      }}
+    >
+      <button type="button" className="lightbox-close" onClick={onClose} aria-label="Close">
+        ✕
+      </button>
+
+      {images.length > 1 && (
+        <button
+          type="button"
+          className="lightbox-nav lightbox-prev"
+          onClick={() => onMove(-1)}
+          aria-label="Previous photograph"
+        >
+          ‹
+        </button>
+      )}
+
+      <figure className="lightbox-figure">
+        <img src={image.url} alt={image.alt} />
+        {(image.alt || images.length > 1) && (
+          <figcaption>
+            {image.alt}
+            {images.length > 1 && (
+              <span className="lightbox-count">
+                {index + 1} / {images.length}
+              </span>
+            )}
+          </figcaption>
+        )}
+      </figure>
+
+      {images.length > 1 && (
+        <button
+          type="button"
+          className="lightbox-nav lightbox-next"
+          onClick={() => onMove(1)}
+          aria-label="Next photograph"
+        >
+          ›
+        </button>
+      )}
+    </dialog>
+  );
+}
 
 /**
  * The event's own marketing content — hero, cover photo, description, gallery
@@ -51,6 +178,12 @@ import {
  * asked to sign in, not after.
  */
 function EventHeader({ event }: { event: TicketedEvent }) {
+  const [lightbox, setLightbox] = useState<number | null>(null);
+  const move = (delta: number) =>
+    setLightbox((i) =>
+      i === null ? i : (i + delta + event.gallery.length) % event.gallery.length,
+    );
+
   return (
     <>
       <section className="hero">
@@ -83,12 +216,17 @@ function EventHeader({ event }: { event: TicketedEvent }) {
 
       {(event.description || event.venue_details) && (
         <section className="section">
-          <div className="container" style={{ maxWidth: 760 }}>
-            {event.description && <div dangerouslySetInnerHTML={{ __html: event.description }} />}
+          {/* 680, not the 760 the rest of the page uses: this is the one block
+              of long-form prose on the page, and 760px of 16px text runs to
+              ~85 characters a line — past comfortable reading. */}
+          <div className="container" style={{ maxWidth: 680 }}>
+            {event.description && (
+              <div className="event-prose" dangerouslySetInnerHTML={{ __html: event.description }} />
+            )}
             {event.venue_details && (
-              <p className="muted" style={{ marginTop: event.description ? '1.5rem' : 0 }}>
-                {event.venue_details}
-              </p>
+              <div className="event-note" style={{ marginTop: event.description ? undefined : 0 }}>
+                <p>{event.venue_details}</p>
+              </div>
             )}
           </div>
         </section>
@@ -104,17 +242,28 @@ function EventHeader({ event }: { event: TicketedEvent }) {
               style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', marginTop: '1.5rem' }}
             >
               {event.gallery.map((img, i) => (
-                <img
+                <button
                   key={i}
-                  src={img.url}
-                  alt={img.alt}
-                  loading="lazy"
-                  style={{ width: '100%', aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: 'var(--radius)' }}
-                />
+                  type="button"
+                  className="gallery-thumb"
+                  onClick={() => setLightbox(i)}
+                  aria-label={img.alt ? `Enlarge: ${img.alt}` : `Enlarge photograph ${i + 1}`}
+                >
+                  <img src={img.url} alt={img.alt} loading="lazy" />
+                </button>
               ))}
             </div>
           </div>
         </section>
+      )}
+
+      {lightbox !== null && (
+        <GalleryLightbox
+          images={event.gallery}
+          index={lightbox}
+          onClose={() => setLightbox(null)}
+          onMove={move}
+        />
       )}
 
       {event.facilitators.length > 0 && (

@@ -1671,6 +1671,301 @@ div[class*="_PuckCanvas-root_"],
   }
 }
 
+/* Event description prose (EventRegister.tsx).
+   --------------------------------------------------------------------------
+   The description is admin-written HTML dropped in with dangerouslySetInnerHTML,
+   so it is a flat run of <p> and <h3> with no wrappers to hang a layout on.
+   Everything here therefore styles by position rather than by class:
+
+   * the opening paragraph becomes the lede — serif, larger, with a drop cap,
+     because it is the first thing a reader meets and a wall of 16px sans is
+     not what sells a retreat;
+   * each <h3> becomes a dated marker on a timeline, and the paragraph that
+     follows it (`h3 + p`) carries the rail down to the next one. An itinerary
+     is a sequence, and this is the one bit of structure the raw HTML implies
+     but cannot express.
+
+   All of it degrades to plain prose: an event whose description is three
+   ordinary paragraphs and no headings simply gets a nice lede and nothing else. */
+/* No max-width here: the measure is set by the .container this sits in, so
+   there is one place that decides how wide the column is. */
+.event-prose {
+  font-size: 1.02rem;
+  line-height: 1.8;
+  color: #46523f;
+}
+
+.event-prose > p:first-of-type {
+  font-family: var(--serif);
+  font-size: clamp(1.1rem, 1.9vw, 1.28rem);
+  line-height: 1.7;
+  color: var(--forest-dark);
+  margin-bottom: 1.5rem;
+}
+
+/* Modest three-line drop cap. Sized in `em` so it tracks the clamp above. */
+.event-prose > p:first-of-type::first-letter {
+  float: left;
+  font-family: var(--serif);
+  font-size: 3.1em;
+  line-height: 0.82;
+  font-weight: 700;
+  color: var(--forest);
+  padding: 0.06em 0.1em 0 0;
+}
+
+/* Itinerary headings: an ochre dot on the rail, in a ring so it reads as a
+   station rather than a bullet. */
+.event-prose > h3 {
+  position: relative;
+  margin: 2.4rem 0 0.55rem;
+  padding-left: 2rem;
+  font-size: 1.18rem;
+}
+
+.event-prose > h3::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.42em;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ochre);
+  box-shadow: 0 0 0 4px rgba(242, 164, 41, 0.18);
+}
+
+/* The rail. Fades out at the bottom so the last day ends rather than stops. */
+.event-prose > h3 + p {
+  position: relative;
+  padding-left: 2rem;
+  margin-bottom: 0;
+}
+
+.event-prose > h3 + p::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: -0.95rem;
+  bottom: -0.35rem;
+  width: 1px;
+  background: linear-gradient(var(--line), rgba(231, 224, 204, 0));
+}
+
+/* Practical detail — meals, transport, what to bring — kept visually apart
+   from the invitation above it. */
+.event-note {
+  margin-top: 2.5rem;
+  padding: 1rem 1.15rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--leaf);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.event-note p { margin: 0; }
+
+/* Venue gallery thumbnails (EventRegister.tsx).
+   Buttons rather than bare <img>, so enlarging a photo is reachable from the
+   keyboard; everything below is undoing the default button chrome. */
+.gallery-thumb {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: zoom-in;
+  position: relative;
+  line-height: 0;
+}
+
+.gallery-thumb img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s ease;
+}
+
+.gallery-thumb:hover img,
+.gallery-thumb:focus-visible img {
+  transform: scale(1.04);
+}
+
+.gallery-thumb:focus-visible {
+  outline: 2px solid var(--forest);
+  outline-offset: 3px;
+}
+
+/* The full-size view. A native <dialog>, so the browser handles focus
+   trapping, Escape, and top-layer stacking — see GalleryLightbox. */
+.lightbox {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* Scoped to [open], and never a bare `display: flex`. The UA stylesheet hides
+   a closed dialog with `dialog:not([open]) { display: none }`, and an
+   unconditional display here would beat it on specificity — leaving a closed
+   dialog sitting over the page as a full-viewport click trap. */
+.lightbox[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox::backdrop {
+  background: rgba(20, 28, 21, 0.88);
+}
+
+.lightbox-figure {
+  margin: 0;
+  max-width: min(92vw, 1200px);
+  max-height: 88dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.lightbox-figure img {
+  max-width: 100%;
+  /* Leaves room for the caption beneath without the image ever pushing it
+     off-screen on a short viewport. */
+  max-height: 78dvh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.lightbox-figure figcaption {
+  color: #f1efe6;
+  font-size: 0.9rem;
+  text-align: center;
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.lightbox-count {
+  color: rgba(241, 239, 230, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.lightbox-close,
+.lightbox-nav {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.lightbox-close:hover,
+.lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.lightbox-close:focus-visible,
+.lightbox-nav:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.lightbox-close {
+  top: 1.1rem;
+  right: 1.1rem;
+  width: 40px;
+  height: 40px;
+  font-size: 1rem;
+}
+
+.lightbox-nav {
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 48px;
+  font-size: 1.9rem;
+  line-height: 1;
+  /* The glyph sits high in its box; nudge it back onto the centre. */
+  padding-bottom: 0.22em;
+}
+
+.lightbox-prev { left: 1.1rem; }
+.lightbox-next { right: 1.1rem; }
+
+@media (max-width: 560px) {
+  .lightbox-nav { width: 40px; height: 40px; font-size: 1.5rem; }
+  .lightbox-prev { left: 0.4rem; }
+  .lightbox-next { right: 0.4rem; }
+  .lightbox-figure { max-width: 96vw; }
+}
+
+/* Cards that are entirely one link (BlockRenderer.tsx EventCard).
+   --------------------------------------------------------------------------
+   The whole card is the click target, but there is still only ONE anchor in
+   the markup: the CTA button's ::after is stretched over the card. Wrapping
+   the card in an <a> instead would nest the CTA anchor inside another anchor,
+   which is invalid and makes a screen reader announce the card twice. */
+.card-linked {
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.card-linked:hover {
+  transform: translateY(-3px);
+  border-color: var(--leaf);
+  box-shadow: 0 2px 4px rgba(47, 94, 62, 0.08), 0 14px 34px rgba(47, 94, 62, 0.14);
+}
+
+.card-linked > img { transition: transform 0.5s ease; }
+.card-linked:hover > img { transform: scale(1.035); }
+
+/* The card takes the focus ring, since the stretched anchor's own outline
+   would draw around the small button rather than what is actually clickable. */
+.card-linked:focus-within {
+  outline: 2px solid var(--forest);
+  outline-offset: 3px;
+}
+
+.card-linked:focus-within .stretched-link { outline: none; }
+
+.stretched-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-linked,
+  .card-linked > img,
+  .gallery-thumb img {
+    transition: none;
+  }
+  .card-linked:hover { transform: none; }
+  .card-linked:hover > img,
+  .gallery-thumb:hover img { transform: none; }
+}
+
 /* Print: the receipt page (account/Receipt.tsx) is the only thing meant to be
    printed on this site, so this hides everything else — site header/footer,
    the account shell's tab bar, and any on-page controls marked .no-print —

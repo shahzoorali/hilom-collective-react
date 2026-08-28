@@ -33,9 +33,9 @@ function sectionStyle(props: Props, extra?: CSSProperties): CSSProperties {
 }
 
 /** Internal paths route through react-router; anything else is a real link. */
-function CtaLink({ value }: { value: Cta | undefined }) {
+function CtaLink({ value, extraClass }: { value: Cta | undefined; extraClass?: string }) {
   if (!value?.label || !value.href) return null;
-  const className = `btn ${value.variant ?? 'btn-primary'}`;
+  const className = `btn ${value.variant ?? 'btn-primary'}${extraClass ? ` ${extraClass}` : ''}`;
   return value.href.startsWith('/') ? (
     <Link className={className} to={value.href}>
       {value.label}
@@ -374,8 +374,14 @@ function excerptFrom(description: string | null): string | null {
 
 function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
   const excerpt = event.excerpt || excerptFrom(event.description);
+  // Whether this card has a destination at all. A past event has none —
+  // nothing on it is still for sale — so it stays an inert block.
+  const linked = !past && (event.ticketing_enabled || Boolean(event.link_url && event.link_label));
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden', opacity: past ? 0.75 : undefined }}>
+    <div
+      className={`card${linked ? ' card-linked' : ''}`}
+      style={{ padding: 0, overflow: 'hidden', opacity: past ? 0.75 : undefined }}
+    >
       {event.image_url ? (
         <img
           src={event.image_url}
@@ -401,13 +407,21 @@ function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
         ) : null}
         {/* A ticketed event registers on-site; the outbound link is for
             listing-only events that send people somewhere else. A past event
-            gets neither — nothing here is still for sale. */}
+            gets neither — nothing here is still for sale.
+
+            `stretched-link` spreads this one anchor's hit area over the whole
+            card, so the card is clickable without a second nested link. The
+            button stays visible: it is what tells you the card is clickable
+            and where it goes. */}
         {!past && event.ticketing_enabled ? (
-          <Link className="btn btn-accent" to={`/events/${event.id}/register`}>
+          <Link className="btn btn-accent stretched-link" to={`/events/${event.id}/register`}>
             Register
           </Link>
         ) : event.link_url && event.link_label ? (
-          <CtaLink value={{ label: event.link_label, href: event.link_url, variant: 'btn-primary' }} />
+          <CtaLink
+            value={{ label: event.link_label, href: event.link_url, variant: 'btn-primary' }}
+            extraClass="stretched-link"
+          />
         ) : null}
       </div>
     </div>
