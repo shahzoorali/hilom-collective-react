@@ -136,6 +136,10 @@ export default function BookingFlow() {
             >
               Continue with your Hilom account
             </button>
+            <p className="small muted" style={{ marginTop: '0.9rem', marginBottom: 0 }}>
+              Stuck? <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a> is a
+              real inbox we check.
+            </p>
           </div>
         </div>
       </section>

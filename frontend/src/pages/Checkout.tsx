@@ -124,6 +124,10 @@ export default function Checkout() {
               New here? You'll create your account on the same screen. We'll bring you right back to
               finish your purchase.
             </p>
+            <p className="small muted" style={{ marginTop: '0.4rem', marginBottom: 0 }}>
+              Stuck? <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a> is a
+              real inbox we check.
+            </p>
           </div>
         </div>
       </section>
