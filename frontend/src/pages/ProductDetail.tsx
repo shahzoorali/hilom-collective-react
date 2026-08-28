@@ -1,16 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getProduct, getMyOwnedCourses, type ProductDetail as Detail } from '../lib/api';
 import { money } from '../components/Layout';
 import { currentUser } from '../lib/auth';
 import { moodleAccessUrl } from '../config';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
+import { playFlip } from '../lib/pageFlip';
 
 export default function ProductDetail() {
   const { slug = '' } = useParams();
   const [product, setProduct] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ownedCourseIds, setOwnedCourseIds] = useState<Set<number>>(new Set());
+  const root = useRef<HTMLElement>(null);
 
   useEffect(() => {
     setProduct(null);
@@ -20,6 +22,13 @@ export default function ProductDetail() {
     // the product page itself must never fail to load over this.
     if (currentUser()) getMyOwnedCourses().then((ids) => setOwnedCourseIds(new Set(ids))).catch(() => {});
   }, [slug]);
+
+  // Runs once the real (non-skeleton) content — and its matching
+  // data-flip-id elements — are in the DOM. A no-op if the visitor landed
+  // here directly (no captured state from Courses.tsx) or via Back/Forward.
+  useLayoutEffect(() => {
+    if (product) playFlip(root.current);
+  }, [product]);
 
   if (error) {
     return (
@@ -61,7 +70,7 @@ export default function ProductDetail() {
   const owned = ownedIds.length > 0;
 
   return (
-    <section className="section">
+    <section className="section" ref={root}>
       <div className="container split split-narrow" style={{ alignItems: 'start' }}>
         <div>
           {isBundle && <span className="badge">Bundle · {product.moodle_course_ids.length} courses</span>}
@@ -73,7 +82,7 @@ export default function ProductDetail() {
               ✓ You're enrolled
             </span>
           )}
-          <h1>{product.name}</h1>
+          <h1 data-flip-id={`course-title-${slug}`}>{product.name}</h1>
           {product.description && <p>{product.description}</p>}
 
           {/* The course cache can legitimately be empty before the first sync —

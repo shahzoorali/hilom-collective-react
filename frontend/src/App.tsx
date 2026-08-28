@@ -30,6 +30,13 @@ const Admin = lazy(() => import('./pages/Admin'));
 // Lazy for the same reason as the admin: its own chrome, its own tabs, and
 // nobody browsing the public site should download it.
 const FacilitatorDashboard = lazy(() => import('./pages/FacilitatorDashboard'));
+/**
+ * Internal design tool for choosing a page-transition style. Lazy because it
+ * pulls in GSAP plus the Flip and SplitText plugins, and nobody browsing the
+ * marketing site should download an animation gallery. Remove this route once
+ * a transition is chosen and applied.
+ */
+const MotionLab = lazy(() => import('./pages/MotionLab'));
 import About from './pages/About';
 import Services from './pages/Services';
 import Events from './pages/Events';
@@ -118,6 +125,15 @@ export default function App() {
                 <Route path="/blog" element={<Blog />} />
                 <Route path="/blog/category/:categorySlug" element={<Blog />} />
                 <Route path="/blog/:slug" element={<BlogPost />} />
+                {/* Above /:slug so the CMS catch-all can't shadow it. */}
+                <Route
+                  path="/motion-lab"
+                  element={
+                    <Suspense fallback={<p className="muted" style={{ padding: '2rem' }}>Loading…</p>}>
+                      <MotionLab />
+                    </Suspense>
+                  }
+                />
                 <Route path="/:slug" element={<CmsPage />} />
                 <Route path="*" element={<CmsPage />} />
               </Routes>
