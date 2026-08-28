@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getPost, type BlogPostDetail, type BlogPost } from '../lib/cms';
 import BlockRenderer from '../cms/BlockRenderer';
+import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
@@ -40,7 +41,20 @@ export default function BlogPost() {
     }
   }, [post]);
 
-  if (loading) return <section className="section"><div className="container"><p className="muted">Loading…</p></div></section>;
+  if (loading) {
+    return (
+      <section className="section">
+        <SkeletonBoundary label="Loading post" className="container" style={{ maxWidth: 760, display: 'grid', gap: '1.1rem' }}>
+          <SkeletonMedia />
+          <Skeleton height="1em" width="30%" />
+          <Skeleton height="2.4em" width="90%" />
+          <Skeleton height="0.9em" width="45%" />
+          <SkeletonText lines={4} style={{ marginTop: '0.6rem' }} />
+          <SkeletonText lines={3} />
+        </SkeletonBoundary>
+      </section>
+    );
+  }
   if (error) return <section className="section"><div className="container"><div className="alert alert-error">{error}</div></div></section>;
   if (!post) return <section className="section"><div className="container"><p className="muted">Post not found.</p></div></section>;
 

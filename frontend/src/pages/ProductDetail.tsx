@@ -4,6 +4,7 @@ import { getProduct, getMyOwnedCourses, type ProductDetail as Detail } from '../
 import { money } from '../components/Layout';
 import { currentUser } from '../lib/auth';
 import { moodleAccessUrl } from '../config';
+import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 
 export default function ProductDetail() {
   const { slug = '' } = useParams();
@@ -36,9 +37,21 @@ export default function ProductDetail() {
   if (!product) {
     return (
       <section className="section">
-        <div className="container">
-          <p className="muted">Loading…</p>
-        </div>
+        <SkeletonBoundary label="Loading course" className="container split split-narrow" style={{ alignItems: 'start' }}>
+          <div style={{ display: 'grid', gap: '1rem' }}>
+            <Skeleton height="2.2em" width="80%" />
+            <SkeletonText lines={3} />
+            <Skeleton height="1.6em" width="40%" style={{ marginTop: '1rem' }} />
+            <SkeletonMedia />
+          </div>
+          <aside>
+            <div className="panel" style={{ display: 'grid', gap: '0.9rem' }}>
+              <Skeleton height="1.8em" width="50%" />
+              <SkeletonText lines={2} />
+              <Skeleton height="2.6em" radius={999} />
+            </div>
+          </aside>
+        </SkeletonBoundary>
       </section>
     );
   }

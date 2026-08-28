@@ -15,6 +15,7 @@ import { listProducts, type Product } from '../lib/api';
 import { getEvents, type CmsEvent } from '../lib/cms';
 import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { money } from '../components/Layout';
+import { SkeletonCardGrid } from '../components/Skeleton';
 import type { Block, Cta, MediaRef } from './blocks';
 import CommunityForm from './CommunityForm';
 import FacilitatorApplyForm from './FacilitatorApplyForm';
@@ -325,7 +326,7 @@ function ProductGrid({ props }: { props: Props }) {
         {props.heading ? <h2>{str(props.heading)}</h2> : null}
         {props.subheading ? <p className="muted">{str(props.subheading)}</p> : null}
         {error && <div className="alert alert-error">Couldn't load courses: {error}</div>}
-        {!products && !error && <p className="muted">Loading…</p>}
+        {!products && !error && <SkeletonCardGrid count={3} media={false} />}
         {products && (
           <div className="grid" style={{ marginTop: '1.5rem' }}>
             {products.map((p) => (
@@ -446,7 +447,7 @@ function EventGrid({ props }: { props: Props }) {
       <div className="container">
         {props.heading ? <h2>{str(props.heading)}</h2> : null}
         {error && <div className="alert alert-error">Couldn't load events: {error}</div>}
-        {!data && !error && <p className="muted">Loading…</p>}
+        {!data && !error && <SkeletonCardGrid count={3} />}
         {data && data.upcoming.length === 0 && data.past.length === 0 && (
           <p className="muted">No events scheduled right now — check back soon.</p>
         )}
@@ -574,7 +575,7 @@ function FacilitatorGrid({ props }: { props: Props }) {
         {props.heading ? <h2>{str(props.heading)}</h2> : null}
         {props.subheading ? <p className="muted">{str(props.subheading)}</p> : null}
         {error && <div className="alert alert-error">Couldn't load facilitators: {error}</div>}
-        {!facilitators && !error && <p className="muted">Loading…</p>}
+        {!facilitators && !error && <SkeletonCardGrid count={3} />}
         {facilitators && facilitators.length === 0 && (
           <p className="muted">No facilitators are listed yet.</p>
         )}

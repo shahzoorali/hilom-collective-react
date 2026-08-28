@@ -4,6 +4,7 @@ import { listProducts, getMyOwnedCourses, type Product } from '../lib/api';
 import { money } from '../components/Layout';
 import { currentUser } from '../lib/auth';
 import { moodleAccessUrl } from '../config';
+import { SkeletonCardGrid } from '../components/Skeleton';
 
 export default function Courses() {
   const [products, setProducts] = useState<Product[] | null>(null);
@@ -24,7 +25,7 @@ export default function Courses() {
         <p className="muted">Buy once, keep access for good — no subscription, no expiry.</p>
 
         {error && <div className="alert alert-error">Couldn’t load courses: {error}</div>}
-        {!products && !error && <p className="muted">Loading…</p>}
+        {!products && !error && <SkeletonCardGrid count={6} />}
 
         {products && (
           <div className="grid" style={{ marginTop: '1.5rem' }}>

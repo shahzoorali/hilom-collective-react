@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getPage, type CmsPage as Page } from '../lib/cms';
 import BlockRenderer from '../cms/BlockRenderer';
+import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 
 export default function CmsPage() {
   const { slug = '' } = useParams();
@@ -34,9 +35,12 @@ export default function CmsPage() {
   if (state === 'loading') {
     return (
       <section className="section">
-        <div className="container">
-          <p className="muted">Loading…</p>
-        </div>
+        <SkeletonBoundary label="Loading page" className="container" style={{ display: 'grid', gap: '1.25rem' }}>
+          <Skeleton height="2.6em" width="60%" />
+          <SkeletonText lines={3} />
+          <SkeletonMedia ratio="21 / 9" style={{ marginTop: '0.5rem' }} />
+          <SkeletonText lines={3} />
+        </SkeletonBoundary>
       </section>
     );
   }

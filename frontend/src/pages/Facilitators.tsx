@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../components/Layout';
 import { listFacilitators, type FacilitatorCard } from '../lib/booking';
+import { SkeletonCardGrid } from '../components/Skeleton';
 
 export default function Facilitators() {
   const [facilitators, setFacilitators] = useState<FacilitatorCard[] | null>(null);
@@ -74,7 +75,7 @@ export default function Facilitators() {
           </div>
         )}
 
-        {facilitators === null && !error && <div className="spinner" aria-label="Loading" />}
+        {facilitators === null && !error && <SkeletonCardGrid count={6} />}
 
         {facilitators !== null && visible.length === 0 && (
           <p className="muted">

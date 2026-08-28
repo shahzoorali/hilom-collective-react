@@ -27,6 +27,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { currentUser, login } from '../lib/auth';
 import { money } from '../components/Layout';
 import { REGISTRANT_FIELD_LABELS } from '../lib/cms';
+import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 import {
   getEventTicketing,
   registerForEvent,
@@ -359,9 +360,12 @@ export default function EventRegister() {
   if (!data) {
     return (
       <section className="section">
-        <div className="container">
-          <div className="spinner" aria-label="Loading" />
-        </div>
+        <SkeletonBoundary label="Loading event" className="container" style={{ maxWidth: 720, display: 'grid', gap: '1.25rem' }}>
+          <Skeleton height="2.6em" width="70%" />
+          <Skeleton height="1em" width="45%" />
+          <SkeletonMedia ratio="21 / 9" />
+          <SkeletonText lines={3} />
+        </SkeletonBoundary>
       </section>
     );
   }

@@ -14,6 +14,7 @@ import {
   type Facilitator,
   type FacilitatorService,
 } from '../lib/booking';
+import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton';
 
 export default function FacilitatorProfile() {
   const { slug = '' } = useParams();
@@ -48,7 +49,25 @@ export default function FacilitatorProfile() {
   if (!data) {
     return (
       <section className="section">
-        <div className="container"><div className="spinner" aria-label="Loading" /></div>
+        <SkeletonBoundary label="Loading facilitator" className="container" style={{ display: 'grid', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'center' }}>
+            <Skeleton circle width={96} height={96} />
+            <div style={{ flex: 1, display: 'grid', gap: '0.6rem' }}>
+              <Skeleton height="1.8em" width="55%" />
+              <Skeleton height="1em" width="75%" />
+            </div>
+          </div>
+          <SkeletonText lines={3} />
+          <div className="grid">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div className="card" key={i} style={{ gap: '0.6rem' }}>
+                <Skeleton height="1.3em" width="60%" />
+                <SkeletonText lines={2} />
+                <Skeleton height="2.4em" width="8rem" radius={999} />
+              </div>
+            ))}
+          </div>
+        </SkeletonBoundary>
       </section>
     );
   }

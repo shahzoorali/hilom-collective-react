@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { getPosts, getCategories, type BlogPost, type BlogCategory, type BlogListResponse } from '../lib/cms';
+import { SkeletonCardGrid } from '../components/Skeleton';
 
 export default function Blog() {
   const { categorySlug } = useParams<{ categorySlug?: string }>();
@@ -84,7 +85,7 @@ export default function Blog() {
           </div>
         )}
 
-        {loading && <p className="muted">Loading…</p>}
+        {loading && <SkeletonCardGrid count={6} className="blog-grid" style={{ marginTop: '2rem' }} />}
         {error && <div className="alert alert-error">{error}</div>}
 
         {data && data.posts.length === 0 && !loading && (
