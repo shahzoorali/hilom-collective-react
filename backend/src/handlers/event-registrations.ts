@@ -287,7 +287,7 @@ async function register(
         registration_id: newRegistrationId,
         buyer_email: buyer.email,
       },
-      successUrl: `${origin}/events/registration/processing`,
+      successUrl: `${origin}/events/registration/processing?registrationId=${newRegistrationId}`,
       cancelUrl: `${origin}/events`,
     });
   } catch (err) {
