@@ -38,6 +38,7 @@ import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as kms from 'aws-cdk-lib/aws-kms';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -299,6 +300,54 @@ export class HilomCoreStack extends cdk.Stack {
     // The CMS form endpoint has the same SES need and is granted the same
     // statement in the CMS stack — see the note there.
     communitySubmit.addToRolePolicy(sesSendPolicy(this));
+
+    // ---------------------------------------------------------------------
+    // Cognito CustomEmailSender.
+    //
+    // Every Cognito-originated email (sign-up code, resend, forgotten
+    // password, attribute verification) is sent by this Lambda through the
+    // ap-south-1 SES identity instead of by Cognito itself. The user pool
+    // only accepts an SES SourceArn in eu-west-1 / ap-southeast-1 / us-east-1
+    // / us-west-2, and the sole region with SES production access here is
+    // ap-south-1 — not on that list. CustomEmailSender has no such
+    // restriction: Cognito hands the code to the function and it sends
+    // however it likes.
+    //
+    // The pool predates these stacks and is imported by id, so the trigger
+    // itself (LambdaConfig.CustomEmailSender + KMSKeyID) is wired on the pool
+    // out of band with `aws cognito-idp update-user-pool`, not here. This
+    // stack owns only the key and the function.
+    //
+    // Cognito encrypts the code to this key with the AWS Encryption SDK; the
+    // handler decrypts with @aws-crypto/client-node. Cognito needs
+    // encrypt + CreateGrant (it grants the decrypt down to itself at send
+    // time); the function needs decrypt.
+    const cognitoEmailKey = new kms.Key(this, 'CognitoCustomEmailKey', {
+      alias: 'alias/hilom-cognito-custom-email',
+      description: 'Encrypts Cognito CustomEmailSender codes; decrypted by CognitoCustomEmailFn',
+      enableKeyRotation: true,
+    });
+    cognitoEmailKey.grant(
+      new iam.ServicePrincipal('cognito-idp.amazonaws.com'),
+      'kms:Encrypt',
+      'kms:Decrypt',
+      'kms:CreateGrant',
+    );
+
+    const cognitoCustomEmail = makeFn(
+      'CognitoCustomEmailFn',
+      'handlers/cognito-custom-email.ts',
+      'handler',
+    );
+    cognitoCustomEmail.addEnvironment('COGNITO_CUSTOM_EMAIL_KEY_ARN', cognitoEmailKey.keyArn);
+    cognitoEmailKey.grantDecrypt(cognitoCustomEmail);
+    cognitoCustomEmail.addToRolePolicy(sesSendPolicy(this));
+    // Let the pool invoke it. Scoped to this one pool's ARN so a second pool
+    // in the account cannot trigger it.
+    cognitoCustomEmail.addPermission('CognitoCustomEmailInvoke', {
+      principal: new iam.ServicePrincipal('cognito-idp.amazonaws.com'),
+      sourceArn: cognitoUserPoolArn,
+    });
 
     // Same SES identity, granted to every path that can call fulfillOrder and
     // so may send either of the two emails it can trigger: the account-created
