@@ -115,8 +115,8 @@ export default function BookingFlow() {
     </div>
   );
 
-  // Same anti-phishing reasoning as Checkout.tsx: an unannounced bounce to
-  // amazoncognito.com at the moment of commitment reads as a scam.
+  // Same reasoning as Checkout.tsx: an unannounced bounce to
+  // auth.hilomcollective.com at the moment of commitment reads as a surprise.
   if (!user) {
     return (
       <section className="section">
