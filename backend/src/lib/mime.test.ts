@@ -16,7 +16,7 @@ function decodePart(raw: string, contentType: string): string {
 
 describe('buildRawEmail', () => {
   const base = {
-    from: 'Hilom Collective <hello@hilomcollective.com>',
+    from: 'Hilom Collective <kumusta@hilomcollective.com>',
     to: 'someone@example.com',
     subject: "You're going to Return to Self",
     text: 'Plain text body — with an em dash.',

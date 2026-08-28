@@ -31,7 +31,7 @@ import { buildRawEmail, type RawEmailAttachment } from './mime.js';
 // the rest of the stack is ap-southeast-1. Same as every other sender here.
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
-const SENDER = 'Hilom Collective <hello@hilomcollective.com>';
+const SENDER = 'Hilom Collective <kumusta@hilomcollective.com>';
 const SITE = 'https://www.hilomcollective.com';
 
 const registrationUrl = (registrationId: string) => `${SITE}/account/registrations/${registrationId}`;

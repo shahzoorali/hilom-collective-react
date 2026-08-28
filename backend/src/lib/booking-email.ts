@@ -20,7 +20,7 @@ import { renderEmail, renderText, escapeHtml, p, note, details, button, link } f
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
-const SENDER = 'Hilom Collective <hello@hilomcollective.com>';
+const SENDER = 'Hilom Collective <kumusta@hilomcollective.com>';
 
 const ACCOUNT_BOOKINGS_URL = 'https://www.hilomcollective.com/account/bookings';
 const FACILITATOR_BOOKINGS_URL = 'https://www.hilomcollective.com/facilitator/bookings';

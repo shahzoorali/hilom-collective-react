@@ -31,7 +31,7 @@ import { renderEmail, renderText, escapeHtml, p, note, details, button } from '.
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
-const SENDER = 'Hilom Collective <hello@hilomcollective.com>';
+const SENDER = 'Hilom Collective <kumusta@hilomcollective.com>';
 
 export interface EnrollmentEmailInput {
   buyerEmail: string;

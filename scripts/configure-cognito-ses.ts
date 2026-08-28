@@ -40,7 +40,7 @@ const USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
 const ACCOUNT_ID = '651706741660';
 const SES_IDENTITY_ARN = `arn:aws:ses:${REGION}:${ACCOUNT_ID}:identity/hilomcollective.com`;
 const SOURCE_ARN = `arn:aws:ses:${REGION}:${ACCOUNT_ID}:identity/hilomcollective.com`;
-const FROM = 'Hilom Collective <hello@hilomcollective.com>';
+const FROM = 'Hilom Collective <kumusta@hilomcollective.com>';
 
 const client = new CognitoIdentityProviderClient({ region: REGION });
 
