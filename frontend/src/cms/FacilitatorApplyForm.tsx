@@ -9,9 +9,9 @@
  * generic /forms engine for no gain.
  *
  * Signing in first, before the form, for the same reason Checkout and
- * BookingFlow do it: an unannounced bounce to amazoncognito.com after someone
- * has already started filling in their story reads as a scam, and the
- * application is keyed to the account's email either way.
+ * BookingFlow do it: an unannounced bounce to auth.hilomcollective.com after
+ * someone has already started filling in their story reads as a surprise
+ * mid-task, and the application is keyed to the account's email either way.
  */
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';

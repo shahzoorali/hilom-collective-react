@@ -15,7 +15,7 @@ const SENDER = 'Hilom Collective <noreply@hilomcollective.com>';
 
 /** Hosted UI's own sign-in page, which has a built-in "Forgot your password?" link. */
 const LOGIN_URL =
-  'https://hilom-auth.auth.ap-southeast-1.amazoncognito.com/login' +
+  'https://auth.hilomcollective.com/login' +
   '?client_id=29bo0gpj7j9u7ofbcii22emj8l&response_type=code&scope=openid+email+profile' +
   '&redirect_uri=https%3A%2F%2Fhilomcollective.com%2Fauth%2Fcallback';
 

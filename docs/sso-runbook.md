@@ -7,7 +7,11 @@ Proven end-to-end on a disposable test box, `learn-test.hilomcollective.com`
 
 **Cognito** (`ap-southeast-1`, account `651706741660`):
 - User pool `hilom-users` — `ap-southeast-1_AA9IeeZ2z`
-- Hosted UI domain — `hilom-auth.auth.ap-southeast-1.amazoncognito.com`
+- Hosted UI domain — `auth.hilomcollective.com` (custom domain, branded managed login v2;
+  the original prefix domain `hilom-auth.auth.ap-southeast-1.amazoncognito.com` stays
+  live as a fallback). Moodle's `auth_oauth2` issuer endpoints were switched to the
+  custom domain via the admin UI (Site administration → Server → OAuth 2 services →
+  Hilom Account → edit the three endpoint URLs) — confirmed working via the SSO button.
 - App client `hilom-moodle` — id/secret in Secrets Manager as `hilom/cognito`
 - Callback URLs registered for **both** test and production, so no client edit
   is needed at cutover:

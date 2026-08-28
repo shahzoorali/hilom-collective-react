@@ -11,7 +11,7 @@
 export const API_BASE = import.meta.env.VITE_API_BASE ?? 'https://api.hilomcollective.com';
 
 export const COGNITO = {
-  domain: 'hilom-auth.auth.ap-southeast-1.amazoncognito.com',
+  domain: 'auth.hilomcollective.com',
   // Public SPA client — deliberately separate from the `hilom-moodle` client,
   // which has a secret and must never be used from a browser.
   clientId: '29bo0gpj7j9u7ofbcii22emj8l',

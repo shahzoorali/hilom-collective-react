@@ -98,9 +98,9 @@ export default function Checkout() {
   );
 
   // Signed-out buyers get an explicit step rather than a silent bounce to the
-  // Hosted UI. It is on an amazoncognito.com domain today, and redirecting
+  // Hosted UI. Even on our own auth.hilomcollective.com domain, redirecting
   // someone there unannounced the instant they click "Buy now" reads as a
-  // phishing hop at the exact moment they are deciding whether to trust us.
+  // surprise hop at the exact moment they are deciding whether to trust us.
   if (!user) {
     return (
       <section className="section">
