@@ -29,6 +29,7 @@ import {
   DEFAULT_COGNITO_SPA_CLIENT_ID,
   DEFAULT_COGNITO_USER_POOL_ID,
   DEFAULT_FRONTEND_URL,
+  DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS,
   lambdaFactory,
   routeAttacher,
   sesSendPolicy,
@@ -163,6 +164,15 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // eventRegistrations also sends one of these — the cancellation-request
     // alert — the moment someone asks, rather than only via the sweep.
     eventRegistrations.addEnvironment('ADMIN_ALERT_EMAIL', props.alertEmail ?? DEFAULT_ALERT_EMAIL);
+
+    // Marking a payment received offline goes through applyChargePayment, so an
+    // admin-recorded deposit for the retreat sends the same confirmation email
+    // — agreement PDF attached — as a PayMongo one. Same gate as the core
+    // stack's webhook and retry consumer.
+    adminRegistrations.addEnvironment(
+      'PARTICIPANT_AGREEMENT_EVENT_IDS',
+      props.participantAgreementEventIds ?? DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS,
+    );
 
     // Five minutes bounds how long an abandoned checkout can keep a slot past
     // its 20-minute hold, which is the number that actually matters to someone

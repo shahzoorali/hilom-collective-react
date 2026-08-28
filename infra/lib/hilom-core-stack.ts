@@ -311,9 +311,15 @@ export class HilomCoreStack extends cdk.Stack {
     // registration confirmations and receipts through this identity as well.
     for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
       fn.addToRolePolicy(sesSendPolicy(this));
-      // Which events' confirmation email attaches the participant agreement.
-      // Read by backend/src/lib/participant-agreement.ts; the PDF bytes ride
-      // in the bundle via the esbuild binary loader, this only gates them.
+    }
+
+    // Which events' confirmation email attaches the participant agreement PDF.
+    // Read by backend/src/lib/participant-agreement.ts; the bytes ride in the
+    // bundle via the esbuild binary loader, this only gates them. Just the two
+    // paths here that reach applyChargePayment — retryEnrollment is course
+    // orders, not registration charges. The admin offline-payment path is in
+    // the marketplace stack and is gated there.
+    for (const fn of [paymongoWebhook, enrollmentRetryConsumer]) {
       fn.addEnvironment(
         'PARTICIPANT_AGREEMENT_EVENT_IDS',
         props.participantAgreementEventIds ?? DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS,
