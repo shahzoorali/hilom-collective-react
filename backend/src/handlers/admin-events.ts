@@ -44,12 +44,24 @@ const INSTALLMENT_COLUMNS = 'id, plan_id, seq, label, amount_centavos, due_at, d
 /** Statuses that mean a registration is holding, or has held, a seat. */
 const LIVE_STATUSES = ['pending_payment', 'confirmed', 'completed'];
 
+/**
+ * Statuses that occupy a seat *right now* — narrower than LIVE_STATUSES,
+ * because a completed registration is somebody who has already been and gone
+ * and is not standing between the next buyer and a place. This is the set
+ * `claim_event_seat` counts against capacity, so the "12 of 20 taken" the
+ * admin list shows and the number that decides sold-out are the same number.
+ */
+const SEAT_STATUSES = ['pending_payment', 'confirmed'];
+
 // supabase-js is untyped here (there is no generated Database type — see
 // supabase.ts), so shapes are declared per call rather than inferred. Without
 // them `.select()` widens to a union including GenericStringError and every
 // property access is an error.
 interface EventRow extends Record<string, unknown> {
   id: string;
+  ticketing_enabled?: boolean;
+  status?: string;
+  title?: string;
 }
 interface PlanRow extends Record<string, unknown> {
   id: string;
@@ -100,11 +112,64 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
   }
 }
 
+/**
+ * Every event, plus the two derived numbers the admin list cannot render
+ * without: how full a ticketed event is, and whether it has anything to sell.
+ *
+ * Both are counted here rather than per row, so the Events screen stays one
+ * request, and only for ticketed events — a listing-only event has neither a
+ * capacity to fill nor a plan to offer, and returning 0 for both would invite
+ * the list to draw "0 of 0 seats" against something that never had seats.
+ *
+ * `active_plan_count` is what makes "publish a ticketed event with nothing to
+ * buy" catchable before it happens. `validateTicketing` guards capacity and
+ * format, but a plan lives in a different table and is saved by a different
+ * call, so nothing on the write path has ever been in a position to notice.
+ */
 async function list(): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
-  const { data, error } = await supabase.from('events').select(COLUMNS).order('starts_at', { ascending: false });
+  const { data, error } = await supabase
+    .from('events')
+    .select(COLUMNS)
+    .order('starts_at', { ascending: false })
+    .returns<EventRow[]>();
   if (error) throw error;
-  return ok({ events: data ?? [] });
+
+  const events = data ?? [];
+  const ticketed = events.filter((e) => e.ticketing_enabled).map((e) => e.id);
+
+  const seats = new Map<string, number>();
+  const plans = new Map<string, number>();
+
+  if (ticketed.length > 0) {
+    const [{ data: regRows, error: regError }, { data: planRows, error: planError }] = await Promise.all([
+      supabase
+        .from('event_registrations')
+        .select('event_id')
+        .in('event_id', ticketed)
+        .in('status', SEAT_STATUSES)
+        .returns<{ event_id: string }[]>(),
+      supabase
+        .from('event_payment_plans')
+        .select('event_id')
+        .in('event_id', ticketed)
+        .eq('is_active', true)
+        .returns<{ event_id: string }[]>(),
+    ]);
+    if (regError) throw regError;
+    if (planError) throw planError;
+
+    for (const row of regRows ?? []) seats.set(row.event_id, (seats.get(row.event_id) ?? 0) + 1);
+    for (const row of planRows ?? []) plans.set(row.event_id, (plans.get(row.event_id) ?? 0) + 1);
+  }
+
+  return ok({
+    events: events.map((e) =>
+      e.ticketing_enabled
+        ? { ...e, seats_taken: seats.get(e.id) ?? 0, active_plan_count: plans.get(e.id) ?? 0 }
+        : e,
+    ),
+  });
 }
 
 async function get(eventId: string): Promise<APIGatewayProxyResultV2> {
@@ -154,6 +219,17 @@ async function update(
   eventId: string,
   body: Record<string, unknown>,
 ): Promise<APIGatewayProxyResultV2> {
+  // A body carrying nothing but `status` is the list's publish/unpublish
+  // toggle, not an edit of the event, and it takes a separate path on purpose.
+  // Running it through validateEvent would demand a title and a start time the
+  // toggle has no business resending — and resending them from a list row that
+  // may be minutes stale is exactly how a one-click publish quietly reverts
+  // somebody's copy.
+  const keys = Object.keys(body);
+  if (keys.length === 1 && keys[0] === 'status') {
+    return await setStatus(event, eventId, body.status);
+  }
+
   const input = validateEvent(body);
   const ticketing = validateTicketing(body);
 
@@ -196,6 +272,65 @@ async function update(
 }
 
 /**
+ * Flips an event between draft and published, touching nothing else.
+ *
+ * Audited, because "who put this live, and when?" is a question worth being
+ * able to answer about a page that takes money — and unlike an edit, a status
+ * flip leaves no trace in the content itself.
+ *
+ * Unpublishing a ticketed event with people mid-registration is allowed rather
+ * than refused: it is the documented way to take a sold event off the site (see
+ * `remove` below), and blocking it here would leave an operator with no way to
+ * stop the bleeding. The warning belongs at the click, which is where the admin
+ * can still see how many seats are held.
+ */
+async function setStatus(
+  event: APIGatewayProxyEventV2,
+  eventId: string,
+  raw: unknown,
+): Promise<APIGatewayProxyResultV2> {
+  if (raw !== 'draft' && raw !== 'published') {
+    return badRequest('status must be either "draft" or "published"');
+  }
+  const status = raw;
+
+  const supabase = await getSupabase();
+
+  const { data: current, error: readError } = await supabase
+    .from('events')
+    .select('id, title, status')
+    .eq('id', eventId)
+    .maybeSingle<EventRow>();
+  if (readError) throw readError;
+  if (!current) return notFound('Event not found');
+
+  const { data, error } = await supabase
+    .from('events')
+    .update({ status })
+    .eq('id', eventId)
+    .select(COLUMNS)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return notFound('Event not found');
+
+  // No audit row for a no-op. A re-click that changed nothing is not an event
+  // in the history of who published what.
+  if (current.status !== status) {
+    await recordAudit(actorFromEvent(event), {
+      action: 'event.status_changed',
+      targetTable: 'events',
+      targetId: eventId,
+      eventId,
+      before: { status: current.status },
+      after: { status },
+      note: `"${current.title ?? 'Untitled event'}" ${status === 'published' ? 'published' : 'reverted to draft'}`,
+    });
+  }
+
+  return ok({ event: data });
+}
+
+/**
  * Refuses a capacity below the seats already sold.
  *
  * `claim_event_seat` reads capacity live, so lowering it does not cancel anyone
@@ -213,7 +348,7 @@ async function capacityGuard(
     .from('event_registrations')
     .select('id', { count: 'exact', head: true })
     .eq('event_id', eventId)
-    .in('status', ['pending_payment', 'confirmed']);
+    .in('status', SEAT_STATUSES);
   if (error) throw error;
 
   const taken = count ?? 0;
