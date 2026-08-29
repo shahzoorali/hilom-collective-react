@@ -225,9 +225,24 @@ interface Props {
   eventId: string | null;
   value: TicketingDraft;
   onChange: (next: TicketingDraft) => void;
+  /**
+   * How many plans are switched on, reported after every load and save.
+   *
+   * Plans are saved by their own button, on their own endpoint, so the screen
+   * around this editor has no other way to learn that a ticketed event stopped
+   * having nothing to sell. Without this, a publish checklist would still be
+   * refusing to publish minutes after the plan that unblocks it was written.
+   */
+  onActivePlanCount?: (count: number) => void;
 }
 
-export default function EventTicketingEditor({ adminKey, eventId, value, onChange }: Props) {
+export default function EventTicketingEditor({
+  adminKey,
+  eventId,
+  value,
+  onChange,
+  onActivePlanCount,
+}: Props) {
   const set = <K extends keyof TicketingDraft>(key: K, next: TicketingDraft[K]) =>
     onChange({ ...value, [key]: next });
 
@@ -390,7 +405,7 @@ export default function EventTicketingEditor({ adminKey, eventId, value, onChang
             </span>
           </div>
 
-          <PlanBuilder adminKey={adminKey} eventId={eventId} />
+          <PlanBuilder adminKey={adminKey} eventId={eventId} onActivePlanCount={onActivePlanCount} />
         </>
       )}
     </div>
@@ -401,21 +416,41 @@ export default function EventTicketingEditor({ adminKey, eventId, value, onChang
 // Plans
 // ---------------------------------------------------------------------------
 
-function PlanBuilder({ adminKey, eventId }: { adminKey: string; eventId: string | null }) {
+function PlanBuilder({
+  adminKey,
+  eventId,
+  onActivePlanCount,
+}: {
+  adminKey: string;
+  eventId: string | null;
+  onActivePlanCount?: (count: number) => void;
+}) {
   const [plans, setPlans] = useState<PlanDraft[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Counted off what the server returned, never off the unsaved drafts — an
+  // admin who has typed a plan but not pressed Save has nothing for sale yet,
+  // and a checklist that said otherwise would be lying in the direction that
+  // puts an unbuyable event on the site.
+  const report = (written: AdminPlan[]) =>
+    onActivePlanCount?.(written.filter((p) => p.is_active).length);
 
   const load = useCallback(async () => {
     if (!eventId) return;
     try {
       const fetched = await adminGetEventPlans(adminKey, eventId);
       setPlans(fetched.map(planToDraft));
+      onActivePlanCount?.(fetched.filter((p) => p.is_active).length);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load the payment plans.');
       setPlans([]);
     }
+    // `report`/`onActivePlanCount` are left out on purpose: an inline callback
+    // from the parent changes identity every render, and depending on it here
+    // would reload the plans on every keystroke in the event form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminKey, eventId]);
 
   useEffect(() => {
@@ -450,6 +485,7 @@ function PlanBuilder({ adminKey, eventId }: { adminKey: string; eventId: string 
     try {
       const written = await adminReplaceEventPlans(adminKey, eventId!, plans!.map(draftToPlan));
       setPlans(written.map(planToDraft));
+      report(written);
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save the payment plans.');

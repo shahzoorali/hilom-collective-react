@@ -13,6 +13,7 @@
  * can prove.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { money } from '../../components/Layout';
 import { API_BASE } from '../../config';
 import {
@@ -55,9 +56,18 @@ const manilaDate = (iso: string) =>
   }).format(new Date(iso));
 
 export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
+  // `?event=` is how the Events screen hands over: its rows link here with the
+  // event already chosen, so "12 registered" and the roster you land on are
+  // the same twelve people.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedEventId = searchParams.get('event') ?? '';
+
   const [events, setEvents] = useState<AdminEvent[]>([]);
-  const [eventId, setEventId] = useState<string>('');
-  const [filter, setFilter] = useState<Filter>('attention');
+  const [eventId, setEventId] = useState<string>(linkedEventId);
+  // Arriving from a specific event means "show me this roster", so the default
+  // "needs attention" filter would answer a question nobody asked — and an
+  // empty screen is a poor reply to a link that promised twelve people.
+  const [filter, setFilter] = useState<Filter>(linkedEventId ? 'all' : 'attention');
   const [registrations, setRegistrations] = useState<AdminRegistration[] | null>(null);
   const [money_, setMoney] = useState<RosterMoney | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -115,7 +125,16 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
   return (
     <div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-        <select value={eventId} onChange={(e) => setEventId(e.target.value)} style={{ maxWidth: 320 }}>
+        <select
+          value={eventId}
+          onChange={(e) => {
+            setEventId(e.target.value);
+            // Keep the URL honest, so a reload or a back button lands on the
+            // roster being looked at rather than whichever event sorts first.
+            setSearchParams(e.target.value ? { event: e.target.value } : {}, { replace: true });
+          }}
+          style={{ maxWidth: 320 }}
+        >
           <option value="">All ticketed events</option>
           {events.map((e) => (
             <option key={e.id} value={e.id}>

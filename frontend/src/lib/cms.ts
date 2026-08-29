@@ -371,6 +371,13 @@ export interface AdminEvent extends CmsEvent {
   medical_disclaimer_html: string | null;
   liability_consent_html: string | null;
   registrant_fields: string[];
+  // Derived, and only computed by the list endpoint — a single-event read does
+  // not carry them. Present only on ticketed events, because "0 of 0 seats" is
+  // a misleading thing to say about a listing.
+  /** Seats held right now: pending_payment + confirmed. */
+  seats_taken?: number;
+  /** Payment plans currently switched on. Zero means nothing is for sale. */
+  active_plan_count?: number;
 }
 
 export type EventFormat = 'residential' | 'virtual' | 'day';
@@ -472,6 +479,21 @@ export const adminUpdateEvent = (adminKey: string, eventId: string, input: Admin
   apiFetch<{ event: AdminEvent }>(
     `/admin/events/${eventId}`,
     adminInit(adminKey, 'PUT', input),
+  ).then((r) => r.event);
+
+/**
+ * Publishes or unpublishes an event without touching anything else.
+ *
+ * Deliberately not `adminUpdateEvent(key, id, { ...event, status })`: that
+ * would send a whole event body rebuilt from a list row, and any field the
+ * list does not carry — or carries stale — would be written back over the
+ * real one. The backend recognises a status-only body and patches just the
+ * column.
+ */
+export const adminSetEventStatus = (adminKey: string, eventId: string, status: 'draft' | 'published') =>
+  apiFetch<{ event: AdminEvent }>(
+    `/admin/events/${eventId}`,
+    adminInit(adminKey, 'PUT', { status }),
   ).then((r) => r.event);
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>
