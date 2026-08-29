@@ -939,14 +939,50 @@ export interface Person {
   last_seen_at: string;
 }
 
+export type PersonChargeStatus =
+  | 'scheduled'
+  | 'awaiting_payment'
+  | 'paid'
+  | 'waived'
+  | 'void'
+  | 'refunded';
+
+/** One instalment on a registration's schedule, as the People screen shows it. */
+export interface PersonCharge {
+  id: string;
+  seq: number;
+  label: string;
+  is_deposit: boolean;
+  amount_centavos: number;
+  currency: string;
+  due_at: string;
+  status: PersonChargeStatus;
+  paid_at: string | null;
+  paid_method: string | null;
+  paid_reference: string | null;
+  receipt_no: string | null;
+  flagged_at: string | null;
+  void_reason: string | null;
+}
+
 export interface PersonDetail {
   person: Person;
+  /** Totals across every record below, computed server-side. */
+  money: {
+    registrations_paid_centavos: number;
+    registrations_outstanding_centavos: number;
+    registrations_overdue_centavos: number;
+    refunds_owed_centavos: number;
+  };
   orders: {
     id: string;
     amount_centavos: number;
     currency: string;
     status: string;
     created_at: string;
+    updated_at: string;
+    paymongo_payment_id: string | null;
+    error_detail: string | null;
     products: { name: string } | null;
   }[];
   registrations: {
@@ -958,10 +994,21 @@ export interface PersonDetail {
     registrant_name: string;
     registrant_email: string;
     plan_name: string;
+    plan_kind: 'full' | 'installment';
     total_centavos: number;
     currency: string;
     created_at: string;
+    flagged_at: string | null;
+    refund_centavos: number | null;
+    refunded_at: string | null;
+    refund_reference: string | null;
     events: { title: string; starts_at: string } | null;
+    charges: PersonCharge[];
+    paid_centavos: number;
+    outstanding_centavos: number;
+    overdue_centavos: number;
+    overdue_count: number;
+    next_due: PersonCharge | null;
   }[];
   bookings: {
     id: string;
@@ -970,6 +1017,10 @@ export interface PersonDetail {
     price_centavos: number;
     currency: string;
     created_at: string;
+    paymongo_payment_id: string | null;
+    refund_centavos: number | null;
+    refunded_at: string | null;
+    refund_reference: string | null;
     facilitators: { display_name: string } | null;
   }[];
   enquiries: {

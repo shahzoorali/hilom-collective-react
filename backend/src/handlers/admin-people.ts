@@ -24,6 +24,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 import { actorFromEvent, recordAudit } from '../lib/audit.js';
+import { isOutstanding, paidCentavos, outstandingCentavos, nextDueCharge } from '../lib/event-ticketing.js';
 import { csvResponse } from '../lib/csv.js';
 
 /** Mirrors the columns of public.people_directory. */
@@ -40,6 +41,31 @@ interface PersonRow extends Record<string, unknown> {
   lifetime_centavos: number;
   first_seen_at: string;
   last_seen_at: string;
+}
+
+/** The registration columns this screen reads back; the rest stay on their own screens. */
+interface RegistrationSummary extends Record<string, unknown> {
+  id: string;
+  refund_centavos: number | null;
+  refunded_at: string | null;
+}
+
+/** One row of the instalment ledger. */
+interface ChargeRow extends Record<string, unknown> {
+  id: string;
+  registration_id: string;
+  seq: number;
+  label: string;
+  is_deposit: boolean;
+  amount_centavos: number;
+  currency: string;
+  due_at: string;
+  status: 'scheduled' | 'awaiting_payment' | 'paid' | 'waived' | 'void' | 'refunded';
+}
+
+interface BookingSummary extends Record<string, unknown> {
+  refund_centavos: number | null;
+  refunded_at: string | null;
 }
 
 const SOURCES = ['course_order', 'event_registration', 'event_attendee', 'booking', 'enquiry'] as const;
@@ -178,14 +204,18 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
   const [orders, registrations, bookings, enquiries] = await Promise.all([
     supabase
       .from('orders')
-      .select('id, product_id, amount_centavos, currency, status, created_at, products(name)')
+      .select(
+        'id, product_id, amount_centavos, currency, status, created_at, updated_at, ' +
+          'paymongo_payment_id, error_detail, products(name)',
+      )
       .ilike('buyer_email', email)
       .order('created_at', { ascending: false }),
     supabase
       .from('event_registrations')
       .select(
         'id, event_id, status, seat_no, buyer_email, registrant_name, registrant_email, ' +
-          'plan_name, total_centavos, currency, created_at, events(title, starts_at)',
+          'plan_name, plan_kind, total_centavos, currency, created_at, flagged_at, ' +
+          'refund_centavos, refunded_at, refund_reference, events(title, starts_at)',
       )
       // Both roles: they may have paid for a place someone else is sitting in,
       // or be sitting in one somebody else paid for. The row on the directory
@@ -196,6 +226,7 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
       .from('bookings')
       .select(
         'id, facilitator_id, status, starts_at, ends_at, price_centavos, currency, created_at, ' +
+          'paymongo_payment_id, refund_centavos, refunded_at, refund_reference, ' +
           'facilitators(display_name)',
       )
       .ilike('client_email', email)
@@ -212,6 +243,29 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
     if (result.error) throw result.error;
   }
 
+  // The instalment ledger for whatever registrations came back. Without it a
+  // person on a four-payment plan shows only the plan total, which is the one
+  // number that answers neither "have they paid?" nor "what do they owe?".
+  const registrationRows = (registrations.data ?? []) as unknown as RegistrationSummary[];
+  const charges = await chargesFor(
+    supabase,
+    registrationRows.map((r) => r.id),
+  );
+  const now = Date.now();
+  const withCharges = registrationRows.map((r) => {
+    const rows = charges.get(r.id) ?? [];
+    const overdue = rows.filter((c) => isOutstanding(c.status) && Date.parse(c.due_at) < now);
+    return {
+      ...r,
+      charges: rows,
+      paid_centavos: paidCentavos(rows),
+      outstanding_centavos: outstandingCentavos(rows),
+      overdue_centavos: overdue.reduce((acc, c) => acc + c.amount_centavos, 0),
+      overdue_count: overdue.length,
+      next_due: nextDueCharge(rows),
+    };
+  });
+
   // form_submissions keeps its email inside author-defined JSON, so it cannot
   // be filtered in the query the way the other three are — this is the one
   // source that has to be matched here.
@@ -221,13 +275,68 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
     return typeof candidate === 'string' && candidate.trim().toLowerCase() === email;
   });
 
+  const bookingRows = (bookings.data ?? []) as unknown as BookingSummary[];
+
   return ok({
     person,
     orders: orders.data ?? [],
-    registrations: registrations.data ?? [],
-    bookings: bookings.data ?? [],
+    registrations: withCharges,
+    bookings: bookingRows,
     enquiries: matchedEnquiries,
+    // Computed here rather than in the browser so the screen and the numbers
+    // can never disagree about which statuses count as money received. The
+    // directory's own `lifetime_centavos` answers a different question — it is
+    // every source added up — so it is left alone and this sits beside it.
+    money: {
+      registrations_paid_centavos: withCharges.reduce((a, r) => a + r.paid_centavos, 0),
+      registrations_outstanding_centavos: withCharges.reduce((a, r) => a + r.outstanding_centavos, 0),
+      registrations_overdue_centavos: withCharges.reduce((a, r) => a + r.overdue_centavos, 0),
+      // What the cancellation policies say is owed back but has not been sent.
+      refunds_owed_centavos:
+        bookingRows.reduce(
+          (a, b) => a + (b.refunded_at ? 0 : Number(b.refund_centavos ?? 0)),
+          0,
+        ) +
+        withCharges.reduce(
+          (a, r) => a + (r.refunded_at ? 0 : Number(r.refund_centavos ?? 0)),
+          0,
+        ),
+    },
   });
+}
+
+/**
+ * The instalment ledger for a set of registrations, keyed by registration.
+ *
+ * One `in` query rather than one per registration: somebody who has come to
+ * six retreats would otherwise cost six round trips to render a panel that is
+ * already four queries deep.
+ */
+async function chargesFor(
+  supabase: Awaited<ReturnType<typeof getSupabase>>,
+  registrationIds: string[],
+): Promise<Map<string, ChargeRow[]>> {
+  const byRegistration = new Map<string, ChargeRow[]>();
+  if (registrationIds.length === 0) return byRegistration;
+
+  const { data, error } = await supabase
+    .from('registration_charges')
+    .select(
+      'id, registration_id, seq, label, is_deposit, amount_centavos, currency, due_at, status, ' +
+        'paid_at, paid_method, paid_reference, receipt_no, flagged_at, void_reason',
+    )
+    .in('registration_id', registrationIds)
+    .order('seq', { ascending: true })
+    .returns<ChargeRow[]>();
+  if (error) throw error;
+
+  for (const charge of data ?? []) {
+    byRegistration.set(charge.registration_id, [
+      ...(byRegistration.get(charge.registration_id) ?? []),
+      charge,
+    ]);
+  }
+  return byRegistration;
 }
 
 /**

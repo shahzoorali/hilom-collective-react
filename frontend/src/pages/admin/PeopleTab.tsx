@@ -29,6 +29,7 @@ import {
   type Person,
   type PersonDetail,
   type PersonSource,
+  type PersonCharge,
   type PeopleSort,
 } from '../../lib/cms';
 
@@ -56,6 +57,22 @@ const SORTS: { key: PeopleSort; label: string }[] = [
   { key: 'name', label: 'Name (A–Z)' },
   { key: 'email', label: 'Email (A–Z)' },
 ];
+
+/**
+ * How each instalment state reads on screen.
+ *
+ * `waived` and `void` are deliberately not collapsed into "paid": one is money
+ * forgiven and the other a charge superseded by an early payoff, and an
+ * operator reconciling a plan needs to tell those apart from money received.
+ */
+const CHARGE_LABELS: Record<PersonCharge['status'], { text: string; pill: string }> = {
+  paid: { text: 'Paid', pill: 'pill-ok' },
+  scheduled: { text: 'Due', pill: 'pill-warn' },
+  awaiting_payment: { text: 'Link open', pill: 'pill-warn' },
+  waived: { text: 'Waived', pill: 'pill-ok' },
+  void: { text: 'Superseded', pill: 'pill-warn' },
+  refunded: { text: 'Refunded', pill: 'pill-bad' },
+};
 
 const manilaDate = (iso: string) =>
   new Intl.DateTimeFormat('en-PH', {
@@ -312,7 +329,7 @@ function PersonRow({
 }
 
 function PersonHistory({ detail }: { detail: PersonDetail }) {
-  const { person, orders, registrations, bookings, enquiries } = detail;
+  const { person, orders, registrations, bookings, enquiries, money: totals } = detail;
   const nothing =
     orders.length === 0 && registrations.length === 0 && bookings.length === 0 && enquiries.length === 0;
 
@@ -329,6 +346,24 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
         </p>
       )}
 
+      {/* The money questions, above the records that answer them in detail.
+          Only rendered when a plan or a refund is actually in play — a row of
+          zeroes over one paid course order is noise. */}
+      {(totals.registrations_outstanding_centavos > 0 ||
+        totals.registrations_overdue_centavos > 0 ||
+        totals.refunds_owed_centavos > 0) && (
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          <Figure label="Paid on plans" value={money(totals.registrations_paid_centavos)} />
+          <Figure label="Still owed" value={money(totals.registrations_outstanding_centavos)} />
+          {totals.registrations_overdue_centavos > 0 && (
+            <Figure label="Overdue" value={money(totals.registrations_overdue_centavos)} bad />
+          )}
+          {totals.refunds_owed_centavos > 0 && (
+            <Figure label="Refund owed" value={money(totals.refunds_owed_centavos)} bad />
+          )}
+        </div>
+      )}
+
       {nothing && <p className="small muted" style={{ margin: 0 }}>No records to show.</p>}
 
       <Section title="Course orders" count={orders.length}>
@@ -336,7 +371,11 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
           <Line
             key={o.id}
             left={o.products?.name ?? 'Course order'}
-            sub={`${manilaDate(o.created_at)} · ${o.status.replace(/_/g, ' ')}`}
+            sub={
+              `${manilaDate(o.created_at)} · ${o.status.replace(/_/g, ' ')}` +
+              (o.paymongo_payment_id ? ` · ${o.paymongo_payment_id}` : '')
+            }
+            note={o.error_detail ?? undefined}
             right={money(o.amount_centavos, o.currency)}
           />
         ))}
@@ -344,22 +383,65 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
 
       <Section title="Event registrations" count={registrations.length}>
         {registrations.map((r) => (
-          <Line
-            key={r.id}
-            left={r.events?.title ?? 'Event'}
-            sub={
-              `Seat ${r.seat_no} · ${r.plan_name} · ${r.status.replace(/_/g, ' ')}` +
-              // Worth surfacing: the same email can be the payer on one row and
-              // the attendee on another, and the distinction changes who to
-              // contact about money versus who to contact about the retreat.
-              (r.registrant_email.toLowerCase() === person.email
-                ? r.buyer_email.toLowerCase() === person.email
-                  ? ''
-                  : ' · attending, paid by someone else'
-                : ' · paid for someone else')
-            }
-            right={money(r.total_centavos, r.currency)}
-          />
+          <div key={r.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block' }}>{r.events?.title ?? 'Event'}</span>
+                <span className="small muted">
+                  {`Seat ${r.seat_no} · ${r.plan_name} · ${r.status.replace(/_/g, ' ')}` +
+                    // The same email can be the payer on one row and the
+                    // attendee on another, and the distinction changes who to
+                    // contact about money versus who to contact about the retreat.
+                    (r.registrant_email.toLowerCase() === person.email
+                      ? r.buyer_email.toLowerCase() === person.email
+                        ? ''
+                        : ' · attending, paid by someone else'
+                      : ' · paid for someone else')}
+                </span>
+              </span>
+              <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                <span style={{ display: 'block' }}>{money(r.total_centavos, r.currency)}</span>
+                {r.outstanding_centavos > 0 && (
+                  <span className="small muted">
+                    {money(r.paid_centavos, r.currency)} paid ·{' '}
+                    {money(r.outstanding_centavos, r.currency)} left
+                  </span>
+                )}
+              </span>
+            </div>
+
+            {/* The schedule itself, shown even when fully paid: "which of the
+                four cleared, and when" is the question a single total can
+                never answer. */}
+            {r.charges.length > 1 && (
+              <div style={{ display: 'grid', gap: 2, margin: '8px 0 0', paddingLeft: 12 }}>
+                {r.charges.map((c) => (
+                  <ChargeLine key={c.id} charge={c} />
+                ))}
+              </div>
+            )}
+
+            {r.overdue_count > 0 ? (
+              <p className="small" style={{ margin: '6px 0 0', color: 'var(--danger-fg)' }}>
+                {r.overdue_count} payment{r.overdue_count === 1 ? '' : 's'} overdue —{' '}
+                {money(r.overdue_centavos, r.currency)}.
+              </p>
+            ) : r.next_due ? (
+              <p className="small muted" style={{ margin: '6px 0 0' }}>
+                Next: {r.next_due.label} · {money(r.next_due.amount_centavos, r.currency)} due{' '}
+                {manilaDate(r.next_due.due_at)}.
+              </p>
+            ) : null}
+
+            {r.refund_centavos != null && r.refund_centavos > 0 && (
+              <p className="small" style={{ margin: '6px 0 0' }}>
+                Refund {money(r.refund_centavos, r.currency)}{' '}
+                {r.refunded_at
+                  ? `sent ${manilaDate(r.refunded_at)}${r.refund_reference ? ` · ${r.refund_reference}` : ''}`
+                  : '— owed, not yet sent'}
+              </p>
+            )}
+          </div>
         ))}
       </Section>
 
@@ -368,7 +450,18 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
           <Line
             key={b.id}
             left={b.facilitators?.display_name ?? 'Session'}
-            sub={`${manilaDate(b.starts_at)} · ${b.status.replace(/_/g, ' ')}`}
+            sub={
+              `${manilaDate(b.starts_at)} · ${b.status.replace(/_/g, ' ')}` +
+              (b.paymongo_payment_id ? ` · ${b.paymongo_payment_id}` : '')
+            }
+            note={
+              b.refund_centavos != null && b.refund_centavos > 0
+                ? `Refund ${money(b.refund_centavos, b.currency)} ` +
+                  (b.refunded_at
+                    ? `sent ${manilaDate(b.refunded_at)}${b.refund_reference ? ` · ${b.refund_reference}` : ''}`
+                    : '— owed, not yet sent')
+                : undefined
+            }
             right={money(b.price_centavos, b.currency)}
           />
         ))}
@@ -379,6 +472,53 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
           <Line key={e.id} left={e.forms?.name ?? 'Form'} sub={manilaDate(e.created_at)} right="" />
         ))}
       </Section>
+    </div>
+  );
+}
+
+function Figure({ label, value, bad }: { label: string; value: string; bad?: boolean }) {
+  return (
+    <span>
+      <span className="small muted" style={{ display: 'block' }}>
+        {label}
+      </span>
+      <strong style={bad ? { color: 'var(--danger-fg)' } : undefined}>{value}</strong>
+    </span>
+  );
+}
+
+/**
+ * One instalment: what it is, when it was due, and what actually happened.
+ *
+ * Overdue is derived here rather than trusted from `flagged_at`, which is only
+ * set once the nightly sweep has run — a payment that fell due this morning is
+ * late on the screen the moment it is late in fact.
+ */
+function ChargeLine({ charge }: { charge: PersonCharge }) {
+  const badge = CHARGE_LABELS[charge.status];
+  const overdue =
+    (charge.status === 'scheduled' || charge.status === 'awaiting_payment') &&
+    Date.parse(charge.due_at) < Date.now();
+
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+      <span className="small" style={{ minWidth: 0 }}>
+        <span className={`pill ${overdue ? 'pill-bad' : badge.pill}`} style={{ marginRight: 6 }}>
+          {overdue ? 'Overdue' : badge.text}
+        </span>
+        {charge.seq}. {charge.label}
+        {charge.is_deposit && ' (deposit)'}
+      </span>
+      <span className="small muted" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {money(charge.amount_centavos, charge.currency)} ·{' '}
+        {charge.status === 'paid' && charge.paid_at
+          ? `paid ${manilaDate(charge.paid_at)}` +
+            (charge.paid_method ? ` (${charge.paid_method.replace(/_/g, ' ')})` : '') +
+            (charge.receipt_no ? ` · ${charge.receipt_no}` : '')
+          : charge.status === 'void'
+            ? charge.void_reason ?? 'superseded'
+            : `due ${manilaDate(charge.due_at)}`}
+      </span>
     </div>
   );
 }
@@ -403,7 +543,17 @@ function Section({
   );
 }
 
-function Line({ left, sub, right }: { left: string; sub: string; right: string }) {
+function Line({
+  left,
+  sub,
+  right,
+  note,
+}: {
+  left: string;
+  sub: string;
+  right: string;
+  note?: string;
+}) {
   return (
     <div
       style={{
@@ -417,6 +567,11 @@ function Line({ left, sub, right }: { left: string; sub: string; right: string }
       <span style={{ minWidth: 0 }}>
         <span style={{ display: 'block' }}>{left}</span>
         <span className="small muted">{sub}</span>
+        {note && (
+          <span className="small" style={{ display: 'block' }}>
+            {note}
+          </span>
+        )}
       </span>
       {right && <span style={{ whiteSpace: 'nowrap' }}>{right}</span>}
     </div>
