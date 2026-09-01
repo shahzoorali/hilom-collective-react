@@ -418,7 +418,7 @@ function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
           <Link className="btn btn-accent stretched-link" to={`/events/${event.id}/register`}>
             Register
           </Link>
-        ) : event.link_url && event.link_label ? (
+        ) : !past && event.link_url && event.link_label ? (
           <CtaLink
             value={{ label: event.link_label, href: event.link_url, variant: 'btn-primary' }}
             extraClass="stretched-link"
