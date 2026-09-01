@@ -1,6 +1,7 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { currentUser, login, logout } from '../lib/auth';
+import { MOODLE_URL } from '../config';
 import hilomLogo from '../assets/hilom-logo.png';
 import { useMenus } from '../cms/useMenus';
 import type { MenuLink } from '../lib/cms';
@@ -74,6 +75,15 @@ function UserMenu({ email }: { email: string }) {
               {item.label}
             </NavLink>
           ))}
+          <a
+            href={`${MOODLE_URL}/my/`}
+            target="_blank"
+            rel="noreferrer"
+            role="menuitem"
+            className="user-menu-item"
+          >
+            Hilom Learning Hub
+          </a>
           <button type="button" className="user-menu-item" role="menuitem" onClick={logout}>
             Log out
           </button>
