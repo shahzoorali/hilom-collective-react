@@ -1070,3 +1070,46 @@ export const adminListPeople = (
 
 export const adminGetPerson = (adminKey: string, email: string) =>
   apiFetch<PersonDetail>(`/admin/people/${encodeURIComponent(email)}`, adminInit(adminKey));
+
+// --- Cognito user pool (Admin → Accounts) ---
+//
+// A read of the pool itself, so accounts that have never transacted — and are
+// therefore absent from People — still have somewhere to be seen. Read-only:
+// the backend grants no Cognito write actions.
+
+export interface CognitoAccount {
+  username: string;
+  sub: string | null;
+  email: string | null;
+  email_verified: boolean;
+  name: string | null;
+  /** CONFIRMED, UNCONFIRMED, FORCE_CHANGE_PASSWORD, RESET_REQUIRED, … */
+  status: string | null;
+  enabled: boolean;
+  created_at: string | null;
+  last_modified_at: string | null;
+}
+
+export interface CognitoAccountDetail {
+  user: CognitoAccount & { attributes: { name: string; value: string }[] };
+  groups: { name: string; description: string | null }[];
+}
+
+export const adminListCognitoUsers = (
+  adminKey: string,
+  params: { q?: string; token?: string } = {},
+) => {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v) as [string, string][],
+  ).toString();
+  return apiFetch<{ users: CognitoAccount[]; nextToken: string | null; scope: string }>(
+    `/admin/cognito/users${qs ? `?${qs}` : ''}`,
+    adminInit(adminKey),
+  );
+};
+
+export const adminGetCognitoUser = (adminKey: string, username: string) =>
+  apiFetch<CognitoAccountDetail>(
+    `/admin/cognito/users/${encodeURIComponent(username)}`,
+    adminInit(adminKey),
+  );

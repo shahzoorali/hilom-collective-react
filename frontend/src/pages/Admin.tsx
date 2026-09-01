@@ -13,6 +13,7 @@ import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
 import RegistrationsTab from './admin/RegistrationsTab';
 import PeopleTab from './admin/PeopleTab';
+import CognitoUsersTab from './admin/CognitoUsersTab';
 import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
 import { MediaGrid } from './admin/MediaLibrary';
@@ -40,6 +41,9 @@ const NAV_GROUPS = [
       // Last in the group because it is the read across the four above it,
       // not a fifth thing alongside them.
       { label: 'People', path: 'people', icon: '👥' },
+      // People derived from transactions; Accounts is the raw Cognito pool,
+      // including sign-ups that have never transacted.
+      { label: 'Accounts', path: 'accounts', icon: '🔑' },
     ],
   },
   {
@@ -292,6 +296,7 @@ export default function Admin() {
           <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
           <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
           <Route path="people" element={<PeopleTab adminKey={adminKey} />} />
+          <Route path="accounts" element={<CognitoUsersTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>

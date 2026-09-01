@@ -91,6 +91,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // The cross-source people directory. Read-only, and no SES grant: it never
     // contacts anybody, it only says who there is to contact.
     const adminPeople = makeFn('AdminPeopleFn', 'handlers/admin-people.ts', 'handler');
+    // The user pool itself — the accounts People cannot show because they have
+    // no Postgres row yet. Read-only; the IAM policy below grants only list/get.
+    const adminCognito = makeFn('AdminCognitoFn', 'handlers/admin-cognito.ts', 'handler');
 
     // ---- grants ----
     for (const fn of [
@@ -105,6 +108,22 @@ export class HilomMarketplaceStack extends cdk.Stack {
     adminKeySecret.grantRead(adminFacilitators);
     adminKeySecret.grantRead(adminRegistrations);
     adminKeySecret.grantRead(adminPeople);
+    adminKeySecret.grantRead(adminCognito);
+
+    // Reads the pool's region and id from the shared Cognito secret, then lists
+    // and gets users. No write actions — see the header comment in
+    // admin-cognito.ts for why this screen stays read-only.
+    cognitoSecret.grantRead(adminCognito);
+    adminCognito.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'cognito-idp:ListUsers',
+          'cognito-idp:AdminGetUser',
+          'cognito-idp:AdminListGroupsForUser',
+        ],
+        resources: [cognitoUserPoolArn],
+      }),
+    );
 
     // Booking creation and event registration both open a PayMongo checkout
     // session, exactly as course checkout does. Grant and env var travel
@@ -265,6 +284,11 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/people.csv', [GET]],
       ['/admin/people', [GET]],
       ['/admin/people/{email}', [GET]],
+    ]);
+
+    attach(adminCognito, 'AdminCognitoInt', [
+      ['/admin/cognito/users', [GET]],
+      ['/admin/cognito/users/{username}', [GET]],
     ]);
 
     attach(eventRegistrations, 'EventRegistrationsInt', [
