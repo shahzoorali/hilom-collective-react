@@ -293,7 +293,7 @@ export interface FacilitatorApplication {
 }
 
 export const applyAsFacilitator = (body: FacilitatorApplication) =>
-  apiFetch<{ status: string; alreadyApplied?: boolean }>('/facilitators/apply', {
+  apiFetch<{ status: string; alreadyApplied?: boolean; reapplied?: boolean }>('/facilitators/apply', {
     method: 'POST',
     headers: jsonAuthHeaders(),
     body: JSON.stringify(body),

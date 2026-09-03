@@ -185,6 +185,24 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
  * The practical consequence for review: an `applied` row has no credentials and
  * no scope note, and that is now normal rather than a red flag. Both are
  * checked before Publish instead — see the checklist in FacilitatorsTab.
+ *
+ * ## Re-applying after a rejection
+ *
+ * A `rejected` applicant is allowed back in. Rejection is not always final —
+ * Hilom sometimes rejects with a reason and asks the person to come back once
+ * it is addressed — so the door has to stay open.
+ *
+ * For now that re-application is a *fresh* one: it overwrites the whole row
+ * and resets the status to `applied`. The better flow — come back to a
+ * pre-filled form and change only what was flagged — does not exist yet, and
+ * building the wrong half of it first (letting someone edit a rejected
+ * application in place while an admin still sees the old one) would be worse
+ * than starting over. `admin_notes` is deliberately kept, so the reviewer of
+ * the second attempt can still see why the first was turned down.
+ *
+ * Every other status — still queued, approved, live, suspended — is left to
+ * the admin flow to move, and a second submission just reports the current
+ * one.
  */
 async function apply(
   user: { email: string; sub: string; givenName?: string; familyName?: string },
@@ -194,11 +212,11 @@ async function apply(
 
   const { data: existing, error: existingError } = await supabase
     .from('facilitators')
-    .select('id, status')
+    .select('id, status, cognito_sub')
     .or(`cognito_sub.eq.${user.sub},email.eq.${user.email}`)
-    .maybeSingle<{ id: string; status: string }>();
+    .maybeSingle<{ id: string; status: string; cognito_sub: string | null }>();
   if (existingError) throw existingError;
-  if (existing) {
+  if (existing && existing.status !== 'rejected') {
     return ok({ alreadyApplied: true, status: existing.status });
   }
 
@@ -207,6 +225,31 @@ async function apply(
     display_name:
       body.display_name ?? [user.givenName, user.familyName].filter(Boolean).join(' ') ?? user.email,
   });
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from('facilitators')
+      .update({
+        ...application,
+        // Links an admin-entered row (cognito_sub null) to the account the
+        // first time its owner signs in and re-applies; leaves an existing
+        // link alone.
+        cognito_sub: existing.cognito_sub ?? user.sub,
+        status: 'applied',
+        applied_at: new Date().toISOString(),
+        approved_at: null,
+      })
+      .eq('id', existing.id)
+      // Re-assert the status: if an admin moved this row out of `rejected`
+      // between the read above and this write, the update matches nothing and
+      // we report the current state rather than quietly reopening it.
+      .eq('status', 'rejected')
+      .select('id, slug, status')
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return ok({ alreadyApplied: true, status: 'applied' });
+    return ok({ facilitator: data, status: 'applied', reapplied: true });
+  }
 
   const base = slugify(application.display_name) || 'facilitator';
   const slug = await findAvailableFacilitatorSlug(normalizeSlug(base), async (candidate) => {

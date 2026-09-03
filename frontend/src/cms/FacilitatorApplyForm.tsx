@@ -76,7 +76,9 @@ export default function FacilitatorApplyForm() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ alreadyApplied?: boolean; status: string } | null>(null);
+  const [result, setResult] = useState<
+    { alreadyApplied?: boolean; reapplied?: boolean; status: string } | null
+  >(null);
 
   // Re-checking here rather than trusting a stale closure: coming back from
   // sign-in re-renders this component fresh, so this only ever runs once
@@ -187,10 +189,14 @@ export default function FacilitatorApplyForm() {
             </>
           ) : (
             <>
-              <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Application sent</h2>
+              <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>
+                {result.reapplied ? 'Application resubmitted' : 'Application sent'}
+              </h2>
               <p style={{ marginBottom: 0 }}>
-                Thank you — we'll read through what you shared and follow up by email. Once
-                approved, you'll get a dashboard where you'll add your credentials, scope of
+                {result.reapplied
+                  ? "Thanks for coming back — we'll take another look and follow up by email."
+                  : "Thank you — we'll read through what you shared and follow up by email."}{' '}
+                Once approved, you'll get a dashboard where you'll add your credentials, scope of
                 practice and the rest of your public profile before you go live.
               </p>
             </>

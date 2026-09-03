@@ -175,17 +175,17 @@ describe('validateApplication — referral source', () => {
 
 describe('validateApplication — what an applicant may not set', () => {
   it('ignores a status in the body', () => {
-    const a = validateApplication({ ...base, status: 'published' }) as Record<string, unknown>;
+    const a = validateApplication({ ...base, status: 'published' }) as unknown as Record<string, unknown>;
     assert.equal(a.status, undefined, 'an applicant must not be able to publish themselves');
   });
 
   it('ignores a platform fee in the body', () => {
-    const a = validateApplication({ ...base, platform_fee_bps: 0 }) as Record<string, unknown>;
+    const a = validateApplication({ ...base, platform_fee_bps: 0 }) as unknown as Record<string, unknown>;
     assert.equal(a.platform_fee_bps, undefined, 'an applicant must not set their own commission');
   });
 
   it('ignores an email in the body — the token owns that', () => {
-    const a = validateApplication({ ...base, email: 'someone@else.test' }) as Record<string, unknown>;
+    const a = validateApplication({ ...base, email: 'someone@else.test' }) as unknown as Record<string, unknown>;
     assert.equal(a.email, undefined);
   });
 
@@ -210,7 +210,7 @@ describe('validateApplication — the profile fields it no longer collects', () 
       credentials: ['MA Counselling Psychology'],
       specialties: ['Nervous system regulation'],
       scope_note: 'I am not a licensed therapist.',
-    }) as Record<string, unknown>;
+    }) as unknown as Record<string, unknown>;
 
     assert.equal(a.credentials, undefined);
     assert.equal(a.specialties, undefined);
