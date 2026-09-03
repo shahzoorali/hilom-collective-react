@@ -16,11 +16,17 @@ import { useEffect, useState } from 'react';
 import {
   createMyBlackout,
   deleteMyBlackout,
+  formatInZone,
   getMyAvailability,
   listMyBlackouts,
+  listMyServices,
+  previewMySlots,
   saveMyAvailability,
+  type AvailabilityFinding,
   type AvailabilityWindow,
   type Blackout,
+  type FacilitatorService,
+  type SlotOption,
 } from '../../lib/booking';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -35,6 +41,133 @@ function toTimeValue(minutes: number): string {
 function fromTimeValue(value: string): number {
   const [h, m] = value.split(':').map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
+}
+
+/**
+ * What a client would actually be offered, for one service, over two weeks.
+ *
+ * The reason this screen needs it: a facilitator sets weekly hours here, then
+ * a buffer, a minimum notice, an advance window and a daily cap over in
+ * Services — four interacting rules on top of this grid — and until now had no
+ * way to see the result. The failure mode is silent. Twelve hours' notice plus
+ * a two-hour buffer plus one session a day can produce an entirely empty
+ * calendar, and the only symptom is that the bookings stop coming.
+ *
+ * When it is empty, the server says why (see previewAvailability in
+ * backend/src/lib/scheduling.ts — the reasons are found by re-running the real
+ * engine with one rule lifted, so they cannot drift from what it actually
+ * does).
+ */
+function SlotPreview({ timezone }: { timezone: string }) {
+  const [services, setServices] = useState<FacilitatorService[] | null>(null);
+  const [serviceId, setServiceId] = useState<string>('');
+  const [slots, setSlots] = useState<SlotOption[] | null>(null);
+  const [findings, setFindings] = useState<AvailabilityFinding[]>([]);
+  const [isLive, setIsLive] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    listMyServices()
+      .then((list) => {
+        setServices(list);
+        // Default to the first service rather than making them choose before
+        // they can see anything — most facilitators have one or two.
+        if (list.length > 0) setServiceId((current) => current || list[0].id);
+      })
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  useEffect(() => {
+    if (!serviceId) return;
+    let live = true;
+    setLoading(true);
+    setError(null);
+    const from = new Date();
+    const to = new Date(from.getTime() + 14 * 86_400_000);
+    previewMySlots(serviceId, from, to)
+      .then((r) => {
+        if (!live) return;
+        setSlots(r.slots);
+        setFindings(r.findings);
+        setIsLive(r.isLive);
+      })
+      .catch((err: Error) => live && setError(err.message))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [serviceId]);
+
+  if (services !== null && services.length === 0) return null;
+
+  // Grouped by the facilitator's own local day, because that is the unit they
+  // think in — "am I offering anything on Tuesday?" is the question.
+  const byDay = new Map<string, SlotOption[]>();
+  for (const slot of slots ?? []) {
+    const day = formatInZone(slot.startsAt, timezone, { dateStyle: 'full', timeStyle: undefined });
+    byDay.set(day, [...(byDay.get(day) ?? []), slot]);
+  }
+
+  return (
+    <>
+      <h2 style={{ marginTop: '2.5rem' }}>What clients see</h2>
+      <p className="small muted">
+        The next two weeks of bookable times, after your weekly hours, buffer, notice period,
+        booking window, daily limit, time off and existing sessions have all been applied.
+      </p>
+
+      <label className="field" style={{ maxWidth: 420 }}>
+        <span>For which session</span>
+        <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
+          {(services ?? []).map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.title}
+              {s.is_active ? '' : ' (hidden)'}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {error && <div className="alert alert-error">{error}</div>}
+      {loading && <div className="spinner" aria-label="Loading" />}
+
+      {!loading && !isLive && (
+        <div className="alert alert-info">
+          These times are correct, but nobody can book them yet — the service is hidden, or your
+          profile is not published.
+        </div>
+      )}
+
+      {!loading && findings.length > 0 && (
+        <div className="alert alert-warning">
+          <strong>No bookable times in the next two weeks.</strong>
+          <ul className="small" style={{ margin: '0.5rem 0 0', paddingLeft: '1.1rem' }}>
+            {findings.map((f) => (
+              <li key={f.rule}>{f.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!loading && slots !== null && slots.length === 0 && findings.length === 0 && (
+        <p className="muted">No bookable times in the next two weeks.</p>
+      )}
+
+      {[...byDay.entries()].map(([day, daySlots]) => (
+        <div key={day} className="card" style={{ marginBottom: '0.5rem' }}>
+          <strong className="small">{day}</strong>
+          <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+            {daySlots.map((slot) => (
+              <span key={slot.startsAt} className="pill">
+                {formatInZone(slot.startsAt, timezone, { dateStyle: undefined, timeStyle: 'short' })}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
 }
 
 export default function AvailabilityTab({ timezone }: { timezone: string }) {
@@ -230,6 +363,9 @@ export default function AvailabilityTab({ timezone }: { timezone: string }) {
           </div>
         </div>
       ))}
+
+      {/* Last, deliberately: it is the answer to everything above it. */}
+      <SlotPreview timezone={timezone} />
     </>
   );
 }

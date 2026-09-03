@@ -32,7 +32,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, json, notFound, badRequest, unauthorized, serverError } from '../lib/http.js';
 import { requireUser, requireGroup, UnauthorizedError } from '../lib/auth.js';
-import { SERVICE_PUBLIC_COLUMNS } from '../lib/scheduling.js';
+import {
+  SERVICE_PUBLIC_COLUMNS,
+  previewAvailability,
+  type ServiceRow,
+  type FacilitatorSchedulingRow,
+} from '../lib/scheduling.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
 import { sendBookingCancelled } from '../lib/booking-email.js';
 import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
@@ -94,6 +99,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (path.includes('/facilitator/services')) {
       return await services(supabase, facilitator, event, method);
+    }
+
+    if (path.endsWith('/facilitator/slot-preview')) {
+      if (method === 'GET') return await slotPreview(supabase, facilitator, event);
+      return badRequest(`Unsupported method ${method}`);
     }
 
     if (path.includes('/facilitator/availability')) {
@@ -277,6 +287,55 @@ async function apply(
   return ok({ facilitator: data, status: 'applied' });
 }
 
+/**
+ * Confirmed sessions that fall inside a vacation window.
+ *
+ * `vacation_until` only ever stopped *new* bookings — the slot engine reads it
+ * as a floor on the earliest bookable instant. Sessions already in the diary
+ * when someone sets it stayed exactly where they were, silently, and the
+ * facilitator had to notice each one for themselves. This is the half of the
+ * feature that was missing.
+ *
+ * Deliberately reports rather than cancels. Cancelling on the facilitator's
+ * behalf would refund clients in full and empty a week of their calendar off
+ * the back of a date field — a destructive act triggered by a setting nobody
+ * would expect to be destructive. What they need is to be told, with enough
+ * detail to decide session by session.
+ *
+ * Bounded at 50: the banner says "you have N sessions", and nobody is going to
+ * read the hundredth row of a list they are about to act on one at a time.
+ */
+async function vacationConflicts(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  vacationUntil: string | null,
+  now: Date = new Date(),
+): Promise<{ id: string; starts_at: string; client_name: string | null; client_email: string; title: string }[]> {
+  if (!vacationUntil) return [];
+  const until = new Date(vacationUntil);
+  // A window that has already closed is not a conflict, it is history.
+  if (Number.isNaN(until.getTime()) || until <= now) return [];
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('id, starts_at, client_name, client_email, facilitator_services(title)')
+    .eq('facilitator_id', facilitatorId)
+    .eq('status', 'confirmed')
+    .gte('starts_at', now.toISOString())
+    .lt('starts_at', until.toISOString())
+    .order('starts_at')
+    .limit(50);
+
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id as string,
+    starts_at: row.starts_at as string,
+    client_name: row.client_name as string | null,
+    client_email: row.client_email as string,
+    title: row.facilitator_services?.title ?? 'Session',
+  }));
+}
+
 async function updateProfile(
   supabase: SupabaseClient,
   facilitator: FacilitatorRow,
@@ -301,7 +360,82 @@ async function updateProfile(
     .maybeSingle();
 
   if (error) throw error;
-  return ok({ facilitator: data });
+
+  // Returned with the save rather than behind a separate fetch: the moment a
+  // facilitator sets a vacation date is exactly the moment "you have three
+  // sessions in that window" is useful, and a second round trip is a second
+  // chance to miss it.
+  const conflicts = await vacationConflicts(supabase, facilitator.id, profile.vacation_until);
+
+  return ok({ facilitator: data, vacationConflicts: conflicts });
+}
+
+/**
+ * The slots a client would actually be offered, and why there are none.
+ *
+ * The facilitator's own view of `GET /facilitators/{slug}/availability`, with
+ * two deliberate differences. It does not require the profile to be
+ * `published` or the service to be `is_active` — the whole point is to check
+ * the configuration *before* going live, which is exactly when the public
+ * endpoint refuses to answer. And it returns findings alongside the slots, so
+ * an empty week comes with the reason rather than as a silent shrug.
+ *
+ * Scoped to the caller's own facilitator row, so this is not a way to inspect
+ * anyone else's diary.
+ */
+async function slotPreview(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const params = event.queryStringParameters ?? {};
+  const serviceId = params.serviceId?.trim();
+  if (!serviceId) return badRequest('Missing serviceId');
+
+  const now = new Date();
+  const from = params.from ? new Date(params.from) : now;
+  const to = params.to ? new Date(params.to) : new Date(now.getTime() + 14 * 86_400_000);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    return badRequest('from and to must be ISO-8601 dates');
+  }
+  if (to <= from) return badRequest('to must be after from');
+  // Same bound as the public endpoint: the engine projects weekly rules day by
+  // day, and an unbounded range is an unbounded loop.
+  if (to.getTime() - from.getTime() > 60 * 86_400_000) {
+    return badRequest('Range must not exceed 60 days');
+  }
+
+  const { data: service, error } = await supabase
+    .from('facilitator_services')
+    .select(SERVICE_PUBLIC_COLUMNS)
+    .eq('id', serviceId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<ServiceRow>();
+  if (error) throw error;
+  if (!service) return notFound('Service not found');
+
+  const { data: scheduling, error: schedulingError } = await supabase
+    .from('facilitators')
+    .select('id, timezone, vacation_until, status')
+    .eq('id', facilitator.id)
+    .maybeSingle<FacilitatorSchedulingRow>();
+  if (schedulingError) throw schedulingError;
+  if (!scheduling) return notFound('Facilitator not found');
+
+  const preview = await previewAvailability(supabase, scheduling, service, from, to, now);
+
+  return ok({
+    timezone: scheduling.timezone,
+    durationMinutes: service.duration_minutes,
+    // `blockEndsAt` stays internal here as it does on the public endpoint —
+    // the preview must show what a client sees, buffer included in the gaps
+    // between slots rather than stated as a longer session.
+    slots: preview.slots.map((slot) => ({ startsAt: slot.startsAt, endsAt: slot.endsAt })),
+    findings: preview.findings,
+    // Flagged rather than inferred from `status`: a service can be inactive on
+    // a published profile, and both cases mean "clients cannot see this yet".
+    isLive: scheduling.status === 'published' && service.is_active,
+  });
 }
 
 async function services(

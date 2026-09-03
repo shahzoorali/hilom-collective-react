@@ -8,7 +8,13 @@
  * book, which reads as a broken site rather than as a race.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { computeSlots, isBookableSlot, type Slot, type SlotServiceRules } from './slots.js';
+import {
+  computeSlots,
+  isBookableSlot,
+  type ComputeSlotsInput,
+  type Slot,
+  type SlotServiceRules,
+} from './slots.js';
 import { HOLD_MINUTES } from './booking-domain.js';
 
 /**
@@ -234,4 +240,216 @@ export async function releaseExpiredHolds(
 /** The instant a hold taken now should lapse. */
 export function holdExpiry(now: Date = new Date()): string {
   return new Date(now.getTime() + HOLD_MINUTES * 60_000).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// Preview and diagnosis — what a client would actually see
+// ---------------------------------------------------------------------------
+
+/**
+ * One reason the facilitator's own rules produced nothing.
+ *
+ * `rule` names the setting to go and change; `message` is what the dashboard
+ * shows. Both are needed: the message has to be readable, and the screen wants
+ * to be able to link straight at the field.
+ */
+export interface AvailabilityFinding {
+  rule:
+    | 'no_weekly_hours'
+    | 'windows_too_short'
+    | 'vacation'
+    | 'min_notice'
+    | 'max_advance'
+    | 'blackouts'
+    | 'fully_booked'
+    | 'max_per_day';
+  message: string;
+}
+
+export interface AvailabilityPreview {
+  slots: Slot[];
+  /**
+   * Empty when there are slots. When there are none, the settings that —
+   * relaxed one at a time — would have produced some.
+   */
+  findings: AvailabilityFinding[];
+}
+
+/**
+ * The slots a client would see, plus why there are none.
+ *
+ * A facilitator configures four interacting rules (buffer, minimum notice,
+ * advance window, daily cap) on top of a weekly grid, a vacation date and a
+ * blackout list, and until now had no way to see the result. Misconfiguration
+ * was silent: 12 hours' notice plus a 2-hour buffer plus `max_per_day: 1`
+ * produces an empty calendar, and the only symptom is that bookings stop.
+ *
+ * The diagnosis works by *relaxation*, not by reasoning about the rules: run
+ * the real engine, and if it returns nothing, run it again with one constraint
+ * removed. If removing that constraint produces slots, it is the one standing
+ * in the way. This cannot drift out of step with the engine the way a
+ * hand-written explanation would — it is the same `computeSlots` deciding both
+ * the answer and the reason for it.
+ *
+ * More than one finding is normal and correct: two rules can each be
+ * sufficient on their own to empty the calendar, and fixing only the one we
+ * happened to name first would leave the facilitator exactly where they were.
+ */
+export async function previewAvailability(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorSchedulingRow,
+  service: ServiceRow,
+  from: Date,
+  to: Date,
+  now: Date = new Date(),
+): Promise<AvailabilityPreview> {
+  const pad = 86_400_000;
+  const context = await loadContext(
+    supabase,
+    facilitator.id,
+    new Date(from.getTime() - pad),
+    new Date(to.getTime() + pad),
+    now,
+  );
+
+  return diagnoseAvailability({
+    service: serviceRules(service),
+    ...context,
+    timezone: facilitator.timezone,
+    vacationUntil: facilitator.vacation_until ? new Date(facilitator.vacation_until) : null,
+    from,
+    to,
+    now,
+  });
+}
+
+/**
+ * The pure half of `previewAvailability`: everything except the database read.
+ *
+ * Split out so the diagnosis can be tested against hand-built rule sets — the
+ * whole point of it is to be right about *why* a particular combination of
+ * settings is empty, and that is not something a mocked Supabase client would
+ * tell us anything about.
+ *
+ * The method is *isolation*, not relaxation. The obvious approach — lift one
+ * rule at a time and see whether slots appear — is wrong whenever two rules are
+ * each enough to empty the week on their own: with both a vacation and a
+ * covering blackout in place, lifting either one still leaves nothing, so
+ * neither gets named and the facilitator is told nothing at all. So instead
+ * each rule is tested *alone*, against an otherwise fully permissive
+ * configuration. A rule that empties the week by itself is a rule worth
+ * naming, whatever else is also wrong — and fixing only one of them will not
+ * be enough, which is exactly what the list is there to say.
+ */
+export function diagnoseAvailability(input: ComputeSlotsInput): AvailabilityPreview {
+  const slots = computeSlots(input);
+  if (slots.length > 0) return { slots, findings: [] };
+
+  const findings: AvailabilityFinding[] = [];
+  const rules = input.service;
+  const { availability } = input;
+
+  if (availability.length === 0) {
+    findings.push({
+      rule: 'no_weekly_hours',
+      message: "You haven't set any weekly hours, so there is nothing to offer.",
+    });
+    // Nothing further can be said: every test below projects the same empty
+    // grid and would report no cause at all.
+    return { slots, findings };
+  }
+
+  // Everything optional switched off. If this is still empty then no
+  // *configurable* rule is to blame — the weekly grid itself cannot hold the
+  // session, or the requested range contains none of it.
+  const permissive: ComputeSlotsInput = {
+    ...input,
+    service: { ...rules, minNoticeMinutes: 0, maxAdvanceDays: 365, maxPerDay: null },
+    blackouts: [],
+    busy: [],
+    vacationUntil: null,
+  };
+
+  if (computeSlots(permissive).length === 0) {
+    const longestWindow = Math.max(...availability.map((w) => w.endMinute - w.startMinute));
+    if (rules.durationMinutes > longestWindow) {
+      findings.push({
+        rule: 'windows_too_short',
+        message:
+          `A ${rules.durationMinutes}-minute session does not fit in your longest weekly window, ` +
+          `which is ${longestWindow} minutes.`,
+      });
+    } else {
+      // The grid is fine but none of it falls in this period — a Monday-only
+      // facilitator previewing a range with no Monday in it.
+      findings.push({
+        rule: 'no_weekly_hours',
+        message: 'None of your weekly hours fall in this period.',
+      });
+    }
+    return { slots, findings };
+  }
+
+  /** Does this one rule, applied on its own, empty the period? */
+  const empties = (override: Partial<ComputeSlotsInput>) =>
+    computeSlots({ ...permissive, ...override }).length === 0;
+
+  if (input.vacationUntil && empties({ vacationUntil: input.vacationUntil })) {
+    findings.push({
+      rule: 'vacation',
+      message: 'Your away-until date covers this whole period — new bookings are paused.',
+    });
+  }
+
+  if (
+    rules.minNoticeMinutes > 0 &&
+    empties({ service: { ...permissive.service, minNoticeMinutes: rules.minNoticeMinutes } })
+  ) {
+    const hours = Math.round((rules.minNoticeMinutes / 60) * 10) / 10;
+    findings.push({
+      rule: 'min_notice',
+      message: `Your minimum notice of ${hours} hours pushes the first bookable time past this period.`,
+    });
+  }
+
+  if (empties({ service: { ...permissive.service, maxAdvanceDays: rules.maxAdvanceDays } })) {
+    findings.push({
+      rule: 'max_advance',
+      message: `Your booking window of ${rules.maxAdvanceDays} days ends before this period does.`,
+    });
+  }
+
+  if (input.blackouts.length > 0 && empties({ blackouts: input.blackouts })) {
+    findings.push({ rule: 'blackouts', message: 'Blackouts cover every open hour in this period.' });
+  }
+
+  if (input.busy.length > 0 && empties({ busy: input.busy })) {
+    findings.push({ rule: 'fully_booked', message: 'Every open hour in this period is already booked.' });
+  }
+
+  if (
+    rules.maxPerDay != null &&
+    // The cap only bites in combination with what is already booked, so this
+    // one is tested with the real diary rather than an empty one — otherwise a
+    // limit of 1 with nothing booked would look like the culprit.
+    empties({ service: { ...permissive.service, maxPerDay: rules.maxPerDay }, busy: input.busy })
+  ) {
+    findings.push({
+      rule: 'max_per_day',
+      message: `Your limit of ${rules.maxPerDay} session${rules.maxPerDay === 1 ? '' : 's'} a day is already met on every open day.`,
+    });
+  }
+
+  // Every rule passed in isolation, yet together they leave nothing. Say so
+  // rather than showing an empty explanation for an empty calendar.
+  if (findings.length === 0) {
+    findings.push({
+      rule: 'no_weekly_hours',
+      message:
+        'No single setting is responsible — your notice period, booking window, buffer, daily ' +
+        'limit, time off and existing sessions together leave no bookable time in this period.',
+    });
+  }
+
+  return { slots, findings };
 }

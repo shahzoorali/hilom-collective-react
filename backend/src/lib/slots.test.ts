@@ -14,6 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { computeSlots, isBookableSlot, type ComputeSlotsInput } from './slots.js';
+import { diagnoseAvailability, type AvailabilityPreview } from './scheduling.js';
 
 const MANILA = 'Asia/Manila'; // UTC+8, no DST
 
@@ -254,5 +255,103 @@ describe('isBookableSlot — the server-side re-check', () => {
         `${slot.startsAt} was offered but rejected by isBookableSlot`,
       );
     }
+  });
+});
+
+/**
+ * The availability diagnosis.
+ *
+ * This is the feature's whole value: a facilitator sets four interacting rules
+ * and gets an empty calendar with no explanation. The findings are derived by
+ * re-running this same engine with one rule lifted, so what these pin is that
+ * each rule is correctly identified as *sufficient on its own* to empty the
+ * week — including the case where two of them are.
+ */
+describe('diagnoseAvailability — why is my calendar empty?', () => {
+  const rules = (finding: AvailabilityPreview) => finding.findings.map((f) => f.rule);
+
+  it('says nothing when there are slots to show', () => {
+    const result = diagnoseAvailability(input());
+    assert.equal(result.slots.length, 3);
+    assert.deepEqual(result.findings, []);
+  });
+
+  it('names an empty weekly grid, and stops there', () => {
+    const result = diagnoseAvailability(input({ availability: [] }));
+    assert.deepEqual(rules(result), ['no_weekly_hours']);
+  });
+
+  it('names a session that cannot fit its own window', () => {
+    // A 4-hour session against a 3-hour window: no arrangement of the other
+    // rules could ever produce a slot.
+    const result = diagnoseAvailability(
+      input({ service: { durationMinutes: 240, bufferMinutes: 0, minNoticeMinutes: 0, maxAdvanceDays: 60, maxPerDay: null } }),
+    );
+    assert.deepEqual(rules(result), ['windows_too_short']);
+  });
+
+  it('names vacation', () => {
+    const result = diagnoseAvailability(input({ vacationUntil: new Date('2026-09-30T00:00:00Z') }));
+    assert.ok(rules(result).includes('vacation'));
+  });
+
+  it('names a notice period that swallows the range', () => {
+    const result = diagnoseAvailability(
+      input({
+        // The window is on Monday the 7th; asking on the 1st with 30 days'
+        // notice puts the first bookable instant well past it.
+        service: { durationMinutes: 60, bufferMinutes: 0, minNoticeMinutes: 30 * 24 * 60, maxAdvanceDays: 60, maxPerDay: null },
+      }),
+    );
+    assert.ok(rules(result).includes('min_notice'));
+  });
+
+  it('names an advance window that ends before the range does', () => {
+    const result = diagnoseAvailability(
+      input({
+        service: { durationMinutes: 60, bufferMinutes: 0, minNoticeMinutes: 0, maxAdvanceDays: 1, maxPerDay: null },
+      }),
+    );
+    assert.ok(rules(result).includes('max_advance'));
+  });
+
+  it('names blackouts that cover every open hour', () => {
+    const result = diagnoseAvailability(
+      input({ blackouts: [{ startsAt: '2026-09-06T00:00:00Z', endsAt: '2026-09-09T00:00:00Z' }] }),
+    );
+    assert.deepEqual(rules(result), ['blackouts']);
+  });
+
+  it('names a week that is simply fully booked', () => {
+    const result = diagnoseAvailability(
+      input({ busy: [{ startsAt: '2026-09-07T00:00:00Z', endsAt: '2026-09-08T00:00:00Z' }] }),
+    );
+    assert.deepEqual(rules(result), ['fully_booked']);
+  });
+
+  it('names a daily cap already met', () => {
+    const result = diagnoseAvailability(
+      input({
+        service: { durationMinutes: 60, bufferMinutes: 0, minNoticeMinutes: 0, maxAdvanceDays: 60, maxPerDay: 1 },
+        busy: [{ startsAt: '2026-09-07T01:00:00Z', endsAt: '2026-09-07T02:00:00Z' }],
+      }),
+    );
+    assert.ok(rules(result).includes('max_per_day'));
+  });
+
+  /**
+   * The case the relaxation approach exists for. Two rules each empty the week
+   * on their own; naming only the first would send the facilitator to fix one
+   * setting and find nothing had changed.
+   */
+  it('names every rule that is independently sufficient', () => {
+    const result = diagnoseAvailability(
+      input({
+        vacationUntil: new Date('2026-09-30T00:00:00Z'),
+        blackouts: [{ startsAt: '2026-09-06T00:00:00Z', endsAt: '2026-09-09T00:00:00Z' }],
+      }),
+    );
+    assert.ok(rules(result).includes('vacation'));
+    assert.ok(rules(result).includes('blackouts'));
   });
 });

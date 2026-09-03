@@ -11,7 +11,13 @@
  * not here.
  */
 import { useState } from 'react';
-import { updateMyFacilitatorProfile, type OwnProfile } from '../../lib/booking';
+import {
+  formatInZone,
+  updateMyFacilitatorProfile,
+  type OwnProfile,
+  type VacationConflict,
+} from '../../lib/booking';
+import { Link } from 'react-router-dom';
 import { YEARS_EXPERIENCE } from '../../lib/facilitator-intake';
 
 export default function ProfileTab({
@@ -47,6 +53,7 @@ export default function ProfileTab({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [conflicts, setConflicts] = useState<VacationConflict[]>([]);
 
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -95,8 +102,12 @@ export default function ProfileTab({
         vacation_until: draft.vacation_until ? `${draft.vacation_until}T23:59:59` : null,
         payout_details: { bank: draft.payout_bank, account: draft.payout_account },
       });
-      onSaved(saved);
+      onSaved(saved.facilitator);
       setNotice('Profile saved');
+      // Setting an away date does not move the sessions already inside it —
+      // see vacationConflicts in facilitator-portal.ts for why this reports
+      // rather than cancels. Told here because this is the moment they can act.
+      setConflicts(saved.vacationConflicts ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
     } finally {
@@ -115,6 +126,28 @@ export default function ProfileTab({
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
+
+      {conflicts.length > 0 && (
+        <div className="alert alert-warning">
+          <strong>
+            You have {conflicts.length} confirmed{' '}
+            {conflicts.length === 1 ? 'session' : 'sessions'} during your time off.
+          </strong>{' '}
+          New bookings are paused, but these were already in your diary — cancel or move each
+          one from <Link to="/facilitator/bookings">your bookings</Link>.
+          <ul className="small" style={{ margin: '0.5rem 0 0', paddingLeft: '1.1rem' }}>
+            {conflicts.map((c) => (
+              <li key={c.id}>
+                {formatInZone(c.starts_at, profile.timezone, {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                })}{' '}
+                — {c.title} with {c.client_name || c.client_email}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* The application form does not collect credentials or scope of
           practice — it is a triage form about what someone wants to build, not
@@ -277,6 +310,7 @@ export default function ProfileTab({
         />
         <small className="muted">
           Pauses all new bookings without touching your weekly hours. Clear it to come back.
+          Sessions already booked in that window stay put — we'll list them when you save.
         </small>
       </label>
 

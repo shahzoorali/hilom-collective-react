@@ -318,6 +318,9 @@ input:focus, select:focus, textarea:focus {
 .alert-error { background: var(--danger-bg); color: var(--danger-fg); border: 1px solid var(--danger-line); }
 .alert-info { background: var(--cream); color: var(--forest-dark); border: 1px solid #e6d7ac; }
 .alert-success { background: #eaf3e4; color: var(--forest-dark); border: 1px solid #c9dfba; }
+/* Amber, not red: these say "something needs your attention", not "something
+   broke". Used for the sessions sitting inside a facilitator's time off. */
+.alert-warning { background: #fdf3e2; color: #6b4708; border: 1px solid #ecd6a8; }
 
 /* status pill */
 .pill { font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px; }

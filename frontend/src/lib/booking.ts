@@ -379,12 +379,27 @@ export const getMyFacilitatorProfile = () =>
     (r) => r.facilitator,
   );
 
+/**
+ * A confirmed session that falls inside the facilitator's vacation window.
+ *
+ * Vacation mode only ever blocked *new* bookings; anything already in the
+ * diary stayed put, and nobody told the facilitator. The save returns these so
+ * the screen can.
+ */
+export interface VacationConflict {
+  id: string;
+  starts_at: string;
+  client_name: string | null;
+  client_email: string;
+  title: string;
+}
+
 export const updateMyFacilitatorProfile = (body: Record<string, unknown>) =>
-  apiFetch<{ facilitator: OwnProfile }>('/facilitator/me', {
+  apiFetch<{ facilitator: OwnProfile; vacationConflicts: VacationConflict[] }>('/facilitator/me', {
     method: 'PUT',
     headers: jsonAuthHeaders(),
     body: JSON.stringify(body),
-  }).then((r) => r.facilitator);
+  });
 
 // ---------------------------------------------------------------------------
 // Connected meeting accounts
@@ -490,6 +505,46 @@ export const deleteMyBlackout = (blackoutId: string) =>
     method: 'DELETE',
     headers: authHeaders(),
   });
+
+/**
+ * A setting that is, on its own, enough to empty the calendar.
+ *
+ * Diagnosed server-side by relaxation — see previewAvailability in
+ * backend/src/lib/scheduling.ts. `rule` is stable enough to branch on; the
+ * message is what to show.
+ */
+export interface AvailabilityFinding {
+  rule:
+    | 'no_weekly_hours'
+    | 'windows_too_short'
+    | 'vacation'
+    | 'min_notice'
+    | 'max_advance'
+    | 'blackouts'
+    | 'fully_booked'
+    | 'max_per_day';
+  message: string;
+}
+
+/**
+ * What a client would actually be offered for one of my services.
+ *
+ * Unlike `getAvailability`, this works on an unpublished profile and an
+ * inactive service — checking the configuration before going live is the whole
+ * point.
+ */
+export const previewMySlots = (serviceId: string, from: Date, to: Date) =>
+  apiFetch<{
+    timezone: string;
+    durationMinutes: number;
+    slots: SlotOption[];
+    findings: AvailabilityFinding[];
+    isLive: boolean;
+  }>(
+    `/facilitator/slot-preview?serviceId=${encodeURIComponent(serviceId)}` +
+      `&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
+    { headers: authHeaders() },
+  );
 
 export const listMyFacilitatorBookings = () =>
   apiFetch<{ bookings: Booking[]; timezone: string }>('/facilitator/bookings', {

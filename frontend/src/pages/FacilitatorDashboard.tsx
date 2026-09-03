@@ -39,6 +39,20 @@ const AvailabilityTab = lazy(() => import('./facilitator/AvailabilityTab'));
 const ProfileTab = lazy(() => import('./facilitator/ProfileTab'));
 const ConnectionsTab = lazy(() => import('./facilitator/ConnectionsTab'));
 
+/**
+ * Is this confirmed session inside the facilitator's vacation window?
+ *
+ * `vacation_until` blocks new bookings but leaves existing ones alone (see
+ * vacationConflicts in facilitator-portal.ts — reporting is deliberate, and
+ * auto-cancelling a week of sessions off a date field is not). So the dashboard
+ * has to be the thing that keeps saying so, not just the save that set it.
+ */
+function inVacation(booking: Booking, vacationUntil: string | null | undefined): boolean {
+  if (!vacationUntil || booking.status !== 'confirmed') return false;
+  const startsAt = new Date(booking.starts_at).getTime();
+  return startsAt > Date.now() && startsAt < new Date(vacationUntil).getTime();
+}
+
 const TABS = [
   { label: 'Overview', path: 'overview', icon: '📊' },
   { label: 'Bookings', path: 'bookings', icon: '📅' },
@@ -162,7 +176,7 @@ export default function FacilitatorDashboard() {
           <Routes>
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<Overview profile={profile} />} />
-            <Route path="bookings" element={<BookingsTab />} />
+            <Route path="bookings" element={<BookingsTab profile={profile} />} />
             <Route path="services" element={<ServicesTab />} />
             <Route path="availability" element={<AvailabilityTab timezone={profile.timezone} />} />
             <Route path="earnings" element={<EarningsTab />} />
@@ -213,12 +227,35 @@ function Overview({ profile }: { profile: OwnProfile }) {
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
     .slice(0, 5);
 
+  const awayConflicts = (bookings ?? []).filter((b) => inVacation(b, profile.vacation_until));
+
   return (
     <>
       {profile.status !== 'published' && (
         <div className="alert alert-info">
           <strong>You're not listed yet.</strong> Set up your services and availability — Hilom
           publishes your profile once it's ready.
+        </div>
+      )}
+
+      {/* Kept on screen for the whole away period rather than shown once at
+          save time: someone books time off in March for a trip in June, and
+          the sessions that need moving are the ones they will have forgotten. */}
+      {awayConflicts.length > 0 && (
+        <div className="alert alert-warning">
+          <strong>
+            You have {awayConflicts.length} confirmed{' '}
+            {awayConflicts.length === 1 ? 'session' : 'sessions'} during your time off.
+          </strong>{' '}
+          New bookings are paused until{' '}
+          {formatDualZone(
+            profile.vacation_until as string,
+            { timezone: null, label: '' },
+            { dateStyle: 'medium' },
+            zone,
+          )}
+          , but these were already booked.{' '}
+          <Link to="/facilitator/bookings">Review them</Link>.
         </div>
       )}
 
@@ -265,7 +302,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 // Bookings
 // ---------------------------------------------------------------------------
 
-function BookingsTab() {
+function BookingsTab({ profile }: { profile: OwnProfile }) {
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -326,6 +363,13 @@ function BookingsTab() {
               <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
               <span className="pill">{b.status.replace(/_/g, ' ')}</span>
             </div>
+            {/* Vacation mode never touched sessions already in the diary; this
+                is where the facilitator finds the ones that need a decision. */}
+            {inVacation(b, profile.vacation_until) && (
+              <p className="small" style={{ margin: '0.35rem 0 0', color: '#8a5a08' }}>
+                This falls inside your time off — cancel or move it.
+              </p>
+            )}
             <p className="small" style={{ margin: '0.4rem 0' }}>
               {/* Both zones, always — see formatDualZone. A facilitator who
                   only ever sees their own time is the one who books a Sydney
