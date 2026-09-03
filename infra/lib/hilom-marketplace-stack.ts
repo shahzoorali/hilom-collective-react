@@ -341,6 +341,8 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/bookings', [GET]],
       ['/facilitator/bookings/{bookingId}/cancel', [POST]],
       ['/facilitator/bookings/{bookingId}/no-show', [POST]],
+      ['/facilitator/bookings/{bookingId}/propose-time', [POST]],
+      ['/facilitator/bookings/{bookingId}/withdraw-proposal', [POST]],
       ['/facilitator/earnings', [GET]],
     ]);
 
@@ -376,6 +378,8 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/bookings/{bookingId}/status', [GET]],
       ['/bookings/{bookingId}/cancel', [POST]],
       ['/bookings/{bookingId}/reschedule', [POST]],
+      ['/bookings/{bookingId}/accept-time', [POST]],
+      ['/bookings/{bookingId}/decline-time', [POST]],
       ['/me/bookings', [GET]],
     ]);
 

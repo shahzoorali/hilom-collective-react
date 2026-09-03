@@ -22,6 +22,7 @@ import {
   cancelBooking,
   listMyBookings,
   rescheduleBooking,
+  respondToProposedTime,
   bookingRefundPolicy,
   formatDualZone,
   formatInZone,
@@ -98,6 +99,37 @@ export default function BookingsTab() {
       reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not cancel');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /**
+   * Answer a time the facilitator suggested (0029).
+   *
+   * Accepting is what moves the session — the proposal changed nothing on its
+   * own. The server re-verifies the slot, so "that time was just taken" is an
+   * ordinary answer here rather than a fault, and it arrives as an error the
+   * notice below shows.
+   */
+  async function onRespond(booking: Booking, accept: boolean) {
+    setBusyId(booking.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await respondToProposedTime(booking.id, accept);
+      setNotice(
+        result.accepted
+          ? `Moved to ${formatInZone(result.startsAt, viewerTimezone(), {
+              dateStyle: 'full',
+              timeStyle: 'short',
+            })}. We've emailed you both.`
+          : "Kept your original time — we've let your facilitator know.",
+      );
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not answer that');
+      reload();
     } finally {
       setBusyId(null);
     }
@@ -192,6 +224,55 @@ export default function BookingsTab() {
                 <p className="small muted" style={{ margin: '0 0 0.75rem' }}>
                   with <Link to={`/facilitators/${b.facilitators.slug}`}>{b.facilitators.display_name}</Link>
                 </p>
+              )}
+
+              {/* An offer, not a change — the session above is still the real
+                  one until this is accepted. The copy has to keep saying so,
+                  or someone declines by ignoring it and turns up at the wrong
+                  time. */}
+              {b.proposed_starts_at && (
+                <div className="alert alert-warning" style={{ marginBottom: '0.75rem' }}>
+                  <strong>
+                    {b.facilitators?.display_name ?? 'Your facilitator'} has suggested moving this
+                    to{' '}
+                    {formatDualZone(
+                      b.proposed_starts_at,
+                      {
+                        timezone: b.facilitators?.timezone,
+                        label: `for ${b.facilitators?.display_name ?? 'them'}`,
+                      },
+                      { dateStyle: 'full', timeStyle: 'short' },
+                      zone,
+                    )}
+                    .
+                  </strong>
+                  {b.proposed_note && (
+                    <p className="small" style={{ margin: '0.4rem 0 0' }}>
+                      <em>“{b.proposed_note}”</em>
+                    </p>
+                  )}
+                  <p className="small" style={{ margin: '0.4rem 0 0.6rem' }}>
+                    Nothing changes unless you accept. Decline and your session stays as it is.
+                  </p>
+                  <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-accent small"
+                      disabled={busyId === b.id}
+                      onClick={() => void onRespond(b, true)}
+                    >
+                      Accept the new time
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost small"
+                      disabled={busyId === b.id}
+                      onClick={() => void onRespond(b, false)}
+                    >
+                      Keep my original time
+                    </button>
+                  </div>
+                </div>
               )}
 
               <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>

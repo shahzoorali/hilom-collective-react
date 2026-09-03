@@ -138,6 +138,14 @@ export interface Booking {
   cancellation_reason: string | null;
   refund_centavos: number | null;
   /**
+   * A time the facilitator has suggested but the client has not answered
+   * (0029). Nothing about the session changes until they accept — see
+   * proposeTime in facilitator-portal.ts.
+   */
+  proposed_starts_at: string | null;
+  proposed_at: string | null;
+  proposed_note: string | null;
+  /**
    * The refund ladder snapshotted at booking time (0027). Null on a booking
    * taken before that migration, which is judged by the old fixed 24/12 rule —
    * `bookingRefundPolicy` below resolves both cases.
@@ -550,6 +558,30 @@ export const listMyFacilitatorBookings = () =>
   apiFetch<{ bookings: Booking[]; timezone: string }>('/facilitator/bookings', {
     headers: authHeaders(),
   });
+
+/**
+ * Offer the client a different time rather than cancelling on them.
+ *
+ * An offer, not a move: the session stays where it is until the client accepts.
+ */
+export const proposeNewTime = (bookingId: string, startsAt: string, note?: string) =>
+  apiFetch<{ bookingId: string; proposedStartsAt: string; proposedNote: string | null }>(
+    `/facilitator/bookings/${encodeURIComponent(bookingId)}/propose-time`,
+    { method: 'POST', headers: jsonAuthHeaders(), body: JSON.stringify({ startsAt, note }) },
+  );
+
+export const withdrawProposedTime = (bookingId: string) =>
+  apiFetch<{ bookingId: string; proposedStartsAt: null }>(
+    `/facilitator/bookings/${encodeURIComponent(bookingId)}/withdraw-proposal`,
+    { method: 'POST', headers: authHeaders() },
+  );
+
+/** The client's answer. Accepting is what actually moves the session. */
+export const respondToProposedTime = (bookingId: string, accept: boolean) =>
+  apiFetch<{ bookingId: string; accepted: boolean; startsAt: string }>(
+    `/bookings/${encodeURIComponent(bookingId)}/${accept ? 'accept-time' : 'decline-time'}`,
+    { method: 'POST', headers: authHeaders() },
+  );
 
 export const cancelMyFacilitatorBooking = (bookingId: string, reason?: string) =>
   apiFetch<{ bookingId: string; status: BookingStatus; refundCentavos: number }>(

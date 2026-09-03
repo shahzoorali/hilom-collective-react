@@ -406,6 +406,9 @@ async function adminCancelBooking(
       cancelled_by: 'admin',
       cancellation_reason: reason,
       refund_centavos: decision.refundCentavos,
+      proposed_starts_at: null,
+      proposed_at: null,
+      proposed_note: null,
     })
     .eq('id', bookingId)
     // Same reasoning as every other transition here: a filtered update that

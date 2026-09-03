@@ -42,7 +42,11 @@ import {
   type BookingStatus,
 } from '../lib/booking-domain.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
-import { sendBookingCancelled, sendBookingRescheduled } from '../lib/booking-email.js';
+import {
+  sendBookingCancelled,
+  sendBookingRescheduled,
+  sendRescheduleDeclined,
+} from '../lib/booking-email.js';
 
 /** 409 — the request was well-formed but the world moved. */
 const conflict = (message: string) => json(409, { error: message });
@@ -78,6 +82,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (path.endsWith('/status')) return await status(bookingId, user.email);
     if (path.endsWith('/cancel')) return await cancel(bookingId, user.email);
     if (path.endsWith('/reschedule')) return await reschedule(bookingId, user.email, event);
+    if (path.endsWith('/accept-time')) return await respondToProposal(bookingId, user.email, true);
+    if (path.endsWith('/decline-time')) return await respondToProposal(bookingId, user.email, false);
     return notFound();
   } catch (err) {
     return serverError('bookings', err);
@@ -114,7 +120,7 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 }
 
 const BOOKING_COLUMNS =
-  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, created_at';
+  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, proposed_starts_at, proposed_at, proposed_note, created_at';
 
 /**
  * The embedded relations a mutating booking path needs.
@@ -431,6 +437,11 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
       // Recorded, not executed — a human moves the money. See
       // refundForCancellation's note.
       refund_centavos: decision.refundCentavos,
+      // A suggested time on a cancelled session is an offer to attend
+      // something that is no longer happening.
+      proposed_starts_at: null,
+      proposed_at: null,
+      proposed_note: null,
     })
     .eq('id', bookingId)
     // Loses cleanly if the facilitator cancelled the same booking concurrently.
@@ -475,6 +486,103 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     refundCentavos: decision.refundCentavos,
     refundNote: decision.reason,
   });
+}
+
+/**
+ * The client's answer to a time their facilitator suggested (0029).
+ *
+ * Accepting is what actually moves the session — the proposal changed nothing
+ * until now, which is the whole design: a facilitator can ask, not act.
+ *
+ * The proposed slot was never held, so it is re-verified here through exactly
+ * the same engine as a fresh booking. A time that has since been taken comes
+ * back as a conflict rather than an error, and the proposal is cleared so the
+ * client is not left staring at an offer that can no longer be accepted.
+ *
+ * Deliberately *not* subject to `canReschedule`. That rule protects the
+ * facilitator's committed hour from a client moving it late; here the
+ * facilitator is the one asking, and refusing their own request twelve hours
+ * out would make the feature useless in exactly the case it exists for.
+ */
+async function respondToProposal(
+  bookingId: string,
+  email: string,
+  accept: boolean,
+): Promise<APIGatewayProxyResultV2> {
+  const loaded = await loadOwned(bookingId, email);
+  if (!loaded) return notFound('Booking not found');
+  const { supabase, booking } = loaded;
+
+  if (!booking.proposed_starts_at) return badRequest('There is no suggested time on this booking');
+  if (booking.status !== 'confirmed') return badRequest('Only a confirmed booking can be moved');
+
+  const clearProposal = { proposed_starts_at: null, proposed_at: null, proposed_note: null };
+  const facilitator = booking.facilitators as FacilitatorSchedulingRow & {
+    email: string;
+    display_name: string;
+  };
+  const service = booking.facilitator_services as ServiceRow;
+  const emailContext = {
+    clientEmail: booking.client_email,
+    clientName: booking.client_name,
+    clientTimezone: booking.client_timezone,
+    facilitatorEmail: facilitator.email,
+    facilitatorName: facilitator.display_name,
+    facilitatorTimezone: facilitator.timezone,
+    serviceTitle: service.title,
+    startsAt: booking.starts_at as string,
+    meetingUrl: booking.meeting_url,
+    isFree: booking.price_centavos === 0,
+  };
+
+  if (!accept) {
+    const { error } = await supabase.from('bookings').update(clearProposal).eq('id', bookingId);
+    if (error) throw error;
+    // The facilitator needs to know the hour they were trying to free is still
+    // theirs — that is the actionable half, not the refusal.
+    await sendRescheduleDeclined(emailContext);
+    return ok({ bookingId, accepted: false, startsAt: booking.starts_at });
+  }
+
+  const now = new Date();
+  const startsAt = new Date(booking.proposed_starts_at as string);
+  if (startsAt <= now) {
+    await supabase.from('bookings').update(clearProposal).eq('id', bookingId);
+    return conflict('That suggested time has already passed — ask your facilitator for another.');
+  }
+
+  await releaseExpiredHolds(supabase, facilitator.id, now);
+  const slot = await verifySlot(supabase, facilitator, service, startsAt, now, bookingId);
+  if (!slot) {
+    // Clear it: an offer that can never be accepted is worse than none, and
+    // the facilitator can simply suggest another time.
+    await supabase.from('bookings').update(clearProposal).eq('id', bookingId);
+    return conflict('That time is no longer free — ask your facilitator for another.');
+  }
+
+  const previousStartsAt = booking.starts_at as string;
+
+  const { data: moved, error } = await supabase
+    .from('bookings')
+    .update({ starts_at: slot.startsAt, ends_at: slot.blockEndsAt, ...clearProposal })
+    .eq('id', bookingId)
+    .eq('status', 'confirmed')
+    // Read back for the same reason as every other filtered update here: a
+    // silent zero-row update would email both parties a new time for a session
+    // that was cancelled in the interim.
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    if (error.code === EXCLUSION_VIOLATION) return conflict('That time was just taken');
+    throw error;
+  }
+  if (!moved) return conflict('That booking was cancelled — it can no longer be moved.');
+
+  await syncBookingMeeting(supabase, bookingId, 'rescheduled');
+  await sendBookingRescheduled({ ...emailContext, startsAt: slot.startsAt }, previousStartsAt);
+
+  return ok({ bookingId, accepted: true, startsAt: slot.startsAt });
 }
 
 /**
@@ -534,7 +642,15 @@ async function reschedule(
 
   const { data: moved, error } = await supabase
     .from('bookings')
-    .update({ starts_at: slot.startsAt, ends_at: slot.blockEndsAt })
+    // Any open proposal is dropped: the client has just chosen a time
+    // themselves, which answers the question the facilitator was asking.
+    .update({
+      starts_at: slot.startsAt,
+      ends_at: slot.blockEndsAt,
+      proposed_starts_at: null,
+      proposed_at: null,
+      proposed_note: null,
+    })
     .eq('id', bookingId)
     .eq('status', 'confirmed')
     // Same reason as the cancel path above — a filtered update matching zero

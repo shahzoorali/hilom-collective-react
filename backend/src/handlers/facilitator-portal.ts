@@ -35,11 +35,13 @@ import { requireUser, requireGroup, UnauthorizedError } from '../lib/auth.js';
 import {
   SERVICE_PUBLIC_COLUMNS,
   previewAvailability,
+  releaseExpiredHolds,
+  verifySlot,
   type ServiceRow,
   type FacilitatorSchedulingRow,
 } from '../lib/scheduling.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
-import { sendBookingCancelled } from '../lib/booking-email.js';
+import { sendBookingCancelled, sendRescheduleProposed } from '../lib/booking-email.js';
 import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import {
   validateProfile,
@@ -612,7 +614,122 @@ async function blackouts(
 }
 
 const FACILITATOR_BOOKING_COLUMNS =
-  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, payout_id, created_at';
+  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, payout_id, created_at';
+
+/**
+ * A facilitator offers the client a different time, or withdraws the offer.
+ *
+ * The alternative this replaces is cancelling — which refunds the client in
+ * full, releases the hour and leaves them to find another slot themselves.
+ * "Something came up, could we do Thursday?" should not cost a facilitator the
+ * booking.
+ *
+ * It is an *offer*, not a move: nothing about the booking changes here beyond
+ * three columns that record what was suggested. The client accepts (or does
+ * not) from their own bookings page, and only then does the session shift. A
+ * platform where one party can move the other's committed hour is not one the
+ * other party keeps using.
+ *
+ * The proposed slot is validated now and validated *again* on acceptance,
+ * because it is not held in the meantime — see 0029 for why holding it would
+ * be worse than losing the occasional race.
+ */
+async function proposeTime(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  booking: any,
+  event: APIGatewayProxyEventV2,
+  path: string,
+  now: Date,
+): Promise<APIGatewayProxyResultV2> {
+  const bookingId = booking.id as string;
+
+  if (path.endsWith('/withdraw-proposal')) {
+    const { error } = await supabase
+      .from('bookings')
+      .update({ proposed_starts_at: null, proposed_at: null, proposed_note: null })
+      .eq('id', bookingId)
+      .eq('facilitator_id', facilitator.id);
+    if (error) throw error;
+    // Silent for the client: an offer they may not have read yet, taken back.
+    // Emailing "never mind" about a message they might not have seen is noise.
+    return ok({ bookingId, proposedStartsAt: null });
+  }
+
+  if (booking.status !== 'confirmed') return badRequest('Only a confirmed booking can be moved');
+  if (new Date(booking.starts_at) <= now) return badRequest('That session has already started');
+
+  const body = parseBody(event);
+  const startsAtRaw = typeof body.startsAt === 'string' ? body.startsAt : '';
+  const startsAt = new Date(startsAtRaw);
+  if (!startsAtRaw || Number.isNaN(startsAt.getTime())) {
+    return badRequest('startsAt must be an ISO-8601 date');
+  }
+  if (startsAt <= now) return badRequest('Suggest a time in the future');
+  const noteText = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : null;
+
+  const { data: service, error: serviceError } = await supabase
+    .from('facilitator_services')
+    .select(SERVICE_PUBLIC_COLUMNS)
+    .eq('id', booking.service_id)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<ServiceRow>();
+  if (serviceError) throw serviceError;
+  if (!service) return notFound('Service not found');
+
+  const { data: scheduling, error: schedulingError } = await supabase
+    .from('facilitators')
+    .select('id, timezone, vacation_until, status')
+    .eq('id', facilitator.id)
+    .maybeSingle<FacilitatorSchedulingRow>();
+  if (schedulingError) throw schedulingError;
+  if (!scheduling) return notFound('Facilitator not found');
+
+  await releaseExpiredHolds(supabase, facilitator.id, now);
+
+  // Checked against the facilitator's *own* rules, excluding this booking so
+  // it does not block itself. Two deliberate differences from the client's
+  // reschedule: the minimum-notice rule is the facilitator's own hours to give
+  // away, and there is no notice threshold on making the offer at all — a
+  // facilitator who has to move a session tomorrow morning is exactly who this
+  // is for. What protects the client is that they can simply say no.
+  const slot = await verifySlot(supabase, scheduling, service, startsAt, now, bookingId);
+  if (!slot) return json(409, { error: 'That time is not free in your calendar' });
+
+  const { data: updated, error } = await supabase
+    .from('bookings')
+    .update({
+      proposed_starts_at: slot.startsAt,
+      proposed_at: now.toISOString(),
+      proposed_note: noteText,
+    })
+    .eq('id', bookingId)
+    .eq('facilitator_id', facilitator.id)
+    // Loses cleanly if the client cancelled while this was being composed.
+    .eq('status', 'confirmed')
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (error) throw error;
+  if (!updated) return json(409, { error: 'That booking is no longer confirmed.' });
+
+  await sendRescheduleProposed(
+    {
+      clientEmail: booking.client_email,
+      clientName: booking.client_name,
+      clientTimezone: booking.client_timezone,
+      facilitatorEmail: facilitator.email,
+      facilitatorName: facilitator.display_name,
+      facilitatorTimezone: facilitator.timezone,
+      serviceTitle: booking.facilitator_services?.title ?? 'Session',
+      startsAt: booking.starts_at,
+      meetingUrl: booking.meeting_url,
+      isFree: booking.price_centavos === 0,
+    },
+    { proposedStartsAt: slot.startsAt, note: noteText },
+  );
+
+  return ok({ bookingId, proposedStartsAt: slot.startsAt, proposedNote: noteText });
+}
 
 async function bookings(
   supabase: SupabaseClient,
@@ -672,6 +789,10 @@ async function bookings(
     return ok({ bookingId, status: 'no_show' });
   }
 
+  if (path.endsWith('/propose-time') || path.endsWith('/withdraw-proposal')) {
+    return await proposeTime(supabase, facilitator, booking, event, path, now);
+  }
+
   if (path.endsWith('/cancel')) {
     if (booking.status !== 'confirmed') return badRequest('Only a confirmed booking can be cancelled');
 
@@ -696,6 +817,9 @@ async function bookings(
         cancelled_by: 'facilitator',
         cancellation_reason: reason,
         refund_centavos: decision.refundCentavos,
+        proposed_starts_at: null,
+        proposed_at: null,
+        proposed_note: null,
       })
       .eq('id', bookingId)
       .eq('facilitator_id', facilitator.id)

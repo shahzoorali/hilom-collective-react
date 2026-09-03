@@ -397,6 +397,91 @@ export async function sendBookingRescheduled(
   ]);
 }
 
+/**
+ * Sent to the client when their facilitator offers a new time.
+ *
+ * The offer is not a change — nothing moves until the client accepts (see
+ * 0029) — so the language here is an ask, not a notification. Getting that
+ * wrong would be worse than not building the feature: a client who reads
+ * "your session has moved" and does not click anything would turn up at the
+ * old time.
+ */
+export async function sendRescheduleProposed(
+  ctx: BookingEmailContext,
+  detail: { proposedStartsAt: string; note?: string | null },
+): Promise<void> {
+  const current = bothWhen(ctx);
+  const proposed = bothWhen(ctx, detail.proposedStartsAt);
+
+  const html = renderEmail({
+    preheader: `${ctx.facilitatorName} has asked to move ${ctx.serviceTitle} to ${proposed.forClient}`,
+    heading: 'Your facilitator has suggested a new time',
+    body:
+      p(
+        `<strong>${escapeHtml(ctx.facilitatorName)}</strong> has asked whether you could move ` +
+          `your session. Nothing has changed yet — your booking stays exactly where it is until ` +
+          `you accept.`,
+      ) +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'Currently', value: escapeHtml(current.forClient) },
+        { label: 'Suggested', value: `<strong>${escapeHtml(proposed.forClient)}</strong>` },
+      ]) +
+      (detail.note ? note(escapeHtml(detail.note)) : '') +
+      button('Accept or decline', ACCOUNT_BOOKINGS_URL) +
+      note(
+        "If the new time doesn't work, decline and your session stays as it is — you can always " +
+          'cancel or move it yourself under the usual policy.',
+      ),
+  });
+
+  const text = renderText(`${ctx.facilitatorName} suggested a new time for ${ctx.serviceTitle}`, [
+    `Currently: ${current.forClient}`,
+    `Suggested: ${proposed.forClient}`,
+    ...(detail.note ? ['', detail.note] : []),
+    '',
+    'Nothing changes until you accept.',
+    `Accept or decline: ${ACCOUNT_BOOKINGS_URL}`,
+  ]);
+
+  await send(ctx.clientEmail, `A new time for ${ctx.serviceTitle}?`, text, html);
+}
+
+/**
+ * Sent to the facilitator when the client turns a proposed time down.
+ *
+ * Says plainly that the original session still stands, because the useful
+ * information is not the refusal — it is that the hour they were trying to
+ * free is still on their calendar and they need another plan for it.
+ */
+export async function sendRescheduleDeclined(ctx: BookingEmailContext): Promise<void> {
+  const when = bothWhen(ctx);
+
+  const html = renderEmail({
+    preheader: `${ctx.clientName || ctx.clientEmail} kept the original time for ${ctx.serviceTitle}`,
+    heading: 'Your suggested time was declined',
+    body:
+      p(
+        `${escapeHtml(ctx.clientName || ctx.clientEmail)} has kept the original time. The session ` +
+          'below is still going ahead as booked.',
+      ) +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'When', value: escapeHtml(when.forFacilitator) },
+      ]) +
+      button('Open your bookings', FACILITATOR_BOOKINGS_URL),
+  });
+
+  const text = renderText(`Declined: new time for ${ctx.serviceTitle}`, [
+    `${ctx.clientName || ctx.clientEmail} kept the original time.`,
+    `When: ${when.forFacilitator}`,
+    '',
+    `Your bookings: ${FACILITATOR_BOOKINGS_URL}`,
+  ]);
+
+  await send(ctx.facilitatorEmail, `Declined: new time for ${ctx.serviceTitle}`, text, html);
+}
+
 /** Sent when an admin approves a facilitator application. */
 export async function sendFacilitatorApproved(to: string, displayName: string): Promise<void> {
   const dashboard = 'https://www.hilomcollective.com/facilitator';

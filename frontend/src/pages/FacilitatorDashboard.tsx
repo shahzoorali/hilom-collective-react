@@ -26,6 +26,11 @@ import {
   listMyFacilitatorBookings,
   cancelMyFacilitatorBooking,
   markNoShow,
+  previewMySlots,
+  proposeNewTime,
+  withdrawProposedTime,
+  formatInZone,
+  type SlotOption,
   formatDualZone,
   viewerTimezone,
   type Booking,
@@ -302,10 +307,123 @@ function Stat({ label, value }: { label: string; value: string }) {
 // Bookings
 // ---------------------------------------------------------------------------
 
+/**
+ * Pick a time to offer the client instead of cancelling on them.
+ *
+ * Draws its options from `previewMySlots` — the facilitator's own view of the
+ * slot engine — rather than the public availability endpoint, so it obeys
+ * exactly the rules a real booking would while still working on an unpublished
+ * profile or a hidden service.
+ *
+ * Nothing here moves the session. It records an offer; the client's answer is
+ * what moves it (see 0029).
+ */
+function ProposeTime({
+  booking,
+  timezone,
+  onDone,
+}: {
+  booking: Booking;
+  timezone: string;
+  onDone: (message: string) => void;
+}) {
+  const [slots, setSlots] = useState<SlotOption[] | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    const from = new Date();
+    const to = new Date(from.getTime() + 21 * 86_400_000);
+    previewMySlots(booking.service_id, from, to)
+      .then((r) => live && setSlots(r.slots))
+      .catch((err: Error) => live && setError(err.message));
+    return () => {
+      live = false;
+    };
+  }, [booking.service_id]);
+
+  async function submit() {
+    if (!chosen) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await proposeNewTime(booking.id, chosen, note || undefined);
+      onDone("Suggested — we've emailed your client. The session stays as it is until they accept.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not suggest that time');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Grouped by the facilitator's local day, the unit they actually think in.
+  const byDay = new Map<string, SlotOption[]>();
+  for (const slot of slots ?? []) {
+    const day = formatInZone(slot.startsAt, timezone, { dateStyle: 'full', timeStyle: undefined });
+    byDay.set(day, [...(byDay.get(day) ?? []), slot]);
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: '0.75rem' }}>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Your client keeps their current time unless they accept. Times are shown in your zone.
+      </p>
+
+      {error && <div className="alert alert-error">{error}</div>}
+      {slots === null && !error && <div className="spinner" aria-label="Loading" />}
+      {slots !== null && slots.length === 0 && (
+        <p className="muted small">
+          You have no free times in the next three weeks. Open some hours under Availability first.
+        </p>
+      )}
+
+      {[...byDay.entries()].map(([day, daySlots]) => (
+        <div key={day} style={{ marginBottom: '0.5rem' }}>
+          <strong className="small">{day}</strong>
+          <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.3rem' }}>
+            {daySlots.map((slot) => (
+              <button
+                key={slot.startsAt}
+                type="button"
+                className={chosen === slot.startsAt ? 'btn btn-accent small' : 'btn btn-ghost small'}
+                onClick={() => setChosen(slot.startsAt)}
+              >
+                {formatInZone(slot.startsAt, timezone, { dateStyle: undefined, timeStyle: 'short' })}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {chosen && (
+        <>
+          <label className="field">
+            <span>A note for your client (optional)</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="I'm so sorry — I have a clinic that morning."
+            />
+          </label>
+          <button type="button" className="btn btn-accent" disabled={busy} onClick={() => void submit()}>
+            {busy ? 'Sending…' : 'Suggest this time'}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BookingsTab({ profile }: { profile: OwnProfile }) {
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Which booking's "suggest another time" panel is open, if any.
+  const [proposingId, setProposingId] = useState<string | null>(null);
 
   function reload() {
     listMyFacilitatorBookings()
@@ -345,6 +463,20 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
     }
   }
 
+  async function onWithdraw(booking: Booking) {
+    setBusyId(booking.id);
+    setError(null);
+    try {
+      await withdrawProposedTime(booking.id);
+      setNotice('Suggestion withdrawn.');
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not withdraw');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const zone = viewerTimezone();
   const now = Date.now();
 
@@ -352,6 +484,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
     <>
       <h2>Bookings</h2>
       {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
       {bookings === null && <div className="spinner" aria-label="Loading" />}
       {bookings !== null && bookings.length === 0 && <p className="muted">No bookings yet.</p>}
 
@@ -390,11 +523,57 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
                 <em>“{b.client_notes}”</em>
               </p>
             )}
+            {b.proposed_starts_at && (
+              <div className="alert alert-info" style={{ marginBottom: '0.5rem' }}>
+                Waiting on your client — you suggested{' '}
+                <strong>
+                  {formatInZone(b.proposed_starts_at, zone, {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
+                </strong>
+                . The session below is still the one that stands.{' '}
+                <button
+                  type="button"
+                  className="btn btn-ghost small"
+                  disabled={busyId === b.id}
+                  onClick={() => void onWithdraw(b)}
+                >
+                  Withdraw
+                </button>
+              </div>
+            )}
+
+            {proposingId === b.id && (
+              <ProposeTime
+                booking={b}
+                timezone={zone}
+                onDone={(message) => {
+                  setProposingId(null);
+                  setNotice(message);
+                  reload();
+                }}
+              />
+            )}
+
             <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
               {b.meeting_url && isFuture && (
                 <a className="btn btn-ghost small" href={b.meeting_url} target="_blank" rel="noreferrer">
                   Join
                 </a>
+              )}
+              {/* Offered before Cancel, and deliberately: cancelling refunds
+                  the client in full and loses the booking, and for "something
+                  came up" that is almost never what the facilitator wants. */}
+              {b.status === 'confirmed' && isFuture && !b.proposed_starts_at && (
+                <button
+                  type="button"
+                  className="btn btn-ghost small"
+                  disabled={busyId === b.id}
+                  onClick={() => setProposingId(proposingId === b.id ? null : b.id)}
+                >
+                  {proposingId === b.id ? 'Never mind' : 'Suggest another time'}
+                </button>
               )}
               {b.status === 'confirmed' && isFuture && (
                 <button
