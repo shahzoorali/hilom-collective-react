@@ -15,8 +15,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  createMyCalendarFeed,
   disconnectProvider,
+  getMyCalendarFeed,
   listMyConnections,
+  revokeMyCalendarFeed,
   startConnectingProvider,
   type Connection,
   type IntegrationProvider,
@@ -197,6 +200,148 @@ export default function ConnectionsTab() {
         reads your calendar or your existing meetings. Disconnecting removes Hilom's access
         immediately.
       </p>
+
+      <CalendarFeed />
+    </>
+  );
+}
+
+/**
+ * A read-only feed of the facilitator's sessions, for their own calendar app.
+ *
+ * The opposite direction from the connections above: those let Hilom write a
+ * meeting into the facilitator's provider account, this lets their calendar
+ * read their sessions out. Grouped here because both answer "how does Hilom
+ * meet the tools I already use".
+ *
+ * The copy has to be honest about what the link is. It carries a secret and
+ * anyone holding it can read this facilitator's schedule, which is a real
+ * thing to know before pasting it somewhere — and rotation is right there,
+ * because the remedy needs to be as easy as the mistake.
+ */
+function CalendarFeed() {
+  const [url, setUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getMyCalendarFeed()
+      .then((r) => setUrl(r.url))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoaded(true));
+  }, []);
+
+  async function run(action: () => Promise<{ url: string | null }>) {
+    setBusy(true);
+    setError(null);
+    setCopied(false);
+    try {
+      setUrl((await action()).url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update the feed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      // Clipboard access can be refused outright; the input below is
+      // selectable, so there is a way through without it.
+      setError('Could not copy — select the link and copy it by hand.');
+    }
+  }
+
+  return (
+    <>
+      <h2 style={{ marginTop: '2.5rem' }}>Your sessions in your own calendar</h2>
+      <p className="small muted" style={{ maxWidth: '60ch' }}>
+        Subscribe to this link in Google Calendar, Apple Calendar or Outlook and your Hilom
+        sessions appear alongside everything else. It is read-only — nothing you do in your
+        calendar changes a booking here — and it updates on its own.
+      </p>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      <div className="panel">
+        {!loaded && <div className="spinner" aria-label="Loading" />}
+
+        {loaded && !url && (
+          <>
+            <p className="small" style={{ marginTop: 0 }}>
+              You haven't set this up yet.
+            </p>
+            <button
+              type="button"
+              className="btn btn-accent"
+              disabled={busy}
+              onClick={() => void run(createMyCalendarFeed)}
+            >
+              {busy ? 'Creating…' : 'Create my calendar link'}
+            </button>
+          </>
+        )}
+
+        {loaded && url && (
+          <>
+            <label className="field">
+              <span>Your private calendar link</span>
+              <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+            </label>
+            <p className="small muted" style={{ marginTop: '-0.4rem' }}>
+              Treat this like a password — anyone with the link can see your schedule. If you
+              ever share it by accident, generate a new one and the old link stops working.
+            </p>
+            <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-accent small" onClick={() => void copy()}>
+                {copied ? 'Copied' : 'Copy link'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost small"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      'Generate a new link?
+
+The old one stops working immediately, and any calendar already subscribed to it will need the new one.',
+                    )
+                  ) {
+                    void run(createMyCalendarFeed);
+                  }
+                }}
+              >
+                Generate a new link
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost small"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      'Turn off the calendar feed?
+
+Any calendar subscribed to it will stop updating.',
+                    )
+                  ) {
+                    void run(revokeMyCalendarFeed);
+                  }
+                }}
+              >
+                Turn it off
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </>
   );
 }

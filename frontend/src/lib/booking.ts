@@ -554,6 +554,29 @@ export const previewMySlots = (serviceId: string, from: Date, to: Date) =>
     { headers: authHeaders() },
   );
 
+/**
+ * The facilitator's subscribable calendar URL.
+ *
+ * `url` is null until they create one — the token is a bearer credential in a
+ * string, so it is minted on demand rather than at approval (0030). POST
+ * creates *or rotates* it; DELETE revokes it. Rotation is the whole remedy for
+ * a link shared by accident.
+ */
+export const getMyCalendarFeed = () =>
+  apiFetch<{ url: string | null }>('/facilitator/calendar-feed', { headers: authHeaders() });
+
+export const createMyCalendarFeed = () =>
+  apiFetch<{ url: string | null }>('/facilitator/calendar-feed', {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+
+export const revokeMyCalendarFeed = () =>
+  apiFetch<{ url: string | null }>('/facilitator/calendar-feed', {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+
 export const listMyFacilitatorBookings = () =>
   apiFetch<{ bookings: Booking[]; timezone: string }>('/facilitator/bookings', {
     headers: authHeaders(),

@@ -4,6 +4,7 @@
  *   GET /facilitators
  *   GET /facilitators/{slug}
  *   GET /facilitators/{slug}/availability?serviceId=&from=&to=
+ *   GET /facilitator-calendar/{token}   — the subscribable .ics feed
  *
  * Every query filters `status = 'published'` explicitly. The RLS policy in
  * 0011_facilitators.sql says the same thing, but the backend connects with the
@@ -13,7 +14,8 @@
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
-import { ok, notFound, badRequest, serverError } from '../lib/http.js';
+import { ok, notFound, badRequest, serverError, text } from '../lib/http.js';
+import { renderCalendar, type IcsEvent } from '../lib/ical.js';
 import {
   FACILITATOR_PUBLIC_COLUMNS,
   SERVICE_PUBLIC_COLUMNS,
@@ -33,6 +35,12 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   // unawaited rejection here would escape this try entirely, costing the
   // `[facilitators]` log line that says why the directory failed to load.
   try {
+    // Matched before the slug routes because it is a different resource
+    // entirely — an unauthenticated feed keyed by a secret, not a directory
+    // page keyed by a public slug.
+    if (path.includes('/facilitator-calendar/')) {
+      return await calendarFeed(event.pathParameters?.token ?? '');
+    }
     if (!slug) return await list(event);
     if (path.endsWith('/availability')) return await availability(slug, event);
     return await detail(slug);
@@ -178,5 +186,121 @@ async function availability(slug: string, event: APIGatewayProxyEventV2): Promis
     // detail and telling the browser about the buffer invites confusion about
     // how long the session actually is.
     slots: slots.map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Calendar feed
+// ---------------------------------------------------------------------------
+
+/**
+ * How much history the feed carries.
+ *
+ * Enough that a facilitator scrolling back a month still sees their sessions,
+ * short of shipping their entire history to a calendar client on every poll.
+ */
+const FEED_HISTORY_DAYS = 90;
+
+/**
+ * The read-only `.ics` feed for one facilitator (0030).
+ *
+ * Unauthenticated by necessity: calendar clients poll on a schedule with no
+ * session and no way to send a bearer token, so the credential is the random
+ * token in the URL. See 0030 for what follows from that, and for how a leaked
+ * link is remedied (rotate it — the old URL stops working at once).
+ *
+ * Cancelled sessions are included with `STATUS:CANCELLED` rather than dropped.
+ * A subscriber that simply stops seeing an event may keep showing it forever;
+ * an explicit cancellation is what actually clears it off the calendar, which
+ * is the entire point of a facilitator not turning up to a session that was
+ * called off.
+ */
+async function calendarFeed(rawToken: string): Promise<APIGatewayProxyResultV2> {
+  // Subscribed as `.../TOKEN.ics` so the URL ends in an extension that
+  // calendar apps and OS handlers recognise; API Gateway cannot express that
+  // suffix in a path parameter, so it is stripped here.
+  const token = rawToken.replace(/\.ics$/i, '').trim();
+  if (!token || token.length < 32) return notFound('Calendar not found');
+
+  const supabase = await getSupabase();
+
+  const { data: facilitator, error } = await supabase
+    .from('facilitators')
+    .select('id, display_name, timezone')
+    .eq('calendar_token', token)
+    .maybeSingle<{ id: string; display_name: string; timezone: string }>();
+
+  if (error) throw error;
+  // Indistinguishable from a token that never existed, which is the point.
+  if (!facilitator) return notFound('Calendar not found');
+
+  const since = new Date(Date.now() - FEED_HISTORY_DAYS * 86_400_000).toISOString();
+
+  const { data: bookings, error: bookingError } = await supabase
+    .from('bookings')
+    .select(
+      'id, starts_at, ends_at, status, client_name, client_email, client_notes, meeting_url, updated_at, ' +
+        'facilitator_services(title, duration_minutes)',
+    )
+    .eq('facilitator_id', facilitator.id)
+    // A hold that was never paid for is not a commitment and has no business
+    // on anyone's calendar.
+    .neq('status', 'pending_payment')
+    .gte('starts_at', since)
+    .order('starts_at')
+    .limit(1000);
+
+  if (bookingError) throw bookingError;
+
+  const cancelled = new Set(['cancelled_by_client', 'cancelled_by_facilitator', 'refunded']);
+
+  const events: IcsEvent[] = (bookings ?? []).map((row: any) => {
+    const client = row.client_name || row.client_email;
+    const title = row.facilitator_services?.title ?? 'Session';
+    const durationMinutes = row.facilitator_services?.duration_minutes;
+
+    // `bookings.ends_at` is the *padded* end — it includes the service's buffer
+    // so the exclusion constraint enforces it (0012). Blocking that padding out
+    // on the facilitator's personal calendar would be wrong: the buffer stops
+    // Hilom booking over it, it does not stop them doing something else. So the
+    // event ends when the session does.
+    const endsAt = durationMinutes
+      ? new Date(new Date(row.starts_at).getTime() + durationMinutes * 60_000)
+      : new Date(row.ends_at);
+
+    return {
+      // Stable across fetches, so a client updates an event rather than
+      // replacing it and losing any alarm set on it.
+      uid: `booking-${row.id}@hilomcollective.com`,
+      startsAt: row.starts_at,
+      endsAt,
+      summary: `${title} — ${client}`,
+      description: [
+        `Client: ${client}`,
+        row.client_notes ? `Their note: ${row.client_notes}` : null,
+        'Manage this session at https://www.hilomcollective.com/facilitator/bookings',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      url: row.meeting_url,
+      // Not a counter, but monotonic per event, which is all SEQUENCE has to
+      // be for a client to recognise a newer version.
+      sequence: Math.floor(new Date(row.updated_at ?? row.starts_at).getTime() / 1000),
+      status: cancelled.has(row.status) ? ('CANCELLED' as const) : ('CONFIRMED' as const),
+    };
+  });
+
+  const body = renderCalendar({
+    name: `Hilom sessions — ${facilitator.display_name}`,
+    events,
+  });
+
+  return text(200, body, 'text/calendar; charset=utf-8', {
+    // Named so a downloaded copy is recognisable; `inline` because the normal
+    // case is a calendar app fetching it, not a person saving it.
+    'Content-Disposition': 'inline; filename="hilom-sessions.ics"',
+    // Polling clients re-fetch on their own schedule; a cached hour-old feed
+    // would hide a session booked twenty minutes ago.
+    'Cache-Control': 'no-store',
   });
 }

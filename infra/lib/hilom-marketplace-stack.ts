@@ -190,6 +190,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
       fn.addEnvironment('INTEGRATION_TOKEN_KEY_ID', integrationTokenKey.keyArn);
     }
     facilitatorIntegrations.addEnvironment('API_BASE_URL', props.apiBaseUrl ?? DEFAULT_API_BASE_URL);
+    // The portal hands the facilitator their calendar feed URL, which is an
+    // address on this API rather than on the site.
+    facilitatorPortal.addEnvironment('API_BASE_URL', props.apiBaseUrl ?? DEFAULT_API_BASE_URL);
     facilitatorIntegrations.addEnvironment('FRONTEND_URL', props.frontendUrl ?? DEFAULT_FRONTEND_URL);
 
     // Presigning can only sign what the signing role may itself do, so these
@@ -336,6 +339,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/services/{serviceId}', [PUT, DELETE]],
       ['/facilitator/availability', [GET, PUT]],
       ['/facilitator/slot-preview', [GET]],
+      ['/facilitator/calendar-feed', [GET, POST, DELETE]],
       ['/facilitator/blackouts', [GET, POST]],
       ['/facilitator/blackouts/{blackoutId}', [DELETE]],
       ['/facilitator/bookings', [GET]],
@@ -371,6 +375,10 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitators', [GET]],
       ['/facilitators/{slug}', [GET]],
       ['/facilitators/{slug}/availability', [GET]],
+      // Unauthenticated by necessity: a calendar client polls with no session
+      // and no way to send a bearer token, so the secret is the token in the
+      // path. See 0030_facilitator_calendar_token.sql.
+      ['/facilitator-calendar/{token}', [GET]],
     ]);
 
     attach(bookings, 'BookingsInt', [

@@ -52,6 +52,7 @@ import {
   FacilitatorInputError,
 } from '../lib/facilitator-input.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
+import { randomBytes } from 'node:crypto';
 
 const OWN_COLUMNS =
   'id, slug, email, display_name, headline, bio, photo_media_id, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, applied_at, approved_at';
@@ -101,6 +102,10 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (path.includes('/facilitator/services')) {
       return await services(supabase, facilitator, event, method);
+    }
+
+    if (path.endsWith('/facilitator/calendar-feed')) {
+      return await calendarFeedToken(supabase, facilitator, method);
     }
 
     if (path.endsWith('/facilitator/slot-preview')) {
@@ -370,6 +375,66 @@ async function updateProfile(
   const conflicts = await vacationConflicts(supabase, facilitator.id, profile.vacation_until);
 
   return ok({ facilitator: data, vacationConflicts: conflicts });
+}
+
+/**
+ * The facilitator's subscribable calendar URL: read it, create it, rotate it,
+ * or turn it off.
+ *
+ *   GET    — the current URL, or null if they have never subscribed
+ *   POST   — create one, or rotate the existing one
+ *   DELETE — revoke; every subscribed client stops updating
+ *
+ * Created on demand rather than at approval so a facilitator who never uses
+ * the feature never has a bearer token in the database to leak. Rotation and
+ * revocation are the same operation from the caller's side — write a new
+ * secret, or none — and are the entire remedy for a URL shared by accident,
+ * which is why POST is offered even when a token already exists.
+ */
+async function calendarFeedToken(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  method: string,
+): Promise<APIGatewayProxyResultV2> {
+  // The API's own origin, not the site's: the feed is served by this API, and
+  // a calendar client will fetch exactly the string handed to it here.
+  const base = process.env.API_BASE_URL ?? 'https://api.hilomcollective.com';
+  const feedUrl = (token: string | null) =>
+    token ? `${base}/facilitator-calendar/${token}.ics` : null;
+
+  if (method === 'GET') {
+    const { data, error } = await supabase
+      .from('facilitators')
+      .select('calendar_token')
+      .eq('id', facilitator.id)
+      .maybeSingle<{ calendar_token: string | null }>();
+    if (error) throw error;
+    return ok({ url: feedUrl(data?.calendar_token ?? null) });
+  }
+
+  if (method === 'POST') {
+    // 32 bytes from the CSPRNG. This is the only thing standing between a URL
+    // and someone's diary, so it is not derived from anything guessable — not
+    // the facilitator id, not a timestamp.
+    const token = randomBytes(32).toString('hex');
+    const { error } = await supabase
+      .from('facilitators')
+      .update({ calendar_token: token })
+      .eq('id', facilitator.id);
+    if (error) throw error;
+    return ok({ url: feedUrl(token) });
+  }
+
+  if (method === 'DELETE') {
+    const { error } = await supabase
+      .from('facilitators')
+      .update({ calendar_token: null })
+      .eq('id', facilitator.id);
+    if (error) throw error;
+    return ok({ url: null });
+  }
+
+  return badRequest(`Unsupported method ${method}`);
 }
 
 /**

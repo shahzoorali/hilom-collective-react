@@ -41,6 +41,31 @@ export function redirect(location: string): APIGatewayProxyResultV2 {
 export const unauthorized = (message = 'Unauthorized') => json(401, { error: message });
 
 /**
+ * A non-JSON body with an explicit content type.
+ *
+ * Exists for the calendar feed, whose consumer is a calendar client rather
+ * than the site's own fetch wrapper. Keeps the CORS origin header — a feed can
+ * legitimately be fetched by a browser-based calendar — but replaces the
+ * `application/json` that every other response here carries.
+ */
+export function text(
+  statusCode: number,
+  body: string,
+  contentType: string,
+  extraHeaders: Record<string, string> = {},
+): APIGatewayProxyResultV2 {
+  return {
+    statusCode,
+    headers: {
+      'Access-Control-Allow-Origin': corsHeaders['Access-Control-Allow-Origin'],
+      'Content-Type': contentType,
+      ...extraHeaders,
+    },
+    body,
+  };
+}
+
+/**
  * Logs the real error server-side but returns a generic message. Internal detail
  * (Supabase errors, Moodle debuginfo) must not reach the browser.
  */
