@@ -16,6 +16,11 @@
  * to run again after editing the copy below, but it will create duplicate media
  * rows (S3 keys are uuid-prefixed). Pass --skip-media to reuse whatever is
  * already in the library by filename instead.
+ *
+ * Pass one or more page slugs to seed only those, leaving every other page's
+ * draft untouched — `npx tsx scripts/seed-cms.ts privacy-policy`. Without a
+ * slug it seeds all of them, including the two sample events. `events` is only
+ * seeded when named explicitly or when no filter is given.
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +29,8 @@ import { fileURLToPath } from 'node:url';
 const API_BASE = process.env.HILOM_API_BASE ?? 'https://api.hilomcollective.com';
 const ADMIN_KEY = process.env.HILOM_ADMIN_KEY;
 const SKIP_MEDIA = process.argv.includes('--skip-media');
+/** Positional args = the slugs to seed. Empty means "all of them". */
+const ONLY_SLUGS = new Set(process.argv.slice(2).filter((a) => !a.startsWith('--')));
 
 if (!ADMIN_KEY) {
   console.error('HILOM_ADMIN_KEY is not set. Read it from Secrets Manager: hilom/admin-api-key');
@@ -563,10 +570,24 @@ async function main(): Promise<void> {
     'privacy-policy': buildPrivacyPolicy,
   };
 
-  console.log('\nevents:');
-  await seedEvents();
+  const wanted = (slug: string) => ONLY_SLUGS.size === 0 || ONLY_SLUGS.has(slug);
+
+  const unknownSlugs = [...ONLY_SLUGS].filter((s) => !(s in builders) && s !== 'events');
+  if (unknownSlugs.length) {
+    console.error(`Unknown slug(s): ${unknownSlugs.join(', ')}. Known: ${Object.keys(builders).join(', ')}`);
+    process.exit(1);
+  }
+
+  // The sample events are their own rows, not a page draft, so they only get
+  // written when explicitly asked for or on a full run — a targeted
+  // `privacy-policy` seed must not resurrect them.
+  if (wanted('events')) {
+    console.log('\nevents:');
+    await seedEvents();
+  }
 
   for (const [slug, build] of Object.entries(builders)) {
+    if (!wanted(slug)) continue;
     const page = bySlug.get(slug);
     if (!page) {
       console.warn(`! no page row for "${slug}" — run the db/seed/*.sql files first`);
