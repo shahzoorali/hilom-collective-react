@@ -389,10 +389,18 @@ function buildPrivacyPolicy(): unknown[] {
   const list = (...items: string[]) => `<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
 
   return [
+    // The page title is its own block, not an <h1> inside the rich text below:
+    // sanitizeRichText's allowlist is h2/h3/h4 only (h1 is reserved for the
+    // page heading), so an <h1> written into a richText block is silently
+    // stripped to a bare text node — which is what shipped on the first
+    // publish. `hero` turns a plain-text prop into a real <h1>, the same way
+    // buildAbout and buildCommunity open their pages.
+    block('hero', {
+      heading: 'Privacy Policy',
+      lede: ['Hilom Collective Website & Learning Management System (LMS)'],
+    }),
     section(
-      '<h1>Privacy Policy</h1>' +
-        '<p>Hilom Collective Website &amp; Learning Management System (LMS)</p>' +
-        '<p><strong>Effective Date:</strong> May 19, 2026<br /><strong>Last Updated:</strong> May 19, 2026</p>' +
+      '<p><strong>Effective Date:</strong> May 19, 2026<br /><strong>Last Updated:</strong> May 19, 2026</p>' +
         '<p>Welcome to <a href="https://hilomcollective.com">Hilom Collective</a> (“Hilom Collective,” “we,” “our,” or “us”).</p>' +
         '<p>Hilom Collective is committed to protecting your privacy and ensuring transparency in how we collect, use, store, and safeguard your personal information across our website, Learning Management System (LMS), community platforms, wellness programs, events, and digital services.</p>' +
         '<p>By accessing or using our website, LMS, or related services, you agree to the terms outlined in this Privacy Policy.</p>',

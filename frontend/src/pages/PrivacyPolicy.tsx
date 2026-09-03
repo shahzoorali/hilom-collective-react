@@ -24,14 +24,21 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function PrivacyPolicy() {
   return (
-    <section className="section">
-      <div className="container">
-        <div style={prose}>
+    <>
+      {/* The hero band mirrors the CMS version's first block, which is a `hero`
+          rather than an <h1> inside rich text: sanitizeRichText only allows
+          h2–h4, so the page title has to come from a real heading element. */}
+      <section className="hero">
+        <div className="container">
           <h1>Privacy Policy</h1>
-          <p className="muted" style={{ marginTop: '-0.5rem' }}>
-            Hilom Collective Website &amp; Learning Management System (LMS)
-          </p>
-          <p className="muted">
+          <p className="lede">Hilom Collective Website &amp; Learning Management System (LMS)</p>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="container">
+          <div style={prose}>
+            <p className="muted">
             <strong>Effective Date:</strong> {EFFECTIVE_DATE}
             <br />
             <strong>Last Updated:</strong> {LAST_UPDATED}
@@ -290,5 +297,6 @@ export default function PrivacyPolicy() {
         </div>
       </div>
     </section>
+    </>
   );
 }
