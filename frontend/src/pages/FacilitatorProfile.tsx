@@ -19,7 +19,6 @@ import {
   getFacilitator,
   formatDuration,
   type Facilitator,
-  type FacilitatorService,
 } from '../lib/booking';
 import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton';
 import { Stars } from '../components/Stars';
@@ -31,9 +30,10 @@ const deliveryLabel = (mode: Facilitator['delivery_mode']): string =>
 
 export default function FacilitatorProfile() {
   const { slug = '' } = useParams();
-  const [data, setData] = useState<{ facilitator: Facilitator; services: FacilitatorService[] } | null>(
-    null,
-  );
+  // Derived from the fetcher rather than restated, so adding a field to the
+  // endpoint cannot leave this annotation describing an older response — which
+  // is exactly what happened when `rating` and `reviews` were added.
+  const [data, setData] = useState<Awaited<ReturnType<typeof getFacilitator>> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const root = useRef<HTMLElement>(null);
 
