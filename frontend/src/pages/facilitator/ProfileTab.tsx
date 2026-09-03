@@ -166,7 +166,7 @@ export default function ProfileTab({
           onChange={(e) => set('specialties', e.target.value)}
           placeholder={'Emotional wellbeing\nCareer transitions\nStress management'}
         />
-        <small className="muted">These become the filters clients browse by.</small>
+        <small className="muted">Shown on your directory card and profile. The first few appear on the card.</small>
       </label>
 
       <label className="field">

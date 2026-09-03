@@ -555,7 +555,10 @@ function FacilitatorApplyFormBlock() {
  * stale copy of who is currently published.
  *
  * Links through to the full directory rather than trying to be it: this is a
- * teaser on a landing page, and the specialty filter lives at /facilitators.
+ * teaser on a landing page, and the full roster lives at /facilitators. The
+ * optional `specialty` prop pre-narrows this grid to one focus (e.g. a
+ * breathwork retreat page showing only breathwork facilitators) — it is an
+ * admin choice for the page, not a filter a visitor sees.
  */
 function FacilitatorGrid({ props }: { props: Props }) {
   const [facilitators, setFacilitators] = useState<FacilitatorCard[] | null>(null);
