@@ -425,7 +425,11 @@ export default function FacilitatorApplyForm() {
           onChange={(e) => setConsented(e.target.checked)}
         />
         <span>
-          I agree to the <Link to="/privacy">privacy policy</Link>.
+          {/* Must match the route registered in App.tsx. This said "/privacy"
+              and 404'd — a consent checkbox linking to a missing page asks
+              someone to agree to something they cannot read, which is exactly
+              the consent that is worth nothing later. */}
+          I agree to the <Link to="/privacy-policy">privacy policy</Link>.
         </span>
       </label>
 
