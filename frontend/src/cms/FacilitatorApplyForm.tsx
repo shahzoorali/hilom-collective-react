@@ -164,7 +164,10 @@ export default function FacilitatorApplyForm() {
     const awaitingDecision = !result.alreadyApplied || result.status === 'applied';
 
     return (
-      <>
+      // Breaks out of the narrow form column (the parent caps it at 640px) so
+      // the confirmation and the next-steps panel run the full content width on
+      // desktop. See `.apply-done` in index.css.
+      <div className="apply-done">
         <div className="panel">
           {result.alreadyApplied ? (
             <>
@@ -204,7 +207,7 @@ export default function FacilitatorApplyForm() {
         </div>
 
         {awaitingDecision && <NextSteps />}
-      </>
+      </div>
     );
   }
 

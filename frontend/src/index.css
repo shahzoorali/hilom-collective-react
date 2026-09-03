@@ -236,20 +236,40 @@ input:focus, select:focus, textarea:focus {
 }
 .choice-card__meta { display: block; font-size: 0.83rem; font-weight: 700; }
 
+/* The submitted-application view. The form column above it is capped at 640px
+   by its parent; this pulls back out to the site's normal content width so the
+   next-steps panel can lay its three outcomes side by side on desktop.
+
+   The breakout is symmetric maths rather than the `100vw` trick: `100%` is the
+   parent's width, so a negative inline margin of half the difference recentres
+   a `min(1120px, 92vw)` box inside it. On viewports too narrow for the parent
+   to hit its 640px cap the difference is ~0 and nothing moves. */
+.apply-done {
+  width: min(1120px, 92vw);
+  margin-inline: calc((100% - min(1120px, 92vw)) / 2);
+}
+
 /* "What happens next" — the three outcomes shown after an application is
    submitted. Rendered in the site palette rather than the deck's terracotta,
    which appears nowhere else here. */
 .next-steps {
-  margin-top: 1.5rem; padding: 2rem 1.75rem;
+  margin-top: 1.5rem; padding: 2.5rem;
   background: var(--cream); border-radius: var(--radius);
 }
 .next-steps__heading { margin: 0 0 0.5rem; font-size: 1.6rem; }
-.next-steps__lede { margin: 0 0 1.75rem; color: var(--muted); }
+.next-steps__lede { margin: 0 0 2rem; color: var(--muted); max-width: 60ch; }
 
-.next-steps__list { list-style: none; margin: 0; padding: 0; }
+/* One column on a phone, three across once there is room — the "full width on
+   desktop" payoff. auto-fit collapses the tracks itself, so there is no
+   breakpoint to keep in sync. */
+.next-steps__list {
+  list-style: none; margin: 0 0 2rem; padding: 0;
+  display: grid; gap: 1.5rem 2rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
 .next-steps__item {
   display: grid; grid-template-columns: auto 1fr; gap: 1rem;
-  align-items: start; margin-bottom: 1.4rem;
+  align-items: start;
 }
 .next-steps__number {
   display: flex; align-items: center; justify-content: center;
@@ -267,8 +287,11 @@ input:focus, select:focus, textarea:focus {
 }
 .next-steps__detail { display: block; }
 
+/* Centred: it is the one line summarising the happy path, so it reads as a
+   caption under the three outcomes rather than a fourth item. */
 .next-steps__pathway {
-  display: inline-block; margin: 0.5rem 0 1.25rem; padding: 0.7rem 1.4rem;
+  display: block; width: fit-content; margin: 0 auto 1.25rem;
+  padding: 0.7rem 1.4rem; text-align: center;
   background: var(--surface); border-radius: var(--radius);
   box-shadow: var(--shadow);
   font-weight: 700; color: var(--forest-dark);
@@ -276,11 +299,13 @@ input:focus, select:focus, textarea:focus {
 /* Each stage stays intact; the line breaks between them or not at all. */
 .next-steps__stage { white-space: nowrap; }
 .next-steps__closing {
-  margin: 0; font-style: italic; color: var(--forest-dark);
+  margin: 0; text-align: center;
+  font-style: italic; color: var(--forest-dark);
 }
 
 @media (max-width: 560px) {
   .next-steps { padding: 1.5rem 1.15rem; }
+  .next-steps__list { gap: 1.1rem; }
   .next-steps__item { gap: 0.75rem; }
   .next-steps__number { width: 2.15rem; height: 2.15rem; font-size: 0.8rem; }
   /* Tightened so the pathway still reads as one pill at 375px rather than
