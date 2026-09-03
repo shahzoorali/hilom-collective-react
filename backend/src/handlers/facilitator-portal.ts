@@ -683,7 +683,7 @@ async function blackouts(
 }
 
 const FACILITATOR_BOOKING_COLUMNS =
-  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, payout_id, created_at';
+  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, intake_answers, intake_completed_at, payout_id, created_at';
 
 /**
  * A facilitator offers the client a different time, or withdraws the offer.
@@ -921,6 +921,8 @@ async function createForClient(
       refund_full_hours: service.refund_full_hours ?? 24,
       refund_half_hours: service.refund_half_hours ?? 12,
       booked_by: 'facilitator',
+      // No intake: the client was never shown the form. They can still fill it
+      // in from their own bookings page before the session.
       off_platform_centavos: offPlatformCentavos,
       facilitator_note: facilitatorNote,
     })
@@ -963,7 +965,7 @@ async function bookings(
     if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
     const { data, error } = await supabase
       .from('bookings')
-      .select(`${FACILITATOR_BOOKING_COLUMNS}, facilitator_services(title, duration_minutes)`)
+      .select(`${FACILITATOR_BOOKING_COLUMNS}, facilitator_services(title, duration_minutes, intake_questions)`)
       .eq('facilitator_id', facilitator.id)
       .neq('status', 'pending_payment')
       .order('starts_at', { ascending: false });

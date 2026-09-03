@@ -32,7 +32,7 @@ export const FACILITATOR_PUBLIC_COLUMNS =
   'id, slug, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, timezone, status';
 
 export const SERVICE_PUBLIC_COLUMNS =
-  'id, facilitator_id, kind, title, description, duration_minutes, price_centavos, currency, sessions_count, delivery_mode, meeting_provider, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, cancellation_policy, refund_full_hours, refund_half_hours, is_active, sort_order';
+  'id, facilitator_id, kind, title, description, duration_minutes, price_centavos, currency, sessions_count, delivery_mode, meeting_provider, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, cancellation_policy, refund_full_hours, refund_half_hours, intake_questions, is_active, sort_order';
 
 export interface ServiceRow {
   id: string;
@@ -50,6 +50,8 @@ export interface ServiceRow {
   /** Null only on a row read with a column list predating 0027. */
   refund_full_hours?: number | null;
   refund_half_hours?: number | null;
+  /** Pre-session intake form definition (0032). */
+  intake_questions?: unknown;
   is_active: boolean;
 }
 

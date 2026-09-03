@@ -10,6 +10,7 @@
  * displayed to the public, which is exactly the shape of a stored-XSS vector.
  */
 import { sanitizeRichText, stripTags } from './sanitize.js';
+import { validateIntakeQuestions, IntakeError, type IntakeQuestion } from './intake.js';
 
 export class FacilitatorInputError extends Error {}
 
@@ -397,6 +398,7 @@ export interface ServiceInput {
   cancellation_policy: string | null;
   refund_full_hours: number;
   refund_half_hours: number;
+  intake_questions: IntakeQuestion[];
   is_active: boolean;
   sort_order: number;
 }
@@ -439,6 +441,13 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
   // this is the facilitator writing their own policy, and quietly changing what
   // they typed is how the free-text version came to mean nothing. The database
   // has the same check, but a constraint violation reaches them as a 500.
+  let intakeQuestions;
+  try {
+    intakeQuestions = validateIntakeQuestions(body.intake_questions);
+  } catch (err) {
+    throw new FacilitatorInputError(err instanceof IntakeError ? err.message : 'Invalid intake form');
+  }
+
   const refundFullHours = int(body.refund_full_hours, 'Full-refund notice', 0, 720, 24);
   const refundHalfHours = int(body.refund_half_hours, 'Half-refund notice', 0, 720, 12);
   if (refundHalfHours > refundFullHours) {
@@ -470,6 +479,10 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
     cancellation_policy: str(body.cancellation_policy, 'Cancellation policy', 1000),
     refund_full_hours: refundFullHours,
     refund_half_hours: refundHalfHours,
+    // Thrown as a FacilitatorInputError so the handler's existing catch turns
+    // it into a 400 with the message, rather than a 500 the facilitator cannot
+    // act on.
+    intake_questions: intakeQuestions,
     is_active: body.is_active !== false,
     sort_order: int(body.sort_order, 'Order', 0, 999, 0),
   };

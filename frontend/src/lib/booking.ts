@@ -98,6 +98,8 @@ export interface FacilitatorService {
   /** Notice needed for a full refund, then for half. See `describeRefundPolicy`. */
   refund_full_hours: number;
   refund_half_hours: number;
+  /** Pre-session intake questions (0032). Public: a client may read what they are about to be asked. */
+  intake_questions: IntakeQuestion[];
   is_active: boolean;
   sort_order: number;
   /**
@@ -145,6 +147,9 @@ export interface Booking {
   proposed_starts_at: string | null;
   proposed_at: string | null;
   proposed_note: string | null;
+  /** Intake answers, each carrying the question it answered (0032). */
+  intake_answers?: IntakeAnswer[];
+  intake_completed_at?: string | null;
   /**
    * Who created the row (0031). A 'facilitator' booking was arranged by hand —
    * offline payment, pro bono, a goodwill rebooking — and carries zero in every
@@ -164,7 +169,12 @@ export interface Booking {
   refund_half_hours: number | null;
   created_at: string;
   facilitators?: { slug: string; display_name: string; photo_url: string | null; timezone: string } | null;
-  facilitator_services?: { title: string; duration_minutes: number } | null;
+  facilitator_services?: {
+    title: string;
+    duration_minutes: number;
+    /** Present on the client's own list, so a session with no form costs no request. */
+    intake_questions?: IntakeQuestion[];
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +227,8 @@ export const createBooking = (input: {
   serviceId: string;
   startsAt: string;
   notes?: string;
+  /** Answers to the service's intake form, keyed by question id. */
+  intake?: Record<string, string>;
 }) =>
   apiFetch<CreateBookingResult>('/bookings', {
     method: 'POST',
@@ -1007,4 +1019,64 @@ export function describeRefundPolicy(service: {
     `or at least ${hoursPhrase(half)} before for a half refund. ` +
     `Under ${hoursPhrase(half)}, the session is not refundable.`
   );
+}
+
+// ---------------------------------------------------------------------------
+// Pre-session intake (0032)
+// ---------------------------------------------------------------------------
+
+export const INTAKE_QUESTION_TYPES = ['text', 'longtext', 'choice', 'checkbox'] as const;
+export type IntakeQuestionType = (typeof INTAKE_QUESTION_TYPES)[number];
+
+export interface IntakeQuestion {
+  id: string;
+  label: string;
+  help: string | null;
+  type: IntakeQuestionType;
+  required: boolean;
+  options: string[];
+}
+
+/**
+ * An answer, with a copy of the question it answered.
+ *
+ * The label is snapshotted server-side so a facilitator rewriting their form
+ * cannot change what a client was asked — which means the facilitator's view
+ * renders `label` from the answer, never by looking the question up again.
+ */
+export interface IntakeAnswer {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export const getMyBookingIntake = (bookingId: string) =>
+  apiFetch<{
+    questions: IntakeQuestion[];
+    answers: IntakeAnswer[];
+    completedAt: string | null;
+    editable: boolean;
+  }>(`/bookings/${encodeURIComponent(bookingId)}/intake`, { headers: authHeaders() });
+
+export const saveMyBookingIntake = (bookingId: string, intake: Record<string, string>) =>
+  apiFetch<{ answers: IntakeAnswer[]; completedAt: string }>(
+    `/bookings/${encodeURIComponent(bookingId)}/intake`,
+    { method: 'PUT', headers: jsonAuthHeaders(), body: JSON.stringify({ intake }) },
+  );
+
+/**
+ * A stable id for a new question, derived from its label.
+ *
+ * Derived rather than positional because an answer joins on it: inserting a
+ * question above another must not silently re-point every answer already
+ * given. Collisions are separated server-side, so a near-duplicate here is
+ * safe.
+ */
+export function intakeQuestionId(label: string, index: number): string {
+  const slug = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+  return slug || `q${index + 1}`;
 }

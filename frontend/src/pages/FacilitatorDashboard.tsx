@@ -772,6 +772,41 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
                 <em>“{b.client_notes}”</em>
               </p>
             )}
+
+            {/* The intake answers, rendered from the labels stored *with* them
+                rather than by looking the questions up again — a form rewritten
+                since must not change what this client was asked (0032). */}
+            {b.intake_answers && b.intake_answers.length > 0 && (
+              <details style={{ margin: '0 0 0.5rem' }}>
+                <summary className="small">
+                  Their pre-session answers
+                  {b.intake_completed_at
+                    ? ` · ${formatInZone(b.intake_completed_at, zone, { dateStyle: 'medium', timeStyle: undefined })}`
+                    : ''}
+                </summary>
+                <dl className="small" style={{ margin: '0.4rem 0 0' }}>
+                  {b.intake_answers.map((a) => (
+                    <div key={a.id} style={{ marginBottom: '0.35rem' }}>
+                      <dt className="muted">{a.label}</dt>
+                      <dd style={{ margin: 0 }}>{a.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            )}
+
+            {/* Only worth saying for a session that has not happened yet:
+                afterwards it is a fact about the past, not something to chase. */}
+            {b.status === 'confirmed' &&
+              isFuture &&
+              !b.intake_completed_at &&
+              b.facilitator_services?.intake_questions &&
+              b.facilitator_services.intake_questions.length > 0 && (
+                <p className="small" style={{ margin: '0 0 0.5rem', color: '#8a5a08' }}>
+                  They haven't filled in your pre-session form yet. Their reminder email asks them
+                  to.
+                </p>
+              )}
             {b.proposed_starts_at && (
               <div className="alert alert-info" style={{ marginBottom: '0.5rem' }}>
                 Waiting on your client — you suggested{' '}

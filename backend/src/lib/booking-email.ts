@@ -142,6 +142,12 @@ export interface BookingEmailContext {
   clientTimezone?: string | null;
   meetingUrl?: string | null;
   isFree: boolean;
+  /**
+   * True when this session has an intake form the client has not filled in.
+   * The reminder is the last useful moment to ask (0032) — for wellness work
+   * the answers are often screening rather than paperwork.
+   */
+  intakePending?: boolean;
 }
 
 /**
@@ -264,6 +270,12 @@ export async function sendBookingReminder(ctx: BookingEmailContext): Promise<voi
         { label: 'With', value: escapeHtml(ctx.facilitatorName) },
         { label: 'When', value: escapeHtml(when.forClient) },
       ]) +
+      (ctx.intakePending
+        ? note(
+            'Your facilitator has a short form they would like you to fill in before this ' +
+              `session. You can do that at ${link(ACCOUNT_BOOKINGS_URL, 'your bookings')}.`,
+          )
+        : '') +
       (ctx.meetingUrl ? button('Join the session', ctx.meetingUrl) : '') +
       note(
         ctx.meetingUrl
@@ -275,6 +287,9 @@ export async function sendBookingReminder(ctx: BookingEmailContext): Promise<voi
   const clientText = renderText(`Coming up: ${ctx.serviceTitle} with ${ctx.facilitatorName}`, [
     `When: ${when.forClient}`,
     joinLine,
+    ...(ctx.intakePending
+      ? ['', `Your facilitator has a short form to fill in first: ${ACCOUNT_BOOKINGS_URL}`]
+      : []),
     '',
     "If you can't make it, let your facilitator know as soon as you can.",
   ]);

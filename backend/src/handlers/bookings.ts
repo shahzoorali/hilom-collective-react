@@ -43,6 +43,11 @@ import {
 } from '../lib/booking-domain.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import {
+  parseIntakeQuestions,
+  validateIntakeAnswers,
+  IntakeError,
+} from '../lib/intake.js';
+import {
   sendBookingCancelled,
   sendBookingRescheduled,
   sendRescheduleDeclined,
@@ -82,10 +87,14 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (path.endsWith('/status')) return await status(bookingId, user.email);
     if (path.endsWith('/cancel')) return await cancel(bookingId, user.email);
     if (path.endsWith('/reschedule')) return await reschedule(bookingId, user.email, event);
+    if (path.endsWith('/intake')) return await intake(bookingId, user.email, method, event);
     if (path.endsWith('/accept-time')) return await respondToProposal(bookingId, user.email, true);
     if (path.endsWith('/decline-time')) return await respondToProposal(bookingId, user.email, false);
     return notFound();
   } catch (err) {
+    // A client mis-answering an intake form is a 400 with the question that
+    // needs answering, not an opaque 500.
+    if (err instanceof IntakeError) return badRequest(err.message);
     return serverError('bookings', err);
   }
 }
@@ -120,7 +129,7 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 }
 
 const BOOKING_COLUMNS =
-  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, proposed_starts_at, proposed_at, proposed_note, created_at';
+  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, proposed_starts_at, proposed_at, proposed_note, intake_answers, intake_completed_at, created_at';
 
 /**
  * The embedded relations a mutating booking path needs.
@@ -134,7 +143,7 @@ const BOOKING_FACILITATOR_COLUMNS =
   'id, slug, email, display_name, timezone, vacation_until, status, platform_fee_bps';
 
 const BOOKING_SERVICE_COLUMNS =
-  'id, title, duration_minutes, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, price_centavos, currency, kind, meeting_url, refund_full_hours, refund_half_hours';
+  'id, title, duration_minutes, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, price_centavos, currency, kind, meeting_url, refund_full_hours, refund_half_hours, intake_questions';
 
 /**
  * Loads facilitator + service together, both scoped to a published profile.
@@ -228,6 +237,14 @@ async function create(
     halfHours: service.refund_half_hours,
   });
 
+  // Validated against the service's *current* form, and required questions are
+  // enforced here rather than only in the browser — an intake a facilitator
+  // relies on for screening has to be more than a client-side asterisk. The
+  // answers carry a copy of the label each was answering; see 0032.
+  const intakeQuestions = parseIntakeQuestions(service.intake_questions);
+  const intakeAnswers = validateIntakeAnswers(intakeQuestions, body.intake);
+  const intakeCompletedAt = intakeQuestions.length > 0 ? now.toISOString() : null;
+
   const name =
     [user.givenName, user.familyName].filter(Boolean).join(' ') ||
     (typeof body.name === 'string' ? body.name.trim() : '') ||
@@ -261,6 +278,8 @@ async function create(
       // edits their policy next month.
       refund_full_hours: refundPolicy.fullHours,
       refund_half_hours: refundPolicy.halfHours,
+      intake_answers: intakeAnswers,
+      intake_completed_at: intakeCompletedAt,
       hold_expires_at: isFree ? null : holdExpiry(now),
     })
     .select('id')
@@ -370,7 +389,7 @@ async function listMine(email: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
   const { data, error } = await supabase
     .from('bookings')
-    .select(`${BOOKING_COLUMNS}, facilitators(slug, display_name, photo_url, timezone), facilitator_services(title, duration_minutes)`)
+    .select(`${BOOKING_COLUMNS}, facilitators(slug, display_name, photo_url, timezone), facilitator_services(title, duration_minutes, intake_questions)`)
     .eq('client_email', email.toLowerCase())
     // Holds are an implementation detail of checkout, not something to show in
     // a bookings list — an abandoned one is about to be deleted anyway.
@@ -486,6 +505,74 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     refundCentavos: decision.refundCentavos,
     refundNote: decision.reason,
   });
+}
+
+/**
+ * The client's own intake form: read it, or answer it later (0032).
+ *
+ *   GET  /bookings/{id}/intake  — the questions, and whatever they have said
+ *   PUT  /bookings/{id}/intake  — submit or revise their answers
+ *
+ * Answering after the fact matters as much as answering at booking time. The
+ * form is asked during checkout, when someone is mid-payment and wants to be
+ * finished; a health question they half-remember is exactly the one they will
+ * want to correct that evening. So the form stays open until the session
+ * starts, and required questions are enforced on every submission — a revision
+ * that quietly emptied a required answer would leave the facilitator believing
+ * they had screened something they had not.
+ *
+ * It closes once the session has started. After that it is a record of what
+ * was said beforehand, and editing it would be rewriting the facilitator's
+ * notes on a session that already happened.
+ */
+async function intake(
+  bookingId: string,
+  email: string,
+  method: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const loaded = await loadOwned(bookingId, email);
+  if (!loaded) return notFound('Booking not found');
+  const { supabase, booking } = loaded;
+
+  const questions = parseIntakeQuestions(
+    (booking.facilitator_services as { intake_questions?: unknown } | null)?.intake_questions,
+  );
+
+  if (method === 'GET') {
+    return ok({
+      questions,
+      answers: booking.intake_answers ?? [],
+      completedAt: booking.intake_completed_at ?? null,
+      // The screen needs to know whether editing is still open, and the reason
+      // is worth stating rather than leaving a form mysteriously read-only.
+      editable: new Date(booking.starts_at) > new Date() && booking.status === 'confirmed',
+    });
+  }
+
+  if (method !== 'PUT') return badRequest(`Unsupported method ${method}`);
+
+  if (booking.status !== 'confirmed') {
+    return badRequest('This form can only be filled in for a confirmed session');
+  }
+  if (new Date(booking.starts_at) <= new Date()) {
+    return badRequest('That session has already started — this form is now a record of what you said before it.');
+  }
+  if (questions.length === 0) return badRequest('This session has no intake form');
+
+  const body = parseBody(event);
+  const answers = validateIntakeAnswers(questions, body.intake ?? body.answers);
+
+  const { error } = await supabase
+    .from('bookings')
+    .update({ intake_answers: answers, intake_completed_at: new Date().toISOString() })
+    .eq('id', bookingId)
+    // Belt and braces with the status check above: a booking cancelled between
+    // the read and this write must not accept a new submission.
+    .eq('status', 'confirmed');
+
+  if (error) throw error;
+  return ok({ answers, completedAt: new Date().toISOString() });
 }
 
 /**

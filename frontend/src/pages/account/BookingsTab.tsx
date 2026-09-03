@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { money } from '../../components/Layout';
 import SlotPicker, { type SlotPickerHandle } from '../../components/SlotPicker';
+import IntakeForm from '../../components/IntakeForm';
 import { currentUser } from '../../lib/auth';
 import {
   cancelBooking,
@@ -25,6 +26,9 @@ import {
   respondToProposedTime,
   bookingRefundPolicy,
   formatDualZone,
+  getMyBookingIntake,
+  saveMyBookingIntake,
+  type IntakeQuestion,
   formatInZone,
   viewerTimezone,
   type Booking,
@@ -52,6 +56,126 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled_by_facilitator: 'Cancelled by facilitator',
   refunded: 'Refunded',
 };
+
+/**
+ * The client's own intake form, after booking.
+ *
+ * The form is first asked during checkout, when someone is mid-payment and
+ * wants to be finished — which is exactly when a half-remembered health answer
+ * gets typed. So it stays open here until the session starts, and this panel
+ * exists to make revising it as easy as it should have been to get right the
+ * first time.
+ *
+ * Loaded on demand rather than with the bookings list: most sessions have no
+ * form at all, and fetching one per booking to discover that would be a
+ * request per row for nothing.
+ */
+function IntakePanel({ booking }: { booking: Booking }) {
+  const [open, setOpen] = useState(false);
+  const [questions, setQuestions] = useState<IntakeQuestion[] | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [editable, setEditable] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    getMyBookingIntake(booking.id)
+      .then((r) => {
+        if (!live) return;
+        setQuestions(r.questions);
+        setEditable(r.editable);
+        setValues(Object.fromEntries(r.answers.map((a) => [a.id, a.value])));
+      })
+      .catch((err: Error) => live && setError(err.message));
+    return () => {
+      live = false;
+    };
+  }, [open, booking.id]);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await saveMyBookingIntake(booking.id, values);
+      setSaved(true);
+    } catch (err) {
+      // Includes the server's "please answer X" for a required question, which
+      // is the message the client actually needs.
+      setError(err instanceof Error ? err.message : 'Could not save your answers');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Nothing to offer unless the facilitator asked something. Read off the
+  // joined service rather than fetched, so a page of sessions with no forms
+  // costs no requests at all.
+  if (!booking.facilitator_services?.intake_questions?.length) return null;
+
+  const unanswered = !booking.intake_completed_at;
+
+  return (
+    <div style={{ marginTop: '0.5rem' }}>
+      <button type="button" className="btn btn-ghost small" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Close the form' : unanswered ? 'Fill in the pre-session form' : 'Review your answers'}
+      </button>
+
+      {/* Said plainly on the closed state too — a form the facilitator is
+          relying on is not something to discover by expanding a panel. */}
+      {!open && unanswered && (
+        <p className="small" style={{ margin: '0.35rem 0 0', color: '#8a5a08' }}>
+          Your facilitator has a short form they would like you to fill in before this session.
+        </p>
+      )}
+
+      {open && (
+        <div className="panel" style={{ marginTop: '0.5rem' }}>
+          {error && <div className="alert alert-error">{error}</div>}
+          {questions === null && !error && <div className="spinner" aria-label="Loading" />}
+
+          {questions !== null && (
+            <>
+              <IntakeForm
+                questions={questions}
+                values={values}
+                disabled={!editable || busy}
+                onChange={(id, value) => {
+                  setValues((current) => ({ ...current, [id]: value }));
+                  setSaved(false);
+                }}
+              />
+
+              {editable ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-accent"
+                    disabled={busy}
+                    onClick={() => void save()}
+                  >
+                    {busy ? 'Saving…' : saved ? 'Saved' : 'Save my answers'}
+                  </button>
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    You can change these any time before the session starts.
+                  </p>
+                </>
+              ) : (
+                <p className="small muted" style={{ marginBottom: 0 }}>
+                  This session has started, so these answers are now a record of what you said
+                  beforehand.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function BookingsTab() {
   const user = currentUser();
@@ -225,6 +349,10 @@ export default function BookingsTab() {
                   with <Link to={`/facilitators/${b.facilitators.slug}`}>{b.facilitators.display_name}</Link>
                 </p>
               )}
+
+              {/* Answerable right up until the session starts — see 0032 and
+                  IntakePanel for why revising matters as much as answering. */}
+              <IntakePanel booking={b} />
 
               {/* An offer, not a change — the session above is still the real
                   one until this is accepted. The copy has to keep saying so,

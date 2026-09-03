@@ -88,10 +88,11 @@ interface ReminderRow {
   client_email: string;
   client_name: string | null;
   client_timezone: string | null;
+  intake_completed_at: string | null;
   price_centavos: number;
   meeting_url: string | null;
   facilitators: { email: string; display_name: string; timezone: string } | null;
-  facilitator_services: { title: string } | null;
+  facilitator_services: { title: string; intake_questions?: unknown[] } | null;
 }
 
 /**
@@ -118,8 +119,8 @@ async function sendDueReminders(now: Date): Promise<number> {
   const { data, error } = await supabase
     .from('bookings')
     .select(
-      'id, starts_at, client_email, client_name, client_timezone, price_centavos, meeting_url, ' +
-        'facilitators(email, display_name, timezone), facilitator_services(title)',
+      'id, starts_at, client_email, client_name, client_timezone, price_centavos, meeting_url, intake_completed_at, ' +
+        'facilitators(email, display_name, timezone), facilitator_services(title, intake_questions)',
     )
     .eq('status', 'confirmed')
     .is('reminder_sent_at', null)
@@ -162,6 +163,12 @@ async function sendDueReminders(now: Date): Promise<number> {
         facilitatorName: facilitator.display_name,
         facilitatorTimezone: facilitator.timezone,
         clientTimezone: booking.client_timezone,
+        // Only nudged when the service actually asks something — an empty
+        // form must not produce a reminder pointing at nothing.
+        intakePending:
+          booking.intake_completed_at === null &&
+          Array.isArray(service.intake_questions) &&
+          service.intake_questions.length > 0,
         serviceTitle: service.title,
         startsAt: booking.starts_at,
         meetingUrl: booking.meeting_url,

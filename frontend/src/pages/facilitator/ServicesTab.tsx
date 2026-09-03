@@ -16,12 +16,14 @@ import {
   createMyService,
   deactivateMyService,
   describeRefundPolicy,
+  intakeQuestionId,
   formatDuration,
   listMyConnections,
   listMyServices,
   updateMyService,
   type Connection,
   type FacilitatorService,
+  type IntakeQuestion,
   type IntegrationProvider,
   type ServiceKind,
 } from '../../lib/booking';
@@ -50,6 +52,7 @@ interface Draft {
   cancellation_policy: string;
   refund_full_hours: number;
   refund_half_hours: number;
+  intake_questions: IntakeQuestion[];
   is_active: boolean;
   sort_order: number;
 }
@@ -71,6 +74,7 @@ const blankDraft = (): Draft => ({
   cancellation_policy: '',
   refund_full_hours: 24,
   refund_half_hours: 12,
+  intake_questions: [],
   is_active: true,
   sort_order: 0,
 });
@@ -93,6 +97,7 @@ function toDraft(s: FacilitatorService): Draft {
     cancellation_policy: s.cancellation_policy ?? '',
     refund_full_hours: s.refund_full_hours ?? 24,
     refund_half_hours: s.refund_half_hours ?? 12,
+    intake_questions: s.intake_questions ?? [],
     is_active: s.is_active,
     sort_order: s.sort_order,
   };
@@ -118,9 +123,151 @@ function toInput(d: Draft): Record<string, unknown> {
     cancellation_policy: d.cancellation_policy || null,
     refund_full_hours: d.refund_full_hours,
     refund_half_hours: d.refund_half_hours,
+    // Questions with no label are half-typed rows the facilitator abandoned;
+    // the server rejects them, so they are dropped here rather than turning a
+    // save into an error about something they had already given up on.
+    intake_questions: d.intake_questions.filter((q) => q.label.trim()),
     is_active: d.is_active,
     sort_order: d.sort_order,
   };
+}
+
+/**
+ * Build the questions a client is asked before this session (0032).
+ *
+ * Kept small on purpose. This is a screening form — "is there anything about
+ * your health I should know", "have you done this before", a consent tick —
+ * not a form builder, and every extra field type is one more thing a client has
+ * to work out how to answer on a phone thirty seconds before paying.
+ *
+ * Ids are derived from the label and assigned when a question is *created*,
+ * then never changed. An answer joins on the id, so re-deriving it from an
+ * edited label would orphan every answer already given.
+ */
+function IntakeEditor({
+  questions,
+  onChange,
+}: {
+  questions: IntakeQuestion[];
+  onChange: (questions: IntakeQuestion[]) => void;
+}) {
+  const update = (index: number, patch: Partial<IntakeQuestion>) =>
+    onChange(questions.map((q, i) => (i === index ? { ...q, ...patch } : q)));
+
+  const add = () =>
+    onChange([
+      ...questions,
+      {
+        // A placeholder id, replaced once the label is typed — see `blur` below.
+        id: `q${questions.length + 1}-${Date.now().toString(36)}`,
+        label: '',
+        help: null,
+        type: 'text',
+        required: false,
+        options: [],
+      },
+    ]);
+
+  return (
+    <>
+      <h4 style={{ marginBottom: '0.25rem' }}>Before the session</h4>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Questions your client answers when they book. They can revise their answers up until the
+        session starts, and you'll see them on the booking. Keep it short — this is asked mid-
+        checkout.
+      </p>
+
+      {questions.map((q, index) => (
+        <div key={q.id} className="card" style={{ marginBottom: '0.5rem' }}>
+          <label className="field">
+            <span>Question</span>
+            <input
+              value={q.label}
+              placeholder="Is there anything about your health I should know?"
+              onChange={(e) => update(index, { label: e.target.value })}
+              onBlur={(e) => {
+                // Settled on blur, and only while the question is still new:
+                // an answered question's id is load-bearing and re-deriving it
+                // from an edited label would orphan those answers.
+                if (!q.label.trim()) return;
+                const settled = intakeQuestionId(e.target.value, index);
+                if (settled !== q.id && !questions.some((other) => other.id === settled)) {
+                  update(index, { id: settled });
+                }
+              }}
+            />
+          </label>
+
+          <div className="two-col">
+            <label className="field">
+              <span>Answer type</span>
+              <select
+                value={q.type}
+                onChange={(e) =>
+                  update(index, {
+                    type: e.target.value as IntakeQuestion['type'],
+                    // A type that has no options must not keep stale ones.
+                    options: e.target.value === 'choice' ? q.options : [],
+                  })
+                }
+              >
+                <option value="text">Short answer</option>
+                <option value="longtext">Long answer</option>
+                <option value="choice">Choose one</option>
+                <option value="checkbox">Tick to confirm</option>
+              </select>
+            </label>
+
+            <label className="field row" style={{ gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={q.required}
+                onChange={(e) => update(index, { required: e.target.checked })}
+              />
+              <span>They must answer this</span>
+            </label>
+          </div>
+
+          {q.type === 'choice' && (
+            <label className="field">
+              <span>Options, one per line</span>
+              <textarea
+                rows={3}
+                value={q.options.join('\n')}
+                placeholder={'Never\nOnce or twice\nRegularly'}
+                onChange={(e) =>
+                  update(index, {
+                    options: e.target.value.split('\n').map((line) => line.trim()).filter(Boolean),
+                  })
+                }
+              />
+            </label>
+          )}
+
+          <label className="field">
+            <span>Help text (optional)</span>
+            <input
+              value={q.help ?? ''}
+              onChange={(e) => update(index, { help: e.target.value || null })}
+              placeholder="Anything ongoing, or medication you're taking."
+            />
+          </label>
+
+          <button
+            type="button"
+            className="btn btn-ghost small"
+            onClick={() => onChange(questions.filter((_, i) => i !== index))}
+          >
+            Remove this question
+          </button>
+        </div>
+      ))}
+
+      <button type="button" className="btn btn-ghost small" onClick={add}>
+        + Add a question
+      </button>
+    </>
+  );
 }
 
 export default function ServicesTab() {
@@ -462,6 +609,11 @@ export default function ServicesTab() {
                   placeholder="Anything else clients should know — shown under the policy above."
                 />
               </label>
+
+              <IntakeEditor
+                questions={draft.intake_questions}
+                onChange={(questions) => set('intake_questions', questions)}
+              />
 
               <label className="field row" style={{ gap: '0.5rem', alignItems: 'center' }}>
                 <input

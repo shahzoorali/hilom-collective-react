@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { money } from '../components/Layout';
 import SlotPicker, { type SlotPickerHandle } from '../components/SlotPicker';
+import IntakeForm from '../components/IntakeForm';
 import { currentUser, login } from '../lib/auth';
 import {
   createBooking,
@@ -33,6 +34,8 @@ export default function BookingFlow() {
 
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
+  // The facilitator's intake answers, keyed by question id (0032).
+  const [intake, setIntake] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -63,6 +66,10 @@ export default function BookingFlow() {
         serviceId,
         startsAt: selectedSlot,
         notes: notes.trim() || undefined,
+        // Validated again server-side, including the required questions — for
+        // wellness work these are screening, and a check that lives only here
+        // is one the facilitator would be relying on without it being true.
+        intake: Object.keys(intake).length > 0 ? intake : undefined,
       });
 
       if (result.free) {
@@ -180,6 +187,22 @@ export default function BookingFlow() {
               </strong>{' '}
               <span className="small muted">({zoneLabel(viewerZone)})</span>
             </p>
+
+            {/* The facilitator's own questions, before the free-text box: they
+                are the ones that were asked deliberately. */}
+            {service.intake_questions?.length > 0 && (
+              <>
+                <p className="small muted" style={{ marginBottom: '0.5rem' }}>
+                  {facilitator.display_name.split(' ')[0]} would like to know a few things before
+                  your session. You can change your answers later, up until it starts.
+                </p>
+                <IntakeForm
+                  questions={service.intake_questions}
+                  values={intake}
+                  onChange={(id, value) => setIntake((current) => ({ ...current, [id]: value }))}
+                />
+              </>
+            )}
 
             <label className="field">
               <span>Anything you'd like {facilitator.display_name.split(' ')[0]} to know? (optional)</span>
