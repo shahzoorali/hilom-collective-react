@@ -190,6 +190,109 @@ input:focus, select:focus, textarea:focus {
 .field { margin-bottom: 1rem; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
 
+/* Section heading inside a long form (the facilitator application). A plain
+   <h2> sits too close to the field above it to read as a divider. */
+.form-section-heading {
+  font-size: 1.05rem; margin: 2.25rem 0 1rem;
+  padding-top: 1.25rem; border-top: 1px solid var(--line);
+}
+.form-section-heading:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+
+/* Multi-select groups. `fieldset` and `legend` rather than a div and a label
+   so the whole group is announced as one question by a screen reader — a bare
+   label would only name the first checkbox. */
+.choice-set { border: 0; padding: 0; margin: 0 0 1.5rem; }
+.choice-set > legend {
+  padding: 0; margin-bottom: 0.3rem;
+  font-size: 0.85rem; font-weight: 600;
+}
+
+/* One checkbox + its explanatory text, side by side. Checkbox width is pinned
+   because the global `input` rule above sets width:100%, which would otherwise
+   stretch a checkbox across the whole row. */
+.choice-row, .choice-card {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.7rem;
+  align-items: start; cursor: pointer; font-weight: 400;
+  padding: 0.85rem 1rem; margin-bottom: 0.6rem;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: #fff; transition: border-color 0.15s ease, background 0.15s ease;
+}
+.choice-row:hover, .choice-card:hover { border-color: var(--forest); }
+.choice-row input[type='checkbox'], .choice-card input[type='checkbox'] {
+  width: auto; margin-top: 0.15rem;
+}
+.choice-row--on, .choice-card--on { border-color: var(--forest); background: var(--cream); }
+
+.choice-card__body { display: block; }
+.choice-card__eyebrow {
+  display: block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--forest); margin-bottom: 0.25rem;
+}
+.choice-card__title { display: block; font-size: 1rem; margin-bottom: 0.5rem; }
+.choice-card__list { margin: 0 0 0.6rem; padding-left: 1.1rem; font-size: 0.87rem; }
+.choice-card__list li { margin-bottom: 0.15rem; }
+.choice-card__note {
+  display: block; font-size: 0.83rem; color: var(--muted); margin-bottom: 0.35rem;
+}
+.choice-card__meta { display: block; font-size: 0.83rem; font-weight: 700; }
+
+/* "What happens next" — the three outcomes shown after an application is
+   submitted. Rendered in the site palette rather than the deck's terracotta,
+   which appears nowhere else here. */
+.next-steps {
+  margin-top: 1.5rem; padding: 2rem 1.75rem;
+  background: var(--cream); border-radius: var(--radius);
+}
+.next-steps__eyebrow {
+  margin: 0 0 0.35rem; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--forest);
+}
+.next-steps__heading { margin: 0 0 0.5rem; font-size: 1.6rem; }
+.next-steps__lede { margin: 0 0 1.75rem; color: var(--muted); }
+
+.next-steps__list { list-style: none; margin: 0; padding: 0; }
+.next-steps__item {
+  display: grid; grid-template-columns: auto 1fr; gap: 1rem;
+  align-items: start; margin-bottom: 1.4rem;
+}
+.next-steps__number {
+  display: flex; align-items: center; justify-content: center;
+  /* Fixed rather than padded, so all three circles match whatever the
+     numerals inside them are. */
+  width: 2.6rem; height: 2.6rem; border-radius: 50%;
+  background: var(--forest); color: #fff;
+  font-weight: 700; font-size: 0.9rem;
+}
+.next-steps__body { display: block; padding-top: 0.35rem; }
+.next-steps__name {
+  display: block; color: var(--forest-dark);
+  font-size: 0.95rem; letter-spacing: 0.03em; text-transform: uppercase;
+  margin-bottom: 0.15rem;
+}
+.next-steps__detail { display: block; }
+
+.next-steps__pathway {
+  display: inline-block; margin: 0.5rem 0 1.25rem; padding: 0.7rem 1.4rem;
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-weight: 700; color: var(--forest-dark);
+}
+/* Each stage stays intact; the line breaks between them or not at all. */
+.next-steps__stage { white-space: nowrap; }
+.next-steps__closing {
+  margin: 0; font-style: italic; color: var(--forest-dark);
+}
+
+@media (max-width: 560px) {
+  .next-steps { padding: 1.5rem 1.15rem; }
+  .next-steps__item { gap: 0.75rem; }
+  .next-steps__number { width: 2.15rem; height: 2.15rem; font-size: 0.8rem; }
+  /* Tightened so the pathway still reads as one pill at 375px rather than
+     wrapping onto a second line. It stays wrappable — the break opportunities
+     around the arrows are still there for anything narrower. */
+  .next-steps__pathway { padding: 0.65rem 1rem; font-size: 0.83rem; }
+}
+
 .alert { padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.9rem; margin-bottom: 1rem; }
 .alert-error { background: var(--danger-bg); color: var(--danger-fg); border: 1px solid var(--danger-line); }
 .alert-info { background: var(--cream); color: var(--forest-dark); border: 1px solid #e6d7ac; }

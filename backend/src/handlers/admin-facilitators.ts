@@ -23,6 +23,8 @@
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
@@ -32,9 +34,21 @@ import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 
 const ADMIN_FACILITATOR_COLUMNS =
-  'id, slug, email, cognito_sub, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at';
+  'id, slug, email, cognito_sub, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at, ' +
+  // Intake, from the application form (0023). Read here and nowhere else —
+  // none of it is in the public column grant, and none of it belongs on a
+  // profile.
+  'contact_method, years_experience, support_needed, program_status, website_url, ' +
+  'cert_document_key, cert_document_name, referral_source, referral_source_other, ' +
+  'privacy_accepted_at, privacy_policy_version';
 
 const VALID_STATUSES = new Set(['applied', 'approved', 'published', 'suspended', 'rejected']);
+
+/** Kept in step with SUPPORT_TRACKS in facilitator-input.ts. */
+const SUPPORT_TRACKS = new Set(['design', 'build_launch', 'live_experiences']);
+
+const s3 = new S3Client({});
+const DOCS_BUCKET = process.env.FACILITATOR_DOCS_BUCKET ?? '';
 
 /** Statuses that mean "this person should be able to open the dashboard". */
 const DASHBOARD_STATUSES = new Set(['approved', 'published']);
@@ -74,6 +88,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       if (method === 'POST') return await createFacilitator(supabase, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
+    if (method === 'GET' && path.endsWith('/certificate')) {
+      return await getCertificateUrl(supabase, facilitatorId);
+    }
     if (method === 'GET') return await getFacilitator(supabase, facilitatorId);
     if (method === 'PATCH') return await patchFacilitator(supabase, facilitatorId, parseBody(event));
     return badRequest(`Unsupported method ${method}`);
@@ -97,6 +114,7 @@ async function listFacilitators(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyResultV2> {
   const status = event.queryStringParameters?.status?.trim();
+  const support = event.queryStringParameters?.support?.trim();
 
   let query = supabase
     .from('facilitators')
@@ -104,10 +122,51 @@ async function listFacilitators(
     .order('applied_at', { ascending: false });
 
   if (status && VALID_STATUSES.has(status)) query = query.eq('status', status);
+  // "Show me everyone who wants help with live experiences." Applications now
+  // arrive tagged with which service track they are asking for, and the person
+  // who reviews a Build & Launch application is not always the person who
+  // reviews a retreat.
+  if (support && SUPPORT_TRACKS.has(support)) query = query.contains('support_needed', [support]);
 
   const { data, error } = await query;
   if (error) throw error;
   return ok({ facilitators: data ?? [] });
+}
+
+/**
+ * A short-lived signed URL for an applicant's credential document.
+ *
+ * The document lives in a private bucket with no distribution in front of it,
+ * so this is the only way to read one — deliberately, because it is a personal
+ * record carrying somebody's legal name. The URL is minted per request and
+ * expires in five minutes rather than being stored anywhere, so a link that
+ * leaks out of an admin's browser history is worth nothing by the time anyone
+ * finds it.
+ */
+async function getCertificateUrl(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('facilitators')
+    .select('cert_document_key, cert_document_name')
+    .eq('id', facilitatorId)
+    .maybeSingle<{ cert_document_key: string | null; cert_document_name: string | null }>();
+
+  if (error) throw error;
+  if (!data) return notFound('Facilitator not found');
+  if (!data.cert_document_key) return notFound('No document was submitted with this application');
+  if (!DOCS_BUCKET) {
+    return serverError('adminFacilitators.getCertificateUrl', new Error('docs bucket not configured'));
+  }
+
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: DOCS_BUCKET, Key: data.cert_document_key }),
+    { expiresIn: 300 },
+  );
+
+  return ok({ url, filename: data.cert_document_name });
 }
 
 /**

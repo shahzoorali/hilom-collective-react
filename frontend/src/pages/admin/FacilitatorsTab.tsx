@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { money } from '../../components/Layout';
 import {
   adminCreateFacilitator,
+  adminGetCertificateUrl,
   adminGetFacilitator,
   adminListFacilitators,
   adminPatchFacilitator,
@@ -22,6 +23,36 @@ import {
   type FacilitatorService,
   type FacilitatorStatus,
 } from '../../lib/booking';
+import {
+  CONTACT_METHODS,
+  PROGRAM_STATUSES,
+  REFERRAL_SOURCES,
+  SUPPORT_TRACKS,
+  YEARS_EXPERIENCE,
+  labelFor,
+} from '../../lib/facilitator-intake';
+
+/**
+ * What must be true before a profile can go in the directory.
+ *
+ * These used to be warnings on the *approve* step, because the application
+ * form collected them. It no longer does — an `applied` row now legitimately
+ * has no credentials and no scope note, and flagging that at review time would
+ * mean flagging every single application.
+ *
+ * They still have to be checked, though, and publishing is where it matters:
+ * credentials and a scope-of-practice statement are what let a client tell
+ * what kind of practitioner they are booking. So the check moved with the
+ * decision it belongs to.
+ */
+function publishBlockers(f: AdminFacilitator, serviceCount: number): string[] {
+  const missing: string[] = [];
+  if (f.credentials.length === 0) missing.push('No credentials listed');
+  if (!f.scope_note) missing.push('No scope-of-practice statement');
+  if (!f.bio) missing.push('No “my approach” copy');
+  if (serviceCount === 0) missing.push('No services set up — nothing to book');
+  return missing;
+}
 
 const STATUS_FILTERS: { label: string; value: string }[] = [
   { label: 'Needs review', value: 'applied' },
@@ -42,6 +73,7 @@ const STATUS_PILL: Record<string, string> = {
 
 export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
   const [filter, setFilter] = useState('applied');
+  const [supportFilter, setSupportFilter] = useState('');
   const [facilitators, setFacilitators] = useState<AdminFacilitator[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{
@@ -67,10 +99,10 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
   const [addError, setAddError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
-    adminListFacilitators(adminKey, filter || undefined)
+    adminListFacilitators(adminKey, filter || undefined, supportFilter || undefined)
       .then(setFacilitators)
       .catch((err: Error) => setError(err.message));
-  }, [adminKey, filter]);
+  }, [adminKey, filter, supportFilter]);
 
   useEffect(() => reload(), [reload]);
 
@@ -138,6 +170,24 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  /**
+   * Opens a credential document in a new tab.
+   *
+   * The signed URL is minted on click and lives five minutes, so it cannot be
+   * fetched with the row and held. `window.open` before the await would be
+   * cleaner for popup blockers but would mean opening a blank tab that then
+   * fails visibly if the request errors, so the error path wins here.
+   */
+  async function openCertificate(facilitatorId: string) {
+    setError(null);
+    try {
+      const { url } = await adminGetCertificateUrl(adminKey, facilitatorId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open that document');
+    }
+  }
+
   const lines = (value: string) =>
     value.split('\n').map((s) => s.trim()).filter(Boolean);
 
@@ -185,6 +235,16 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
           {STATUS_FILTERS.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+        <select
+          value={supportFilter}
+          onChange={(e) => setSupportFilter(e.target.value)}
+          aria-label="Filter by support track"
+        >
+          <option value="">Any track</option>
+          {SUPPORT_TRACKS.map((t) => (
+            <option key={t.value} value={t.value}>{t.number} {t.name}</option>
           ))}
         </select>
         <button
@@ -385,12 +445,110 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
 
                   {detail.facilitator.headline && <p>{detail.facilitator.headline}</p>}
 
+                  {/* ---------------------------------------------------------
+                      The application itself. This is what the approve/reject
+                      decision is actually made on — everything below it is
+                      profile copy the facilitator writes after approval. */}
+                  <h4>Application</h4>
+
+                  <p className="small" style={{ margin: '0 0 0.4rem' }}>
+                    Prefers <strong>{labelFor(CONTACT_METHODS, detail.facilitator.contact_method)}</strong>
+                    {' · '}
+                    {labelFor(YEARS_EXPERIENCE, detail.facilitator.years_experience)} in practice
+                  </p>
+
+                  <p className="small" style={{ margin: '0 0 0.6rem' }}>
+                    Heard about Hilom via{' '}
+                    {detail.facilitator.referral_source === 'other'
+                      ? detail.facilitator.referral_source_other || 'Other'
+                      : labelFor(REFERRAL_SOURCES, detail.facilitator.referral_source)}
+                  </p>
+
+                  <p className="small" style={{ margin: '0 0 0.3rem' }}><strong>Wants support with</strong></p>
+                  {detail.facilitator.support_needed.length === 0 ? (
+                    // Not a gap in the form — "I'm not sure yet, recommend
+                    // something" is a real answer to the question below, and
+                    // this is what it looks like on the row.
+                    <p className="small muted" style={{ margin: '0 0 0.6rem' }}>
+                      No track chosen — asked for Hilom's recommendation.
+                    </p>
+                  ) : (
+                    <div className="row" style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', margin: '0 0 0.6rem' }}>
+                      {detail.facilitator.support_needed.map((track) => (
+                        <span key={track} className="pill pill-ok">
+                          {labelFor(SUPPORT_TRACKS, track)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="small" style={{ margin: '0 0 0.3rem' }}><strong>Where they are now</strong></p>
+                  <ul className="small" style={{ margin: '0 0 0.6rem' }}>
+                    {detail.facilitator.program_status.map((status) => (
+                      <li key={status}>{labelFor(PROGRAM_STATUSES, status)}</li>
+                    ))}
+                  </ul>
+
+                  {(detail.facilitator.website_url ||
+                    Object.keys(detail.facilitator.social_links ?? {}).length > 0) && (
+                    <p className="small" style={{ margin: '0 0 0.6rem' }}>
+                      {detail.facilitator.website_url && (
+                        <a href={detail.facilitator.website_url} target="_blank" rel="noreferrer">
+                          Website
+                        </a>
+                      )}
+                      {Object.entries(detail.facilitator.social_links ?? {}).map(([key, link]) => (
+                        <span key={key}>
+                          {' · '}
+                          {/^https?:/.test(String(link)) ? (
+                            <a href={String(link)} target="_blank" rel="noreferrer">{key}</a>
+                          ) : (
+                            String(link)
+                          )}
+                        </span>
+                      ))}
+                    </p>
+                  )}
+
+                  {detail.facilitator.cert_document_key && (
+                    <p className="small" style={{ margin: '0 0 0.6rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost small"
+                        onClick={() => void openCertificate(detail.facilitator.id)}
+                      >
+                        Open {detail.facilitator.cert_document_name ?? 'certification document'}
+                      </button>
+                    </p>
+                  )}
+
+                  {detail.facilitator.privacy_accepted_at && (
+                    <p className="small muted" style={{ margin: '0 0 0.6rem' }}>
+                      Privacy policy {detail.facilitator.privacy_policy_version ?? ''} accepted{' '}
+                      {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(
+                        new Date(detail.facilitator.privacy_accepted_at),
+                      )}
+                    </p>
+                  )}
+
+                  {detail.facilitator.bio && (
+                    <>
+                      <h4>About their work</h4>
+                      <div
+                        className="small"
+                        dangerouslySetInnerHTML={{ __html: detail.facilitator.bio }}
+                      />
+                    </>
+                  )}
+
+                  {/* ---------------------------------------------------------
+                      Public profile copy. Empty on a fresh application by
+                      design — the facilitator writes this in their dashboard
+                      after approval, which is what the checklist below tracks. */}
                   <h4>Credentials</h4>
                   {detail.facilitator.credentials.length === 0 ? (
-                    // Worth flagging: this is the field the whole review exists
-                    // to check, and an empty one should not slide past.
-                    <p className="small" style={{ color: 'var(--danger-fg, inherit)' }}>
-                      None given — worth asking before approving.
+                    <p className="small muted">
+                      Not added yet — they write these in their dashboard after approval.
                     </p>
                   ) : (
                     <ul>
@@ -401,19 +559,18 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
                   <h4>Scope of practice</h4>
                   <p className="small">
                     {detail.facilitator.scope_note || (
-                      <em>Not stated — required before publishing.</em>
+                      <em className="muted">Not added yet.</em>
                     )}
                   </p>
 
-                  {detail.facilitator.bio && (
-                    <>
-                      <h4>Approach</h4>
-                      <div
-                        className="small"
-                        dangerouslySetInnerHTML={{ __html: detail.facilitator.bio }}
+                  {/* The gate that replaced the old approve-time warnings. */}
+                  {detail.facilitator.status !== 'applied' &&
+                    detail.facilitator.status !== 'rejected' && (
+                      <PublishChecklist
+                        facilitator={detail.facilitator}
+                        serviceCount={detail.services.filter((s) => s.is_active).length}
                       />
-                    </>
-                  )}
+                    )}
 
                   <h4>Services ({detail.services.length})</h4>
                   {detail.services.map((s) => (
@@ -440,5 +597,45 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Whether this profile is ready for the directory.
+ *
+ * Informational rather than an enforced block on the Publish button: there are
+ * legitimate reasons to publish someone whose copy is thin — a launch, a
+ * facilitator Hilom is writing the profile for — and a hard gate would send
+ * whoever hits it looking for a way around it. What it must not do is let the
+ * omission be *invisible*, which is what happens today.
+ */
+function PublishChecklist({
+  facilitator,
+  serviceCount,
+}: {
+  facilitator: AdminFacilitator;
+  serviceCount: number;
+}) {
+  const blockers = publishBlockers(facilitator, serviceCount);
+
+  if (blockers.length === 0) {
+    return (
+      <div className="alert alert-success" style={{ marginTop: '1rem' }}>
+        Profile is complete — ready to publish.
+      </div>
+    );
+  }
+
+  return (
+    <div className="alert alert-info" style={{ marginTop: '1rem' }}>
+      <strong>Not ready for the directory yet</strong>
+      <ul className="small" style={{ margin: '0.4rem 0 0' }}>
+        {blockers.map((b) => <li key={b}>{b}</li>)}
+      </ul>
+      <p className="small" style={{ margin: '0.5rem 0 0' }}>
+        These are the facilitator's to fill in from their dashboard.
+        {facilitator.status === 'applied' && ' They get access once approved.'}
+      </p>
+    </div>
   );
 }

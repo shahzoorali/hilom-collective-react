@@ -21,6 +21,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import {
   ADMIN_KEY_SECRET_NAME,
@@ -39,6 +40,10 @@ import {
 export interface HilomMarketplaceStackProps extends HilomCommonProps {
   /** The core stack's HTTP API. Routes are attached to it, not to a new one. */
   readonly httpApiId: string;
+  /** Core-owned. An applicant's profile photo is written here, same as CMS media. */
+  readonly mediaBucket: s3.IBucket;
+  /** `https://dxxxx.cloudfront.net` — stored on every media_assets row. */
+  readonly mediaCdnBase: string;
 }
 
 export class HilomMarketplaceStack extends cdk.Stack {
@@ -69,7 +74,49 @@ export class HilomMarketplaceStack extends cdk.Stack {
     const facilitatorsPublic = makeFn('FacilitatorsPublicFn', 'handlers/facilitators.ts', 'handler');
     const bookings = makeFn('BookingsFn', 'handlers/bookings.ts', 'handler');
     const facilitatorPortal = makeFn('FacilitatorPortalFn', 'handlers/facilitator-portal.ts', 'handler');
+    const facilitatorUploads = makeFn('FacilitatorUploadsFn', 'handlers/facilitator-uploads.ts', 'handler');
     const adminFacilitators = makeFn('AdminFacilitatorsFn', 'handlers/admin-facilitators.ts', 'handler');
+
+    // ---- applicant credential documents ----
+    //
+    // A separate bucket from the CMS media bucket, and the separation is the
+    // security control rather than housekeeping.
+    //
+    // `MediaBucket` sits behind a CloudFront distribution whose *default
+    // behaviour* covers the whole bucket, so every object in it is fetchable
+    // by anyone holding the key. A "private/" prefix there would be private in
+    // name only. What gets uploaded here is somebody's diploma or professional
+    // licence, carrying their full legal name — so it goes somewhere with no
+    // distribution in front of it at all, and admin reads it through a
+    // five-minute signed URL minted per request.
+    //
+    // Deliberately has no public read policy, no CORS GET, and no CDN. The
+    // only two principals that can touch it are the two functions below.
+    const facilitatorDocsBucket = new s3.Bucket(this, 'FacilitatorDocsBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      // Vetting evidence for a real person's application. Tearing down the
+      // stack must not destroy the basis on which someone was approved.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      cors: [
+        {
+          // PUT only. The browser uploads straight to S3 via a presigned URL
+          // and never reads back — a GET rule here would be the beginning of
+          // the public-bucket problem this bucket exists to avoid.
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: [props.corsOrigin ?? '*'],
+          allowedHeaders: ['*'],
+          maxAge: 3000,
+        },
+      ],
+      lifecycleRules: [
+        {
+          id: 'abort-incomplete-uploads',
+          abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+        },
+      ],
+    });
     // Scheduled, not routed: releases lapsed slot holds and marks delivered
     // sessions completed so they become payable.
     const bookingSweep = makeFn('BookingSweepFn', 'handlers/booking-sweep.ts', 'handler');
@@ -97,11 +144,27 @@ export class HilomMarketplaceStack extends cdk.Stack {
 
     // ---- grants ----
     for (const fn of [
-      facilitatorsPublic, bookings, facilitatorPortal, adminFacilitators, bookingSweep,
+      facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
     ]) {
       supabaseSecret.grantRead(fn);
     }
+
+    // Presigning can only sign what the signing role may itself do, so these
+    // grants are both what makes an upload URL work and what bounds it.
+    // Neither function is granted delete on the docs bucket: an application's
+    // supporting evidence is not something a request should be able to erase.
+    props.mediaBucket.grantPut(facilitatorUploads);
+    props.mediaBucket.grantRead(facilitatorUploads); // HeadObject on confirm
+    facilitatorDocsBucket.grantPut(facilitatorUploads);
+    facilitatorDocsBucket.grantRead(facilitatorUploads);
+    facilitatorUploads.addEnvironment('MEDIA_BUCKET', props.mediaBucket.bucketName);
+    facilitatorUploads.addEnvironment('MEDIA_CDN_BASE', props.mediaCdnBase);
+    facilitatorUploads.addEnvironment('FACILITATOR_DOCS_BUCKET', facilitatorDocsBucket.bucketName);
+
+    // Read-only, and only so the review screen can mint a signed URL.
+    facilitatorDocsBucket.grantRead(adminFacilitators);
+    adminFacilitators.addEnvironment('FACILITATOR_DOCS_BUCKET', facilitatorDocsBucket.bucketName);
 
     // Both accept an admin-group token *or* the legacy shared key, so both need
     // to be able to read the key to compare against.
@@ -137,7 +200,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
 
     // Every function that authenticates a caller from a Cognito id token needs
     // the pool id and SPA client id to build the verifier.
-    for (const fn of [bookings, facilitatorPortal, adminFacilitators, eventRegistrations]) {
+    for (const fn of [
+      bookings, facilitatorPortal, facilitatorUploads, adminFacilitators, eventRegistrations,
+    ]) {
       fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
       fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
     }
@@ -235,6 +300,16 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/earnings', [GET]],
     ]);
 
+    // A separate function from the portal above, following this stack's rule
+    // that functions split by audience: everything on the portal requires the
+    // `facilitator` group, while these two are open to any signed-in user
+    // because an applicant is by definition not in that group yet. Keeping
+    // them apart means the portal's group check stays unconditional.
+    attach(facilitatorUploads, 'FacilitatorUploadsInt', [
+      ['/facilitator/upload-url', [POST]],
+      ['/facilitator/upload', [POST]],
+    ]);
+
     attach(facilitatorsPublic, 'FacilitatorsPublicInt', [
       ['/facilitators', [GET]],
       ['/facilitators/{slug}', [GET]],
@@ -252,6 +327,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     attach(adminFacilitators, 'AdminFacilitatorsInt', [
       ['/admin/facilitators', [GET, POST]],
       ['/admin/facilitators/{facilitatorId}', [GET, PATCH]],
+      ['/admin/facilitators/{facilitatorId}/certificate', [GET]],
       ['/admin/bookings', [GET]],
       ['/admin/bookings/{bookingId}/cancel', [POST]],
       ['/admin/bookings/{bookingId}/refund', [POST]],

@@ -169,6 +169,203 @@ export function validateProfile(body: Record<string, unknown>): ProfileInput {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The application form
+// ---------------------------------------------------------------------------
+// `validateProfile` above and `validateApplication` below deliberately do not
+// share a code path, because they no longer describe the same thing.
+//
+// The apply form used to write profile copy — credentials, specialties, scope
+// of practice — so one validator served both. It now asks a triage question
+// instead: what do you want to build, and how involved should Hilom be. The
+// profile fields it dropped are collected later, by the facilitator, in the
+// dashboard Profile tab, and are still validated by `validateProfile` there.
+//
+// Folding these back together would mean one function whose required fields
+// depend on which caller it has, which is the shape that eventually lets an
+// applicant write a field only an approved facilitator should be able to set.
+
+const CONTACT_METHODS = new Set(['email', 'phone', 'instagram', 'whatsapp']);
+
+const YEARS_EXPERIENCE = new Set(['under_1', '1_3', '3_5', '5_plus']);
+
+/** The three service tracks from the marketing page. */
+const SUPPORT_TRACKS = new Set(['design', 'build_launch', 'live_experiences']);
+
+const PROGRAM_STATUSES = new Set([
+  'existing_program_online',
+  'idea_to_course',
+  'workshop_live',
+  'retreat',
+  'scale_existing',
+  'not_sure',
+]);
+
+const REFERRAL_SOURCES = new Set([
+  'instagram',
+  'friend_colleague',
+  'hilom_facilitator',
+  'event_workshop',
+  'search',
+  'other',
+]);
+
+/**
+ * What the applicant agreed to, stamped server-side.
+ *
+ * Never taken from the request body: a consent record whose version the
+ * consenting party chose is not evidence of anything. Bump this when the
+ * privacy policy materially changes, so existing rows keep pointing at the
+ * text those people actually read.
+ */
+export const PRIVACY_POLICY_VERSION = '2026-09-03';
+
+/**
+ * A social or website link, accepting what people actually type.
+ *
+ * `url()` above requires a scheme because it validates a *meeting link*, which
+ * is emailed as an href and must not be `javascript:`. This field is typed by
+ * hand into a form, and the first real application submitted
+ * "www.instagram.com/holdingspace.ph" — no scheme, entirely reasonable, and
+ * rejected outright by `url()`. A bare "@handle" is just as likely.
+ *
+ * So: bare handles are kept as-is for a human to interpret, anything
+ * domain-shaped gets https:// prepended and is then validated properly. The
+ * scheme allowlist still applies, so pasting a `javascript:` URI here fails.
+ */
+function socialLink(value: unknown, field: string): string | null {
+  const raw = str(value, field, 300);
+  if (!raw) return null;
+  // A handle, not a link. Nothing to validate and nothing to linkify.
+  if (raw.startsWith('@')) return raw;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) return url(`https://${raw}`, field);
+  return url(raw, field);
+}
+
+/** Validates one of the form's multi-selects against its allowlist. */
+function slugList(value: unknown, field: string, allowed: Set<string>): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new FacilitatorInputError(`${field} must be a list`);
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string' || !allowed.has(item)) {
+      throw new FacilitatorInputError(`${field} contains an unrecognised option`);
+    }
+    seen.add(item);
+  }
+  return [...seen];
+}
+
+function oneOf(value: unknown, field: string, allowed: Set<string>, required: boolean): string | null {
+  const raw = str(value, field, 60, required);
+  if (!raw) return null;
+  if (!allowed.has(raw)) throw new FacilitatorInputError(`${field} is not a valid option`);
+  return raw;
+}
+
+export interface ApplicationInput {
+  display_name: string;
+  bio: string | null;
+  photo_media_id: string | null;
+  photo_url: string | null;
+  contact_method: string;
+  phone: string | null;
+  social_links: Record<string, string>;
+  website_url: string | null;
+  years_experience: string;
+  support_needed: string[];
+  program_status: string[];
+  cert_document_key: string | null;
+  cert_document_name: string | null;
+  referral_source: string;
+  referral_source_other: string | null;
+  privacy_accepted_at: string;
+  privacy_policy_version: string;
+}
+
+export function validateApplication(body: Record<string, unknown>): ApplicationInput {
+  const contactMethod = oneOf(body.contact_method, 'Preferred method of contact', CONTACT_METHODS, true)!;
+
+  const phone = str(body.phone, 'Phone', 40);
+  // Only enforced when they asked to be reached somewhere that needs a number.
+  // Requiring it unconditionally would be asking for a detail we have no use
+  // for from every applicant who picked Email.
+  if ((contactMethod === 'phone' || contactMethod === 'whatsapp') && !phone) {
+    throw new FacilitatorInputError('A phone number is required for that contact method');
+  }
+
+  const social: Record<string, string> = {};
+  const handle = socialLink(body.social_handle, 'Social media handle');
+  if (handle) social.social = handle;
+
+  const website = socialLink(body.website_url, 'Website');
+  if (website) social.website = website;
+
+  const instagram = contactMethod === 'instagram' ? handle : null;
+  if (instagram && !social.social) social.social = instagram;
+  if (contactMethod === 'instagram' && !handle) {
+    throw new FacilitatorInputError('An Instagram handle is required for that contact method');
+  }
+
+  const programStatus = slugList(body.program_status, 'What you have right now', PROGRAM_STATUSES);
+  if (programStatus.length === 0) {
+    throw new FacilitatorInputError('Tell us what you have for your programs right now');
+  }
+
+  // Deliberately not required — see the note on the column in
+  // 0023_facilitator_intake.sql. `not_sure` in the question above means "I
+  // cannot pick a track", and a form that then demands one is a dead end.
+  const supportNeeded = slugList(body.support_needed, 'Support needed', SUPPORT_TRACKS);
+
+  const referralSource = oneOf(body.referral_source, 'How you heard about us', REFERRAL_SOURCES, true)!;
+  const referralOther = str(body.referral_source_other, 'How you heard about us', 200);
+  if (referralSource === 'other' && !referralOther) {
+    throw new FacilitatorInputError('Tell us how you heard about Hilom Collective');
+  }
+
+  // Checked, never merely recorded: consent is the one field where trusting
+  // the client's word for it defeats the entire purpose of collecting it.
+  if (body.privacy_accepted !== true) {
+    throw new FacilitatorInputError('You must agree to the privacy policy to apply');
+  }
+
+  return {
+    display_name: str(body.display_name, 'Name', 120, true)!,
+    // Same allowlist the profile bio and the CMS rich-text blocks use — this is
+    // public-facing, user-authored copy, which is the textbook stored-XSS shape.
+    bio: typeof body.bio === 'string' && body.bio.trim() ? sanitizeRichText(body.bio) : null,
+    photo_media_id: str(body.photo_media_id, 'Photo', 60),
+    photo_url: url(body.photo_url, 'Photo URL'),
+    contact_method: contactMethod,
+    phone,
+    social_links: social,
+    website_url: website,
+    years_experience: oneOf(body.years_experience, 'How long you have been doing this work', YEARS_EXPERIENCE, true)!,
+    support_needed: supportNeeded,
+    program_status: programStatus,
+    // The S3 key, handed back by the upload confirm step. Constrained to the
+    // private prefix so this cannot be pointed at an arbitrary object.
+    cert_document_key: certKey(body.cert_document_key),
+    cert_document_name: str(body.cert_document_name, 'Document name', 200),
+    referral_source: referralSource,
+    referral_source_other: referralSource === 'other' ? referralOther : null,
+    privacy_accepted_at: new Date().toISOString(),
+    privacy_policy_version: PRIVACY_POLICY_VERSION,
+  };
+}
+
+/** Where applicant credential documents live. Never served publicly. */
+export const CERT_PREFIX = 'facilitator-docs/';
+
+function certKey(value: unknown): string | null {
+  const raw = str(value, 'Certification document', 300);
+  if (!raw) return null;
+  if (!raw.startsWith(CERT_PREFIX) || raw.includes('..')) {
+    throw new FacilitatorInputError('That document reference is not valid');
+  }
+  return raw;
+}
+
 export interface ServiceInput {
   kind: string;
   title: string;

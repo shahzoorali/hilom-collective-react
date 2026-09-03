@@ -51,6 +51,15 @@ export default function ProfileTab({
       .map((s) => s.trim())
       .filter(Boolean);
 
+  // Read from the live draft rather than the saved profile, so the banner
+  // clears as they type instead of only after a save — the point is to tell
+  // them what is outstanding, not to grade what they last submitted.
+  const missingForPublish = [
+    lines(draft.credentials).length === 0 && 'Add your credentials',
+    !draft.scope_note.trim() && 'Write your scope of practice',
+    !draft.bio.trim() && 'Describe your approach',
+  ].filter((item): item is string => typeof item === 'string');
+
   async function save() {
     setBusy(true);
     setError(null);
@@ -95,6 +104,21 @@ export default function ProfileTab({
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
+
+      {/* The application form does not collect credentials or scope of
+          practice — it is a triage form about what someone wants to build, not
+          a profile draft. This screen is where that copy actually gets
+          written, and this banner is the only thing telling an approved
+          facilitator that Hilom is waiting on them for it. Without it the
+          handover is silent and everyone waits for the other side. */}
+      {profile.status !== 'published' && missingForPublish.length > 0 && (
+        <div className="alert alert-info">
+          <strong>Before Hilom can list you</strong>
+          <ul style={{ margin: '0.4rem 0 0' }}>
+            {missingForPublish.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+      )}
 
       <div className="panel">
         <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Your terms</h3>

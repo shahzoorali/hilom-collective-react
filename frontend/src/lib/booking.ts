@@ -14,6 +14,13 @@
  */
 import { apiFetch } from './api';
 import { idToken } from './auth';
+import type {
+  ContactMethod,
+  ProgramStatus,
+  ReferralSource,
+  SupportTrack,
+  YearsExperience,
+} from './facilitator-intake';
 
 /** The bearer header, or a thrown error that reads as a prompt to sign in. */
 function authHeaders(): Record<string, string> {
@@ -256,12 +263,90 @@ export interface Payout {
   reference: string | null;
 }
 
-export const applyAsFacilitator = (body: Record<string, unknown>) =>
+/**
+ * What the application form sends.
+ *
+ * Typed rather than `Record<string, unknown>` because the field set is now the
+ * contract between this form and `validateApplication` on the server, and a
+ * renamed field would otherwise fail silently as a missing-required-field 400
+ * at submit time rather than at compile time.
+ *
+ * `email` is absent on purpose: the server takes it from the verified token.
+ */
+export interface FacilitatorApplication {
+  display_name: string;
+  bio?: string;
+  photo_media_id?: string | null;
+  photo_url?: string | null;
+  contact_method: ContactMethod;
+  phone?: string;
+  social_handle?: string;
+  website_url?: string;
+  years_experience: YearsExperience;
+  support_needed: SupportTrack[];
+  program_status: ProgramStatus[];
+  cert_document_key?: string | null;
+  cert_document_name?: string | null;
+  referral_source: ReferralSource;
+  referral_source_other?: string;
+  privacy_accepted: true;
+}
+
+export const applyAsFacilitator = (body: FacilitatorApplication) =>
   apiFetch<{ status: string; alreadyApplied?: boolean }>('/facilitators/apply', {
     method: 'POST',
     headers: jsonAuthHeaders(),
     body: JSON.stringify(body),
   });
+
+/**
+ * Uploads one applicant file: presign → PUT straight to S3 → confirm.
+ *
+ * The bytes never pass through Lambda. That is not only a cost decision — API
+ * Gateway caps a request body at 10 MB and base64-encodes binary payloads on
+ * the way, so a 8 MB PDF sent through the handler would be rejected as ~11 MB.
+ *
+ * `kind` decides where the object lands and who can read it back:
+ *   'photo'       → the public media bucket, and a media_assets row
+ *   'certificate' → a private prefix, readable only through an admin-signed URL
+ */
+export async function uploadFacilitatorFile(
+  kind: 'photo' | 'certificate',
+  file: File,
+): Promise<{ mediaId: string | null; url: string | null; key: string; filename: string }> {
+  const presigned = await apiFetch<{ uploadUrl: string; key: string; publicUrl: string | null }>(
+    '/facilitator/upload-url',
+    {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify({ kind, filename: file.name, contentType: file.type, bytes: file.size }),
+    },
+  );
+
+  const put = await fetch(presigned.uploadUrl, {
+    method: 'PUT',
+    // Must match the type bound into the signature, or S3 rejects it.
+    headers: { 'Content-Type': file.type },
+    body: file,
+  });
+  if (!put.ok) throw new Error('That upload did not go through. Please try again.');
+
+  const confirmed = await apiFetch<{ mediaId: string | null; url: string | null }>(
+    '/facilitator/upload',
+    {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify({ kind, key: presigned.key, filename: file.name }),
+    },
+  );
+
+  return {
+    mediaId: confirmed.mediaId,
+    url: confirmed.url,
+    key: presigned.key,
+    filename: file.name,
+  };
+}
 
 export const getMyFacilitatorProfile = () =>
   apiFetch<{ facilitator: OwnProfile }>('/facilitator/me', { headers: authHeaders() }).then(
@@ -371,13 +456,50 @@ export interface AdminFacilitator extends OwnProfile {
   admin_notes: string | null;
   created_at: string;
   updated_at: string;
+
+  // Intake, from the application form. Every field is nullable or empty for a
+  // facilitator an admin entered directly, who never filled one in.
+  contact_method: ContactMethod | null;
+  years_experience: YearsExperience | null;
+  support_needed: SupportTrack[];
+  program_status: ProgramStatus[];
+  website_url: string | null;
+  /** Presence means a document exists; the bytes come from a signed URL. */
+  cert_document_key: string | null;
+  cert_document_name: string | null;
+  referral_source: ReferralSource | null;
+  referral_source_other: string | null;
+  privacy_accepted_at: string | null;
+  privacy_policy_version: string | null;
 }
 
-export const adminListFacilitators = (adminKey: string, status?: string) =>
-  apiFetch<{ facilitators: AdminFacilitator[] }>(
-    `/admin/facilitators${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+export const adminListFacilitators = (
+  adminKey: string,
+  status?: string,
+  support?: string,
+) => {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (support) params.set('support', support);
+  const query = params.toString();
+  return apiFetch<{ facilitators: AdminFacilitator[] }>(
+    `/admin/facilitators${query ? `?${query}` : ''}`,
     { headers: { 'x-admin-key': adminKey } },
   ).then((r) => r.facilitators);
+};
+
+/**
+ * A short-lived link to an applicant's credential document.
+ *
+ * Fetched on click rather than with the rest of the row: the URL expires in
+ * five minutes, so one minted when the drawer opened would routinely be dead
+ * by the time anyone clicked it.
+ */
+export const adminGetCertificateUrl = (adminKey: string, facilitatorId: string) =>
+  apiFetch<{ url: string; filename: string | null }>(
+    `/admin/facilitators/${encodeURIComponent(facilitatorId)}/certificate`,
+    { headers: { 'x-admin-key': adminKey } },
+  );
 
 /**
  * Enters a facilitator Hilom has already vetted elsewhere — always lands in

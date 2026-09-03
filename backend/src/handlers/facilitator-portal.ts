@@ -37,6 +37,7 @@ import { refundForCancellation } from '../lib/booking-domain.js';
 import { sendBookingCancelled } from '../lib/booking-email.js';
 import {
   validateProfile,
+  validateApplication,
   validateService,
   validateAvailability,
   validateBlackout,
@@ -169,8 +170,21 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
  * Submits an application.
  *
  * Creates the row in `applied` — never `approved`, and never with a
- * `platform_fee_bps` from the body. Everything an applicant can write here is
- * profile copy; status, fee rate and publication are admin decisions.
+ * `platform_fee_bps` from the body. Status, fee rate and publication are admin
+ * decisions, and nothing an applicant can send here touches them.
+ *
+ * What this writes is *intake*, not profile: how to reach them, how long
+ * they've practised, what they want to build, and how involved they want Hilom
+ * to be. The public profile columns — credentials, specialties, scope of
+ * practice, delivery mode — are left empty on purpose and are filled in by the
+ * facilitator in the dashboard Profile tab once approved. That is the whole
+ * point of `approved` and `published` being separate statuses: an approved
+ * facilitator has dashboard access precisely so they can write that copy
+ * before anyone sees it.
+ *
+ * The practical consequence for review: an `applied` row has no credentials and
+ * no scope note, and that is now normal rather than a red flag. Both are
+ * checked before Publish instead — see the checklist in FacilitatorsTab.
  */
 async function apply(
   user: { email: string; sub: string; givenName?: string; familyName?: string },
@@ -188,13 +202,13 @@ async function apply(
     return ok({ alreadyApplied: true, status: existing.status });
   }
 
-  const profile = validateProfile({
+  const application = validateApplication({
     ...body,
     display_name:
       body.display_name ?? [user.givenName, user.familyName].filter(Boolean).join(' ') ?? user.email,
   });
 
-  const base = slugify(profile.display_name) || 'facilitator';
+  const base = slugify(application.display_name) || 'facilitator';
   const slug = await findAvailableFacilitatorSlug(normalizeSlug(base), async (candidate) => {
     const { data } = await supabase.from('facilitators').select('id').eq('slug', candidate).maybeSingle();
     return Boolean(data);
@@ -203,12 +217,13 @@ async function apply(
   const { data, error } = await supabase
     .from('facilitators')
     .insert({
-      ...profile,
+      ...application,
       slug,
+      // The account's verified email, never one from the body — the row is
+      // keyed to this identity, and an applicant typing a different address
+      // would produce a profile whose owner can never open its dashboard.
       email: user.email,
       cognito_sub: user.sub,
-      legal_name: typeof body.legal_name === 'string' ? body.legal_name.trim().slice(0, 160) : null,
-      phone: typeof body.phone === 'string' ? body.phone.trim().slice(0, 40) : null,
       status: 'applied',
     })
     .select('id, slug, status')

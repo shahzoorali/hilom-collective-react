@@ -74,6 +74,11 @@ const marketplace = new HilomMarketplaceStack(app, 'HilomMarketplaceStack', {
   env,
   description: 'Hilom Collective — marketplace: facilitators, bookings, ticketed events, people',
   httpApiId: core.httpApi.apiId,
+  // An applicant's profile photo goes into the same library as CMS media.
+  // Their credential document does not — that lands in a private bucket this
+  // stack owns, with no distribution in front of it.
+  mediaBucket: core.mediaBucket,
+  mediaCdnBase: `https://${core.mediaDistribution.distributionDomainName}`,
   ...common,
 });
 
