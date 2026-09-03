@@ -123,9 +123,12 @@ export default function App() {
                 <Route path="/facilitators/:slug" element={<FacilitatorProfile />} />
                 <Route path="/book/:slug/:serviceId" element={<BookingFlow />} />
                 <Route path="/booking/processing" element={<BookingProcessing />} />
-                {/* Static legal page, above the /:slug CMS catch-all and
-                    mirrored in RESERVED_SLUGS so no CMS page can shadow it. */}
-                <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+                {/* Editable in the admin like the other marketing pages; the
+                    JSX below is the fallback until it is published. */}
+                <Route
+                  path="/privacy-policy"
+                  element={<CmsOrFallback slug="privacy-policy" fallback={<PrivacyPolicy />} />}
+                />
                 <Route path="/blog" element={<Blog />} />
                 <Route path="/blog/category/:categorySlug" element={<Blog />} />
                 <Route path="/blog/:slug" element={<BlogPost />} />

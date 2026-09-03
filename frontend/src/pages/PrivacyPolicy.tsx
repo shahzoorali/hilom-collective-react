@@ -1,9 +1,10 @@
 /**
- * Privacy Policy — static legal page, deliberately not a CMS page.
+ * Privacy Policy — the fallback behind the CMS page of the same slug.
  *
- * Legal copy is versioned in git so the exact wording in force on any date is
- * recoverable from history; a CMS page would leave no such record. `privacy-policy`
- * is reserved server-side (backend/src/lib/slug.ts) so no CMS page can shadow it.
+ * Same arrangement as the other marketing pages (see CmsOrFallback): staff edit
+ * the policy in the admin, and this JSX is what visitors get until that page is
+ * published, or if the CMS API is down. scripts/seed-cms.ts writes the same copy
+ * into the draft, so the two must be kept in sync while both exist.
  */
 
 const EFFECTIVE_DATE = 'May 19, 2026';
