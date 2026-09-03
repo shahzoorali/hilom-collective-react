@@ -243,10 +243,6 @@ input:focus, select:focus, textarea:focus {
   margin-top: 1.5rem; padding: 2rem 1.75rem;
   background: var(--cream); border-radius: var(--radius);
 }
-.next-steps__eyebrow {
-  margin: 0 0 0.35rem; font-size: 0.72rem; font-weight: 700;
-  letter-spacing: 0.09em; text-transform: uppercase; color: var(--forest);
-}
 .next-steps__heading { margin: 0 0 0.5rem; font-size: 1.6rem; }
 .next-steps__lede { margin: 0 0 1.75rem; color: var(--muted); }
 

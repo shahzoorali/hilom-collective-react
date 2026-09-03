@@ -461,7 +461,6 @@ export default function FacilitatorApplyForm() {
 function NextSteps() {
   return (
     <section className="next-steps" aria-labelledby="next-steps-heading">
-      <p className="next-steps__eyebrow">What happens next</p>
       <h2 id="next-steps-heading" className="next-steps__heading">Next steps</h2>
       <p className="next-steps__lede">
         We'll take what you've shared, review the opportunity internally, and recommend the best
