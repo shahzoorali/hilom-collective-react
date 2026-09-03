@@ -22,18 +22,24 @@ import {
   cancelBooking,
   listMyBookings,
   rescheduleBooking,
+  bookingRefundPolicy,
+  formatDualZone,
+  formatInZone,
   viewerTimezone,
-  zoneLabel,
   type Booking,
 } from '../../lib/booking';
 
 /**
- * Mirrors RESCHEDULE_MIN_NOTICE_HOURS in backend/src/lib/booking-domain.ts,
- * where the rule is actually enforced. Duplicated rather than fetched: it is
- * one number that changes about never, and a round trip to learn it would
- * delay the only thing this page exists to show.
+ * How much notice this booking needs to be moved.
+ *
+ * Mirrors `canReschedule` in backend/src/lib/booking-domain.ts, where the rule
+ * is enforced — and since 0027 the line is the service's own full-refund
+ * threshold rather than a fixed 24 hours, for the reason set out there: a move
+ * inside the paid-cancellation window would otherwise be strictly cheaper than
+ * cancelling. Read off the booking's snapshot, so this page and the server are
+ * looking at the same number even for a booking taken under an older policy.
  */
-const RESCHEDULE_MIN_NOTICE_HOURS = 24;
+const moveNoticeHours = (booking: Booking) => bookingRefundPolicy(booking).refund_full_hours;
 
 const hoursUntil = (iso: string) => (new Date(iso).getTime() - Date.now()) / 3_600_000;
 
@@ -68,15 +74,19 @@ export default function BookingsTab() {
   useEffect(() => reload(), [reload]);
 
   async function onCancel(booking: Booking) {
-    const hours = (new Date(booking.starts_at).getTime() - Date.now()) / 3_600_000;
+    const hours = hoursUntil(booking.starts_at);
+    // The booking's own snapshotted ladder, not a hardcoded 24/12 — a
+    // facilitator who requires 48 hours' notice must not have this dialog
+    // promise their client a full refund at 25.
+    const { refund_full_hours: full, refund_half_hours: half } = bookingRefundPolicy(booking);
     const consequence =
       booking.price_centavos === 0
         ? 'No payment was taken for this session.'
-        : hours >= 24
+        : hours >= full
           ? "You'll be refunded in full."
-          : hours >= 12
-            ? "You'll be refunded half — it's within 24 hours of the session."
-            : "This is within 12 hours of the session, so it isn't refundable.";
+          : hours >= half
+            ? `You'll be refunded half — it's within ${full} hours of the session.`
+            : `This is within ${half} hours of the session, so it isn't refundable.`;
 
     if (!window.confirm(`Cancel this session?\n\n${consequence}`)) return;
 
@@ -163,13 +173,19 @@ export default function BookingsTab() {
                 </span>
               </div>
 
+              {/* The facilitator's zone alongside the client's own. Someone
+                  who books across a border should never have to work out what
+                  time it is at the other end — see formatDualZone. */}
               <p style={{ margin: '0.5rem 0' }}>
-                {new Intl.DateTimeFormat('en-PH', {
-                  dateStyle: 'full',
-                  timeStyle: 'short',
-                  timeZone: zone,
-                }).format(new Date(b.starts_at))}{' '}
-                <span className="small muted">({zoneLabel(zone)})</span>
+                {formatDualZone(
+                  b.starts_at,
+                  {
+                    timezone: b.facilitators?.timezone,
+                    label: `for ${b.facilitators?.display_name ?? 'your facilitator'}`,
+                  },
+                  { dateStyle: 'full', timeStyle: 'short' },
+                  zone,
+                )}
               </p>
 
               {b.facilitators && (
@@ -184,7 +200,7 @@ export default function BookingsTab() {
                     Join
                   </a>
                 )}
-                {b.facilitators && hoursUntil(b.starts_at) >= RESCHEDULE_MIN_NOTICE_HOURS && (
+                {b.facilitators && hoursUntil(b.starts_at) >= moveNoticeHours(b) && (
                   <button
                     type="button"
                     className="btn btn-ghost small"
@@ -203,9 +219,9 @@ export default function BookingsTab() {
                 </button>
               </div>
 
-              {hoursUntil(b.starts_at) < RESCHEDULE_MIN_NOTICE_HOURS && (
+              {hoursUntil(b.starts_at) < moveNoticeHours(b) && (
                 <p className="small muted" style={{ margin: '0.6rem 0 0' }}>
-                  This session is within {RESCHEDULE_MIN_NOTICE_HOURS} hours, so it can no longer be moved — you
+                  This session is within {moveNoticeHours(b)} hours, so it can no longer be moved — you
                   can still cancel, though the refund depends on how much notice you give.
                 </p>
               )}
@@ -234,13 +250,17 @@ export default function BookingsTab() {
                       <p style={{ margin: '0 0 0.75rem' }}>
                         Move to{' '}
                         <strong>
-                          {new Intl.DateTimeFormat('en-PH', {
-                            dateStyle: 'full',
-                            timeStyle: 'short',
-                            timeZone: zone,
-                          }).format(new Date(newSlot))}
-                        </strong>{' '}
-                        <span className="small muted">({zoneLabel(zone)})</span>?
+                          {formatDualZone(
+                            newSlot,
+                            {
+                              timezone: b.facilitators?.timezone,
+                              label: `for ${b.facilitators?.display_name ?? 'your facilitator'}`,
+                            },
+                            { dateStyle: 'full', timeStyle: 'short' },
+                            zone,
+                          )}
+                        </strong>
+                        ?
                       </p>
                       <button
                         type="button"
@@ -268,11 +288,7 @@ export default function BookingsTab() {
                 <div>
                   <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
                   <p className="small muted" style={{ margin: '0.25rem 0 0' }}>
-                    {new Intl.DateTimeFormat('en-PH', {
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                      timeZone: zone,
-                    }).format(new Date(b.starts_at))}
+                    {formatInZone(b.starts_at, zone, { dateStyle: 'medium', timeStyle: 'short' })}
                     {b.facilitators && <> · {b.facilitators.display_name}</>}
                   </p>
                 </div>

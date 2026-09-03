@@ -395,6 +395,8 @@ export interface ServiceInput {
   max_advance_days: number;
   max_per_day: number | null;
   cancellation_policy: string | null;
+  refund_full_hours: number;
+  refund_half_hours: number;
   is_active: boolean;
   sort_order: number;
 }
@@ -432,6 +434,19 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
   // the copy on the site promises.
   const price = kind === 'exploratory' ? 0 : int(body.price_centavos, 'Price', 0, 100_000_000, 0);
 
+  // The refund ladder the platform will actually apply (0027). Rejected rather
+  // than silently re-ordered when the half threshold sits above the full one:
+  // this is the facilitator writing their own policy, and quietly changing what
+  // they typed is how the free-text version came to mean nothing. The database
+  // has the same check, but a constraint violation reaches them as a 500.
+  const refundFullHours = int(body.refund_full_hours, 'Full-refund notice', 0, 720, 24);
+  const refundHalfHours = int(body.refund_half_hours, 'Half-refund notice', 0, 720, 12);
+  if (refundHalfHours > refundFullHours) {
+    throw new FacilitatorInputError(
+      'The half-refund notice period cannot be longer than the full-refund one.',
+    );
+  }
+
   return {
     kind,
     title: str(body.title, 'Title', 160, true)!,
@@ -453,6 +468,8 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
         ? null
         : int(body.max_per_day, 'Maximum per day', 1, 24),
     cancellation_policy: str(body.cancellation_policy, 'Cancellation policy', 1000),
+    refund_full_hours: refundFullHours,
+    refund_half_hours: refundHalfHours,
     is_active: body.is_active !== false,
     sort_order: int(body.sort_order, 'Order', 0, 999, 0),
   };

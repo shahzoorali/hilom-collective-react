@@ -41,6 +41,7 @@ interface BookingWithRelations {
   starts_at: string;
   client_email: string;
   client_name: string | null;
+  client_timezone: string | null;
   price_centavos: number;
   meeting_url: string | null;
   facilitators: { id: string; email: string; display_name: string; timezone: string } | null;
@@ -52,7 +53,7 @@ interface BookingWithRelations {
 }
 
 const JOINED =
-  'id, status, starts_at, client_email, client_name, price_centavos, meeting_url, ' +
+  'id, status, starts_at, client_email, client_name, client_timezone, price_centavos, meeting_url, ' +
   'facilitators(id, email, display_name, timezone), ' +
   'facilitator_services(title, duration_minutes, meeting_provider)';
 
@@ -190,6 +191,7 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
       facilitatorEmail: facilitator.email,
       facilitatorName: facilitator.display_name,
       facilitatorTimezone: facilitator.timezone,
+      clientTimezone: booking.client_timezone,
       serviceTitle: service.title,
       startsAt: booking.starts_at,
       meetingUrl,
@@ -204,6 +206,7 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
         facilitatorName: facilitator.display_name,
         facilitatorTimezone: facilitator.timezone,
         clientName: booking.client_name ?? booking.client_email,
+        clientTimezone: booking.client_timezone,
         serviceTitle: service.title,
         startsAt: booking.starts_at,
       }).catch((err: unknown) => {

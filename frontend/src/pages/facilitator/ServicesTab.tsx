@@ -15,6 +15,7 @@ import { money } from '../../components/Layout';
 import {
   createMyService,
   deactivateMyService,
+  describeRefundPolicy,
   formatDuration,
   listMyConnections,
   listMyServices,
@@ -47,6 +48,8 @@ interface Draft {
   max_advance_days: number;
   max_per_day: string;
   cancellation_policy: string;
+  refund_full_hours: number;
+  refund_half_hours: number;
   is_active: boolean;
   sort_order: number;
 }
@@ -66,6 +69,8 @@ const blankDraft = (): Draft => ({
   max_advance_days: 60,
   max_per_day: '',
   cancellation_policy: '',
+  refund_full_hours: 24,
+  refund_half_hours: 12,
   is_active: true,
   sort_order: 0,
 });
@@ -86,6 +91,8 @@ function toDraft(s: FacilitatorService): Draft {
     max_advance_days: s.max_advance_days,
     max_per_day: s.max_per_day === null ? '' : String(s.max_per_day),
     cancellation_policy: s.cancellation_policy ?? '',
+    refund_full_hours: s.refund_full_hours ?? 24,
+    refund_half_hours: s.refund_half_hours ?? 12,
     is_active: s.is_active,
     sort_order: s.sort_order,
   };
@@ -109,6 +116,8 @@ function toInput(d: Draft): Record<string, unknown> {
     max_advance_days: d.max_advance_days,
     max_per_day: d.max_per_day === '' ? null : Number(d.max_per_day),
     cancellation_policy: d.cancellation_policy || null,
+    refund_full_hours: d.refund_full_hours,
+    refund_half_hours: d.refund_half_hours,
     is_active: d.is_active,
     sort_order: d.sort_order,
   };
@@ -404,12 +413,53 @@ export default function ServicesTab() {
                 </label>
               </div>
 
+              {/* These two numbers *are* the policy — the refund a cancelling
+                  client gets is computed from them, and the sentence below is
+                  generated from the same values, so what a client is promised
+                  and what they are paid cannot drift apart. */}
+              <div className="two-col">
+                <label className="field">
+                  <span>Full refund with at least (hours notice)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={720}
+                    value={draft.refund_full_hours}
+                    onChange={(e) => {
+                      const full = Number(e.target.value);
+                      set('refund_full_hours', full);
+                      // Keeping the pair ordered as they type, rather than
+                      // letting them save an impossible ladder and reading the
+                      // rejection back off the server.
+                      if (draft.refund_half_hours > full) set('refund_half_hours', full);
+                    }}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Half refund with at least (hours notice)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={draft.refund_full_hours}
+                    value={draft.refund_half_hours}
+                    onChange={(e) =>
+                      set('refund_half_hours', Math.min(Number(e.target.value), draft.refund_full_hours))
+                    }
+                  />
+                </label>
+              </div>
+
+              <p className="small muted" style={{ marginTop: '-0.25rem' }}>
+                Clients will see: “{describeRefundPolicy(draft)}”
+              </p>
+
               <label className="field">
                 <span>Cancellation note (optional)</span>
                 <input
                   value={draft.cancellation_policy}
                   onChange={(e) => set('cancellation_policy', e.target.value)}
-                  placeholder="Free cancellation up to 24 hours before."
+                  placeholder="Anything else clients should know — shown under the policy above."
                 />
               </label>
 

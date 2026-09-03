@@ -36,6 +36,7 @@ import {
   splitFee,
   refundForCancellation,
   canReschedule,
+  resolveRefundPolicy,
   EXCLUSION_VIOLATION,
   UNIQUE_VIOLATION,
   type BookingStatus,
@@ -83,6 +84,26 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   }
 }
 
+/**
+ * Accepts a browser-reported IANA zone, or nothing.
+ *
+ * Validated by asking Intl to use it rather than by pattern: the list of valid
+ * names is the platform's, not something to reimplement, and a bad one stored
+ * here would throw later inside a notification email — the one place a throw
+ * is least welcome. An unusable value becomes null, which every reader already
+ * handles as "we don't know where they are" and degrades to a single labelled
+ * time.
+ */
+function parseTimezone(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim() || value.length > 64) return null;
+  try {
+    new Intl.DateTimeFormat('en-PH', { timeZone: value }).format(new Date());
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(event.body ?? '{}');
@@ -93,7 +114,7 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 }
 
 const BOOKING_COLUMNS =
-  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, created_at';
+  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, created_at';
 
 /**
  * The embedded relations a mutating booking path needs.
@@ -107,7 +128,7 @@ const BOOKING_FACILITATOR_COLUMNS =
   'id, slug, email, display_name, timezone, vacation_until, status, platform_fee_bps';
 
 const BOOKING_SERVICE_COLUMNS =
-  'id, title, duration_minutes, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, price_centavos, currency, kind, meeting_url';
+  'id, title, duration_minutes, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, price_centavos, currency, kind, meeting_url, refund_full_hours, refund_half_hours';
 
 /**
  * Loads facilitator + service together, both scoped to a published profile.
@@ -158,6 +179,9 @@ async function create(
   const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
   const startsAtRaw = typeof body.startsAt === 'string' ? body.startsAt : '';
   const notes = typeof body.notes === 'string' ? body.notes.trim().slice(0, 2000) : null;
+  // Where the client is, so both parties can be shown both times (0028). Not
+  // required — an old browser or a blocked API just means one time is shown.
+  const clientTimezone = parseTimezone(body.timezone);
 
   if (!slug || !serviceId || !startsAtRaw) {
     return badRequest('facilitatorSlug, serviceId and startsAt are required');
@@ -193,6 +217,10 @@ async function create(
 
   const fee = splitFee(service.price_centavos, facilitator.platform_fee_bps);
   const isFree = fee.priceCentavos === 0;
+  const refundPolicy = resolveRefundPolicy({
+    fullHours: service.refund_full_hours,
+    halfHours: service.refund_half_hours,
+  });
 
   const name =
     [user.givenName, user.familyName].filter(Boolean).join(' ') ||
@@ -208,6 +236,7 @@ async function create(
       client_email: user.email,
       client_cognito_sub: user.sub,
       client_name: name,
+      client_timezone: clientTimezone,
       client_notes: notes,
       starts_at: slot.startsAt,
       // The padded end, so the exclusion constraint enforces the buffer.
@@ -221,6 +250,11 @@ async function create(
       // Snapshotted so editing the service later cannot redirect a session
       // that is already on someone's calendar.
       meeting_url: service.meeting_url ?? null,
+      // Snapshotted for the same reason as the price and the fee split: what
+      // this client is owed if they cancel must not move when the facilitator
+      // edits their policy next month.
+      refund_full_hours: refundPolicy.fullHours,
+      refund_half_hours: refundPolicy.halfHours,
       hold_expires_at: isFree ? null : holdExpiry(now),
     })
     .select('id')
@@ -378,6 +412,13 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     startsAt,
     now,
     cancelledBy: 'client',
+    // The booking's own snapshot, not the service's current setting. Null on a
+    // row written before 0027, which resolves to the ladder that was in force
+    // when it was taken.
+    policy: resolveRefundPolicy({
+      fullHours: booking.refund_full_hours,
+      halfHours: booking.refund_half_hours,
+    }),
   });
 
   const { data: cancelled, error } = await supabase
@@ -419,6 +460,7 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
       facilitatorEmail: booking.facilitators.email,
       facilitatorName: booking.facilitators.display_name,
       facilitatorTimezone: booking.facilitators.timezone,
+      clientTimezone: booking.client_timezone,
       serviceTitle: booking.facilitator_services.title,
       startsAt: booking.starts_at,
       meetingUrl: booking.meeting_url,
@@ -468,7 +510,14 @@ async function reschedule(
   // about the proposed new one is considered. Without this, moving a session
   // is a free alternative to a cancellation that would have cost the client
   // half the price or all of it — see canReschedule's note.
-  const reschedulable = canReschedule({ startsAt: new Date(booking.starts_at), now });
+  const reschedulable = canReschedule({
+    startsAt: new Date(booking.starts_at),
+    now,
+    policy: resolveRefundPolicy({
+      fullHours: booking.refund_full_hours,
+      halfHours: booking.refund_half_hours,
+    }),
+  });
   if (!reschedulable.allowed) return badRequest(reschedulable.reason);
 
   const facilitator = booking.facilitators as FacilitatorSchedulingRow;
@@ -518,6 +567,7 @@ async function reschedule(
       facilitatorEmail: (booking.facilitators as { email: string }).email,
       facilitatorName: (booking.facilitators as { display_name: string }).display_name,
       facilitatorTimezone: facilitator.timezone,
+      clientTimezone: booking.client_timezone,
       serviceTitle: (booking.facilitator_services as { title: string }).title,
       startsAt: slot.startsAt,
       meetingUrl: booking.meeting_url,

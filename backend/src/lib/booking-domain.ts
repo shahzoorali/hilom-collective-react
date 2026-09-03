@@ -61,15 +61,105 @@ export interface RefundDecision {
 }
 
 /**
+ * How much notice a client must give for a full, then a half, refund.
+ *
+ * Set per service (`facilitator_services.refund_full_hours` /
+ * `refund_half_hours`, added in 0027) and snapshotted onto each booking, so a
+ * facilitator tightening their policy cannot change what an already-booked
+ * client is owed.
+ */
+export interface RefundPolicy {
+  /** At or above this many hours' notice: full refund. */
+  fullHours: number;
+  /** At or above this many hours' notice: half. Below it: nothing. */
+  halfHours: number;
+}
+
+/**
+ * The ladder every service had hardcoded before 0027, and still the default
+ * for a service that has never touched the setting.
+ *
+ * Also what a booking taken *before* 0027 is judged by: those rows have no
+ * snapshot, and null there means "the policy of the day", not "no policy".
+ */
+export const DEFAULT_REFUND_POLICY: RefundPolicy = { fullHours: 24, halfHours: 12 };
+
+/**
+ * Coerces a stored pair — either of which may be null on a pre-0027 row — into
+ * a usable policy.
+ *
+ * Clamps rather than rejects, and re-orders a half above a full instead of
+ * throwing. This runs on the cancellation path, where the alternative to a
+ * sane fallback is a client unable to cancel at all because of a bad number in
+ * a column the database already constrains.
+ */
+export function resolveRefundPolicy(input: {
+  fullHours?: number | null;
+  halfHours?: number | null;
+}): RefundPolicy {
+  const clamp = (value: number | null | undefined, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(720, Math.max(0, Math.round(value)))
+      : fallback;
+
+  const fullHours = clamp(input.fullHours, DEFAULT_REFUND_POLICY.fullHours);
+  const halfHours = Math.min(fullHours, clamp(input.halfHours, DEFAULT_REFUND_POLICY.halfHours));
+  return { fullHours, halfHours };
+}
+
+/** "24 hours" / "1 hour" / "48 hours", for the sentences below. */
+function hoursPhrase(hours: number): string {
+  return hours === 1 ? '1 hour' : `${hours} hours`;
+}
+
+/**
+ * The policy as a sentence, generated from the numbers that will actually be
+ * applied.
+ *
+ * This is the half of the fix that matters to the client: what they are shown
+ * before booking and before cancelling is now derived from the same two
+ * integers the refund is computed from, so the promise and the payout cannot
+ * drift. The facilitator's free-text `cancellation_policy` is rendered
+ * *beside* this as their own notes, never instead of it.
+ */
+export function describeRefundPolicy(policy: RefundPolicy): string {
+  const { fullHours, halfHours } = policy;
+
+  if (fullHours === 0) {
+    return 'Cancel at any time before the session for a full refund.';
+  }
+  if (halfHours === fullHours) {
+    return (
+      `Cancel at least ${hoursPhrase(fullHours)} before the session for a full refund. ` +
+      'Closer than that, the session is not refundable.'
+    );
+  }
+  if (halfHours === 0) {
+    return (
+      `Cancel at least ${hoursPhrase(fullHours)} before the session for a full refund, ` +
+      'or later for a half refund.'
+    );
+  }
+  return (
+    `Cancel at least ${hoursPhrase(fullHours)} before the session for a full refund, ` +
+    `or at least ${hoursPhrase(halfHours)} before for a half refund. ` +
+    `Under ${hoursPhrase(halfHours)}, the session is not refundable.`
+  );
+}
+
+/**
  * The cancellation policy, in one place.
  *
- *   24h or more before the session : full refund
- *   12 to 24h before               : half
- *   under 12h                      : none
- *   facilitator or admin cancels   : full, regardless of when
+ *   `fullHours` or more before the session : full refund
+ *   `halfHours` to `fullHours` before      : half
+ *   under `halfHours`                      : none
+ *   facilitator or admin cancels           : full, regardless of when
  *
  * The last rule is not a courtesy — a client who loses their slot through no
- * fault of their own and is also out of pocket does not come back.
+ * fault of their own and is also out of pocket does not come back. It is also
+ * deliberately *not* configurable per service: the thresholds a facilitator
+ * sets govern what a client owes for changing their mind, not what the
+ * facilitator may keep after changing theirs.
  *
  * This *computes and records* an amount; it does not move money. Refunds are
  * executed by hand, consistent with the existing "manual revoke, no automation"
@@ -81,8 +171,11 @@ export function refundForCancellation(input: {
   startsAt: Date;
   now: Date;
   cancelledBy: 'client' | 'facilitator' | 'admin';
+  /** Omitted for a pre-0027 booking, which is judged by the old fixed ladder. */
+  policy?: RefundPolicy;
 }): RefundDecision {
   const { priceCentavos, startsAt, now, cancelledBy } = input;
+  const policy = input.policy ?? DEFAULT_REFUND_POLICY;
 
   if (priceCentavos === 0) {
     return { refundCentavos: 0, reason: 'No payment was taken for this session.' };
@@ -97,18 +190,27 @@ export function refundForCancellation(input: {
 
   const hoursBefore = (startsAt.getTime() - now.getTime()) / 3_600_000;
 
-  if (hoursBefore >= 24) {
-    return { refundCentavos: priceCentavos, reason: 'Cancelled 24 hours or more in advance — refunded in full.' };
+  if (hoursBefore >= policy.fullHours) {
+    return {
+      refundCentavos: priceCentavos,
+      reason:
+        policy.fullHours === 0
+          ? 'Cancelled before the session — refunded in full.'
+          : `Cancelled ${hoursPhrase(policy.fullHours)} or more in advance — refunded in full.`,
+    };
   }
-  if (hoursBefore >= 12) {
+  if (hoursBefore >= policy.halfHours) {
     return {
       refundCentavos: Math.floor(priceCentavos / 2),
-      reason: 'Cancelled between 12 and 24 hours in advance — half refunded.',
+      reason:
+        policy.halfHours === 0
+          ? `Cancelled less than ${hoursPhrase(policy.fullHours)} in advance — half refunded.`
+          : `Cancelled between ${hoursPhrase(policy.halfHours)} and ${hoursPhrase(policy.fullHours)} in advance — half refunded.`,
     };
   }
   return {
     refundCentavos: 0,
-    reason: 'Cancelled less than 12 hours in advance — not refundable.',
+    reason: `Cancelled less than ${hoursPhrase(policy.halfHours)} in advance — not refundable.`,
   };
 }
 
@@ -126,8 +228,15 @@ export function refundForCancellation(input: {
  * Above the line the two are already equivalent — the client could cancel for
  * a full refund and rebook — so allowing a direct move there is convenience,
  * not a loophole.
+ *
+ * Since 0027 the line is wherever the service's own full-refund threshold sits
+ * rather than a fixed 24 hours, because the argument above is about the
+ * threshold, not about the number: a facilitator who requires 48 hours' notice
+ * for a free cancellation would otherwise find every client at 47 hours simply
+ * moving the session instead. This constant remains the default for a service
+ * that has not set one.
  */
-export const RESCHEDULE_MIN_NOTICE_HOURS = 24;
+export const RESCHEDULE_MIN_NOTICE_HOURS = DEFAULT_REFUND_POLICY.fullHours;
 
 export interface RescheduleDecision {
   allowed: boolean;
@@ -146,16 +255,22 @@ export interface RescheduleDecision {
  * Applies to free sessions too. There is no refund to protect there, but the
  * held hour is just as real, and one rule is easier to state than two.
  */
-export function canReschedule(input: { startsAt: Date; now: Date }): RescheduleDecision {
+export function canReschedule(input: {
+  startsAt: Date;
+  now: Date;
+  /** Defaults to the 24h ladder, for a pre-0027 booking. */
+  policy?: RefundPolicy;
+}): RescheduleDecision {
+  const minNoticeHours = (input.policy ?? DEFAULT_REFUND_POLICY).fullHours;
   const hoursBefore = (input.startsAt.getTime() - input.now.getTime()) / 3_600_000;
 
-  if (hoursBefore >= RESCHEDULE_MIN_NOTICE_HOURS) {
+  if (hoursBefore >= minNoticeHours) {
     return { allowed: true, reason: '' };
   }
   return {
     allowed: false,
     reason:
-      `Sessions can be moved up to ${RESCHEDULE_MIN_NOTICE_HOURS} hours before they start. ` +
+      `Sessions can be moved up to ${hoursPhrase(minNoticeHours)} before they start. ` +
       'Closer than that, you can only cancel — and the refund depends on how much notice you give.',
   };
 }

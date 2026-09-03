@@ -478,7 +478,7 @@ async function blackouts(
 }
 
 const FACILITATOR_BOOKING_COLUMNS =
-  'id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, payout_id, created_at';
+  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, payout_id, created_at';
 
 async function bookings(
   supabase: SupabaseClient,
@@ -587,6 +587,7 @@ async function bookings(
         facilitatorEmail: facilitator.email,
         facilitatorName: facilitator.display_name,
         facilitatorTimezone: facilitator.timezone,
+        clientTimezone: booking.client_timezone,
         serviceTitle: booking.facilitator_services?.title ?? 'Session',
         startsAt: booking.starts_at,
         meetingUrl: booking.meeting_url,

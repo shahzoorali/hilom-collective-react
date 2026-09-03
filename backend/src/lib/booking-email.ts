@@ -46,6 +46,62 @@ export function formatWhen(startsAt: string | Date, timezone: string): string {
   }).format(date);
 }
 
+/**
+ * Whether a second rendering of the same instant would actually tell the
+ * reader anything.
+ *
+ * Two zones with the same offset at that moment — Manila and Singapore, or
+ * Manila and a client who is also in Manila — produce identical strings, and
+ * "3:00 PM (3:00 PM for your client)" is noise that trains people to stop
+ * reading the line that matters. Compared at the instant rather than by name
+ * because the answer changes across a DST boundary: Sydney is +2 from Manila in
+ * July and +3 in January.
+ */
+function zonesDiffer(at: Date, a: string, b: string): boolean {
+  try {
+    return formatWhen(at, a) !== formatWhen(at, b);
+  } catch {
+    // An unrecognised IANA name from an old browser. Better to show one
+    // labelled time than to throw inside a notification.
+    return false;
+  }
+}
+
+/**
+ * The session time in the reader's own zone, with the other party's beside it.
+ *
+ * This is the fix for the asymmetry every template here used to have: both
+ * copies of every email rendered the facilitator's zone, so the client was the
+ * one converting. Now each recipient's copy leads with their own time, and
+ * carries the other's as context — which is also what makes "can we move it an
+ * hour earlier?" a conversation two people can have without a converter.
+ *
+ * Degrades to a single time whenever the other zone is unknown (a booking from
+ * before 0028) or identical, rather than guessing.
+ */
+export function formatWhenFor(
+  startsAt: string | Date,
+  viewerTimezone: string,
+  other: { timezone?: string | null; label: string },
+): string {
+  const at = startsAt instanceof Date ? startsAt : new Date(startsAt);
+  const mine = formatWhen(at, viewerTimezone);
+  if (!other.timezone || !zonesDiffer(at, viewerTimezone, other.timezone)) return mine;
+
+  // Time only for the second rendering: the date is usually the same and,
+  // when it is not, the short zone label makes that legible without repeating
+  // the whole "Thursday, 12 March 2026".
+  const theirs = new Intl.DateTimeFormat('en-PH', {
+    timeZone: other.timezone,
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(at);
+
+  return `${mine} — ${theirs} ${other.label}`;
+}
+
 async function send(to: string, subject: string, text: string, html: string): Promise<void> {
   try {
     await sesClient.send(
@@ -76,10 +132,38 @@ export interface BookingEmailContext {
   facilitatorName: string;
   serviceTitle: string;
   startsAt: string;
-  /** The facilitator's zone — used for their copy of the email. */
+  /** The facilitator's zone — leads their copy of the email. */
   facilitatorTimezone: string;
+  /**
+   * The client's zone, captured at booking time (0028). Leads their copy, and
+   * appears beside the facilitator's time on theirs. Null for a booking taken
+   * before that column existed, which falls back to a single labelled time.
+   */
+  clientTimezone?: string | null;
   meetingUrl?: string | null;
   isFree: boolean;
+}
+
+/**
+ * The two renderings of a booking's time, one per recipient.
+ *
+ * Every template takes both, so no template can accidentally reuse the
+ * facilitator's zone for the client's copy — which is exactly what all of them
+ * did before 0028.
+ */
+function bothWhen(ctx: BookingEmailContext, startsAt: string | Date = ctx.startsAt) {
+  return {
+    forClient: formatWhenFor(startsAt, ctx.clientTimezone || ctx.facilitatorTimezone, {
+      // Only labelled as the facilitator's time when we are actually leading
+      // with the client's own zone; otherwise the single time already is theirs.
+      timezone: ctx.clientTimezone ? ctx.facilitatorTimezone : null,
+      label: `for ${ctx.facilitatorName}`,
+    }),
+    forFacilitator: formatWhenFor(startsAt, ctx.facilitatorTimezone, {
+      timezone: ctx.clientTimezone,
+      label: 'for your client',
+    }),
+  };
 }
 
 /** The join row, which is either a link or an honest admission there isn't one. */
@@ -92,21 +176,21 @@ function joinDetail(meetingUrl?: string | null): { label: string; value: string 
 
 /** Sent to both parties the moment a booking becomes `confirmed`. */
 export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<void> {
-  const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+  const when = bothWhen(ctx);
   const joinLine = ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.';
   const rescheduleNote = ctx.isFree
     ? 'This is a complimentary call — a short conversation to see whether this facilitator is the right fit for you.'
     : 'You can reschedule or cancel from your Hilom account, up to 24 hours before the session starts.';
 
   const clientHtml = renderEmail({
-    preheader: `${ctx.serviceTitle} with ${ctx.facilitatorName} — ${when}`,
+    preheader: `${ctx.serviceTitle} with ${ctx.facilitatorName} — ${when.forClient}`,
     heading: 'Your session is confirmed',
     body:
       p(`You're booked in with <strong>${escapeHtml(ctx.facilitatorName)}</strong>. Here are the details.`) +
       details([
         { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
         { label: 'With', value: escapeHtml(ctx.facilitatorName) },
-        { label: 'When', value: escapeHtml(when) },
+        { label: 'When', value: escapeHtml(when.forClient) },
         joinDetail(ctx.meetingUrl),
       ]) +
       button('View your bookings', ACCOUNT_BOOKINGS_URL) +
@@ -114,7 +198,7 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
   });
 
   const clientText = renderText(`Your session is confirmed: ${ctx.serviceTitle} with ${ctx.facilitatorName}`, [
-    `When: ${when}`,
+    `When: ${when.forClient}`,
     joinLine,
     '',
     rescheduleNote,
@@ -123,7 +207,7 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
   ]);
 
   const facilitatorHtml = renderEmail({
-    preheader: `${ctx.clientName || ctx.clientEmail} booked ${ctx.serviceTitle} — ${when}`,
+    preheader: `${ctx.clientName || ctx.clientEmail} booked ${ctx.serviceTitle} — ${when.forFacilitator}`,
     heading: 'You have a new booking',
     body:
       p('Someone has booked a session with you.') +
@@ -133,7 +217,7 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
           label: 'Client',
           value: `${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})`,
         },
-        { label: 'When', value: escapeHtml(when) },
+        { label: 'When', value: escapeHtml(when.forFacilitator) },
         joinDetail(ctx.meetingUrl),
       ]) +
       button('Open your calendar', FACILITATOR_BOOKINGS_URL),
@@ -141,7 +225,7 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
 
   const facilitatorText = renderText(`New booking: ${ctx.serviceTitle}`, [
     `Client: ${ctx.clientName || ctx.clientEmail} (${ctx.clientEmail})`,
-    `When: ${when}`,
+    `When: ${when.forFacilitator}`,
     joinLine,
     '',
     `See your calendar: ${FACILITATOR_BOOKINGS_URL}`,
@@ -167,18 +251,18 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
  * into a refusal.
  */
 export async function sendBookingReminder(ctx: BookingEmailContext): Promise<void> {
-  const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+  const when = bothWhen(ctx);
   const joinLine = ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.';
 
   const clientHtml = renderEmail({
-    preheader: `${ctx.serviceTitle} with ${ctx.facilitatorName} — ${when}`,
+    preheader: `${ctx.serviceTitle} with ${ctx.facilitatorName} — ${when.forClient}`,
     heading: 'Your session is coming up',
     body:
       p(`A reminder that you're seeing <strong>${escapeHtml(ctx.facilitatorName)}</strong> tomorrow.`) +
       details([
         { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
         { label: 'With', value: escapeHtml(ctx.facilitatorName) },
-        { label: 'When', value: escapeHtml(when) },
+        { label: 'When', value: escapeHtml(when.forClient) },
       ]) +
       (ctx.meetingUrl ? button('Join the session', ctx.meetingUrl) : '') +
       note(
@@ -189,14 +273,14 @@ export async function sendBookingReminder(ctx: BookingEmailContext): Promise<voi
   });
 
   const clientText = renderText(`Coming up: ${ctx.serviceTitle} with ${ctx.facilitatorName}`, [
-    `When: ${when}`,
+    `When: ${when.forClient}`,
     joinLine,
     '',
     "If you can't make it, let your facilitator know as soon as you can.",
   ]);
 
   const facilitatorHtml = renderEmail({
-    preheader: `${ctx.serviceTitle} with ${ctx.clientName || ctx.clientEmail} — ${when}`,
+    preheader: `${ctx.serviceTitle} with ${ctx.clientName || ctx.clientEmail} — ${when.forFacilitator}`,
     heading: 'A session is coming up',
     body:
       p("A reminder of tomorrow's session.") +
@@ -206,14 +290,14 @@ export async function sendBookingReminder(ctx: BookingEmailContext): Promise<voi
           label: 'Client',
           value: `${escapeHtml(ctx.clientName || ctx.clientEmail)} (${escapeHtml(ctx.clientEmail)})`,
         },
-        { label: 'When', value: escapeHtml(when) },
+        { label: 'When', value: escapeHtml(when.forFacilitator) },
       ]) +
       (ctx.meetingUrl ? button('Join the session', ctx.meetingUrl) : ''),
   });
 
   const facilitatorText = renderText(`Coming up: ${ctx.serviceTitle}`, [
     `Client: ${ctx.clientName || ctx.clientEmail} (${ctx.clientEmail})`,
-    `When: ${when}`,
+    `When: ${when.forFacilitator}`,
     joinLine,
   ]);
 
@@ -228,7 +312,7 @@ export async function sendBookingCancelled(
   ctx: BookingEmailContext,
   detail: { cancelledBy: string; refundNote: string },
 ): Promise<void> {
-  const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+  const when = bothWhen(ctx);
   // Named explicitly rather than "client or else facilitator": an admin
   // cancellation is a third case, and falling through to "the facilitator"
   // would tell both parties the facilitator pulled out of a session they had
@@ -240,28 +324,34 @@ export async function sendBookingCancelled(
         ? 'Hilom Collective'
         : 'the facilitator';
 
-  const html = renderEmail({
-    preheader: `${ctx.serviceTitle} on ${when} was cancelled`,
-    heading: 'This session has been cancelled',
-    body:
-      p(`The session below was cancelled by ${escapeHtml(who)}.`) +
-      details([
-        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
-        { label: 'Was', value: escapeHtml(when) },
-      ]) +
-      note(escapeHtml(detail.refundNote)),
+  // One body, rendered twice — the two copies differ only in whose zone leads
+  // the "Was" line. Cheaper than two templates that then drift apart.
+  const render = (was: string) => ({
+    html: renderEmail({
+      preheader: `${ctx.serviceTitle} on ${was} was cancelled`,
+      heading: 'This session has been cancelled',
+      body:
+        p(`The session below was cancelled by ${escapeHtml(who)}.`) +
+        details([
+          { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+          { label: 'Was', value: escapeHtml(was) },
+        ]) +
+        note(escapeHtml(detail.refundNote)),
+    }),
+    text: renderText(`Cancelled: ${ctx.serviceTitle}`, [
+      `When: ${was}`,
+      `Cancelled by ${who}.`,
+      '',
+      detail.refundNote,
+    ]),
   });
 
-  const text = renderText(`Cancelled: ${ctx.serviceTitle}`, [
-    `When: ${when}`,
-    `Cancelled by ${who}.`,
-    '',
-    detail.refundNote,
-  ]);
+  const forClient = render(when.forClient);
+  const forFacilitator = render(when.forFacilitator);
 
   await Promise.all([
-    send(ctx.clientEmail, `Cancelled: ${ctx.serviceTitle}`, text, html),
-    send(ctx.facilitatorEmail, `Cancelled: ${ctx.serviceTitle}`, text, html),
+    send(ctx.clientEmail, `Cancelled: ${ctx.serviceTitle}`, forClient.text, forClient.html),
+    send(ctx.facilitatorEmail, `Cancelled: ${ctx.serviceTitle}`, forFacilitator.text, forFacilitator.html),
   ]);
 }
 
@@ -270,34 +360,40 @@ export async function sendBookingRescheduled(
   ctx: BookingEmailContext,
   previousStartsAt: string,
 ): Promise<void> {
-  const was = formatWhen(previousStartsAt, ctx.facilitatorTimezone);
-  const now = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+  // Both instants in both zones. The old time matters as much as the new one
+  // here — someone reading this has the old one written down somewhere.
+  const previous = bothWhen(ctx, previousStartsAt);
+  const next = bothWhen(ctx);
 
-  const html = renderEmail({
-    preheader: `${ctx.serviceTitle} moved to ${now}`,
-    heading: 'This session has moved',
-    body:
-      p('The session below has been rescheduled. Nothing was charged again.') +
-      details([
-        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
-        { label: 'Was', value: `<span style="text-decoration:line-through;">${escapeHtml(was)}</span>` },
-        { label: 'Now', value: escapeHtml(now) },
-        joinDetail(ctx.meetingUrl),
-      ]) +
-      button('View your bookings', ACCOUNT_BOOKINGS_URL),
+  const render = (was: string, now: string) => ({
+    html: renderEmail({
+      preheader: `${ctx.serviceTitle} moved to ${now}`,
+      heading: 'This session has moved',
+      body:
+        p('The session below has been rescheduled. Nothing was charged again.') +
+        details([
+          { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+          { label: 'Was', value: `<span style="text-decoration:line-through;">${escapeHtml(was)}</span>` },
+          { label: 'Now', value: escapeHtml(now) },
+          joinDetail(ctx.meetingUrl),
+        ]) +
+        button('View your bookings', ACCOUNT_BOOKINGS_URL),
+    }),
+    text: renderText(`Moved: ${ctx.serviceTitle}`, [
+      `Was: ${was}`,
+      `Now: ${now}`,
+      ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.',
+      '',
+      'Nothing was charged again.',
+    ]),
   });
 
-  const text = renderText(`Moved: ${ctx.serviceTitle}`, [
-    `Was: ${was}`,
-    `Now: ${now}`,
-    ctx.meetingUrl ? `Join here: ${ctx.meetingUrl}` : 'Your facilitator will send joining details.',
-    '',
-    'Nothing was charged again.',
-  ]);
+  const forClient = render(previous.forClient, next.forClient);
+  const forFacilitator = render(previous.forFacilitator, next.forFacilitator);
 
   await Promise.all([
-    send(ctx.clientEmail, `Moved: ${ctx.serviceTitle}`, text, html),
-    send(ctx.facilitatorEmail, `Moved: ${ctx.serviceTitle}`, text, html),
+    send(ctx.clientEmail, `Moved: ${ctx.serviceTitle}`, forClient.text, forClient.html),
+    send(ctx.facilitatorEmail, `Moved: ${ctx.serviceTitle}`, forFacilitator.text, forFacilitator.html),
   ]);
 }
 
@@ -344,10 +440,16 @@ export async function sendMeetingLinkFailed(ctx: {
   facilitatorName: string;
   facilitatorTimezone: string;
   clientName: string;
+  clientTimezone?: string | null;
   serviceTitle: string;
   startsAt: string | Date;
 }): Promise<void> {
-  const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+  // Both zones here too: this email's whole purpose is "go and message your
+  // client", and the first thing they will write is the time.
+  const when = formatWhenFor(ctx.startsAt, ctx.facilitatorTimezone, {
+    timezone: ctx.clientTimezone,
+    label: 'for your client',
+  });
 
   const html = renderEmail({
     preheader: `Action needed: ${ctx.serviceTitle} on ${when} has no meeting link yet`,

@@ -13,6 +13,7 @@ import SlotPicker, { type SlotPickerHandle } from '../components/SlotPicker';
 import { currentUser, login } from '../lib/auth';
 import {
   createBooking,
+  describeRefundPolicy,
   formatDuration,
   getFacilitator,
   viewerTimezone,
@@ -211,8 +212,14 @@ export default function BookingFlow() {
                 We'll hold this time for 20 minutes while you pay.
               </p>
             )}
+            {/* Generated from the service's own thresholds, so what the client
+                agrees to here is exactly what a later cancellation applies. The
+                facilitator's free text follows as their own notes. */}
+            <p className="small muted" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+              {describeRefundPolicy(service)}
+            </p>
             {service.cancellation_policy && (
-              <p className="small muted" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+              <p className="small muted" style={{ marginTop: '0.25rem', marginBottom: 0 }}>
                 {service.cancellation_policy}
               </p>
             )}

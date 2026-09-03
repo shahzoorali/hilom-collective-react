@@ -13,6 +13,9 @@ import {
   splitFee,
   refundForCancellation,
   canReschedule,
+  resolveRefundPolicy,
+  describeRefundPolicy,
+  DEFAULT_REFUND_POLICY,
   RESCHEDULE_MIN_NOTICE_HOURS,
 } from './booking-domain.js';
 
@@ -121,5 +124,90 @@ describe('canReschedule — moving a session must not undercut cancelling it', (
 
   it('applies to complimentary sessions too — the held hour is just as real', () => {
     assert.equal(canReschedule({ startsAt: hoursFromNow(2), now: NOW }).allowed, false);
+  });
+});
+
+/**
+ * The per-service policy (0027).
+ *
+ * The bug this closes: a facilitator could write "48 hours notice, no refunds
+ * after" in free text and the platform would still refund in full at 25 hours.
+ * These assert that the numbers are now the thing that decides.
+ */
+describe('per-service refund policies', () => {
+  const price = 150_000;
+  const strict = { fullHours: 48, halfHours: 48 };
+
+  it('honours a stricter ladder than the default', () => {
+    const at25 = refundForCancellation({
+      priceCentavos: price, startsAt: hoursFromNow(25), now: NOW, cancelledBy: 'client', policy: strict,
+    });
+    // The old hardcoded ladder refunded this in full. The written policy said not to.
+    assert.equal(at25.refundCentavos, 0);
+
+    const at49 = refundForCancellation({
+      priceCentavos: price, startsAt: hoursFromNow(49), now: NOW, cancelledBy: 'client', policy: strict,
+    });
+    assert.equal(at49.refundCentavos, price);
+  });
+
+  it('honours a fully permissive ladder', () => {
+    const d = refundForCancellation({
+      priceCentavos: price, startsAt: hoursFromNow(0.25), now: NOW, cancelledBy: 'client',
+      policy: { fullHours: 0, halfHours: 0 },
+    });
+    assert.equal(d.refundCentavos, price);
+  });
+
+  it('still refunds in full when the facilitator cancels, whatever the policy', () => {
+    const d = refundForCancellation({
+      priceCentavos: price, startsAt: hoursFromNow(0.1), now: NOW, cancelledBy: 'facilitator', policy: strict,
+    });
+    assert.equal(d.refundCentavos, price);
+  });
+
+  it('moves the reschedule line with the full-refund line', () => {
+    // At 30 hours a 48h-policy client cannot cancel for free, so they must not
+    // be able to move either — that is the bypass canReschedule exists to close.
+    assert.equal(canReschedule({ startsAt: hoursFromNow(30), now: NOW, policy: strict }).allowed, false);
+    assert.equal(canReschedule({ startsAt: hoursFromNow(49), now: NOW, policy: strict }).allowed, true);
+  });
+
+  it('keeps move-allowed and cancel-free in agreement for any policy', () => {
+    for (const policy of [
+      DEFAULT_REFUND_POLICY,
+      { fullHours: 0, halfHours: 0 },
+      { fullHours: 48, halfHours: 24 },
+      { fullHours: 72, halfHours: 0 },
+      { fullHours: 6, halfHours: 6 },
+    ]) {
+      for (const h of [0, 1, 5.9, 6, 12, 23, 24, 47, 48, 71, 72, 100]) {
+        const moveOk = canReschedule({ startsAt: hoursFromNow(h), now: NOW, policy }).allowed;
+        const full = refundForCancellation({
+          priceCentavos: price, startsAt: hoursFromNow(h), now: NOW, cancelledBy: 'client', policy,
+        }).refundCentavos === price;
+        assert.equal(moveOk, full, `at ${h}h under ${JSON.stringify(policy)} the two policies disagree`);
+      }
+    }
+  });
+
+  it('falls back to the pre-0027 ladder for a booking with no snapshot', () => {
+    assert.deepEqual(resolveRefundPolicy({ fullHours: null, halfHours: null }), DEFAULT_REFUND_POLICY);
+  });
+
+  it('never resolves a backwards ladder, whatever is in the columns', () => {
+    const p = resolveRefundPolicy({ fullHours: 12, halfHours: 48 });
+    assert.equal(p.halfHours <= p.fullHours, true);
+    const clamped = resolveRefundPolicy({ fullHours: -5, halfHours: 9_999 });
+    assert.equal(clamped.fullHours, 0);
+    assert.equal(clamped.halfHours, 0);
+  });
+
+  it('describes every shape of ladder without contradicting itself', () => {
+    assert.match(describeRefundPolicy({ fullHours: 0, halfHours: 0 }), /any time/i);
+    assert.match(describeRefundPolicy({ fullHours: 48, halfHours: 48 }), /not refundable/i);
+    assert.doesNotMatch(describeRefundPolicy({ fullHours: 48, halfHours: 48 }), /half/i);
+    assert.match(describeRefundPolicy({ fullHours: 24, halfHours: 12 }), /24 hours.*12 hours/s);
+    assert.match(describeRefundPolicy({ fullHours: 1, halfHours: 1 }), /at least 1 hour /);
   });
 });

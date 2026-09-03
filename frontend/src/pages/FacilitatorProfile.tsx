@@ -15,6 +15,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { money } from '../components/Layout';
 import {
+  describeRefundPolicy,
   getFacilitator,
   formatDuration,
   type Facilitator,
@@ -243,6 +244,9 @@ export default function FacilitatorProfile() {
                   <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
                     Choose a time
                   </Link>
+                  <p className="small muted fac-book-card__policy">
+                    {describeRefundPolicy(s)}
+                  </p>
                   {s.cancellation_policy && (
                     <p className="small muted fac-book-card__policy">{s.cancellation_policy}</p>
                   )}

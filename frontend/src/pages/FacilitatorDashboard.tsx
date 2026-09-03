@@ -26,8 +26,8 @@ import {
   listMyFacilitatorBookings,
   cancelMyFacilitatorBooking,
   markNoShow,
+  formatDualZone,
   viewerTimezone,
-  zoneLabel,
   type Booking,
   type EarningsTotals,
   type OwnProfile,
@@ -238,12 +238,13 @@ function Overview({ profile }: { profile: OwnProfile }) {
         <div key={b.id} className="card" style={{ marginBottom: '0.6rem' }}>
           <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
           <p className="small muted" style={{ margin: '0.25rem 0 0' }}>
-            {new Intl.DateTimeFormat('en-PH', {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-              timeZone: zone,
-            }).format(new Date(b.starts_at))}{' '}
-            ({zoneLabel(zone)}) · {b.client_name || b.client_email}
+            {formatDualZone(
+              b.starts_at,
+              { timezone: b.client_timezone, label: 'for them' },
+              { dateStyle: 'medium', timeStyle: 'short' },
+              zone,
+            )}{' '}
+            · {b.client_name || b.client_email}
           </p>
         </div>
       ))}
@@ -326,12 +327,15 @@ function BookingsTab() {
               <span className="pill">{b.status.replace(/_/g, ' ')}</span>
             </div>
             <p className="small" style={{ margin: '0.4rem 0' }}>
-              {new Intl.DateTimeFormat('en-PH', {
-                dateStyle: 'full',
-                timeStyle: 'short',
-                timeZone: zone,
-              }).format(new Date(b.starts_at))}{' '}
-              <span className="muted">({zoneLabel(zone)})</span>
+              {/* Both zones, always — see formatDualZone. A facilitator who
+                  only ever sees their own time is the one who books a Sydney
+                  client into their 6am. */}
+              {formatDualZone(
+                b.starts_at,
+                { timezone: b.client_timezone, label: 'for your client' },
+                { dateStyle: 'full', timeStyle: 'short' },
+                zone,
+              )}
             </p>
             <p className="small muted" style={{ margin: '0 0 0.5rem' }}>
               {b.client_name || b.client_email} · {b.client_email} ·{' '}

@@ -11,7 +11,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatPeriod } from './booking-email.js';
+import { formatPeriod, formatWhenFor } from './booking-email.js';
 
 describe('formatPeriod', () => {
   it('names the last covered day, not the exclusive end', () => {
@@ -41,5 +41,71 @@ describe('formatPeriod', () => {
       formatPeriod('2026-09-10T00:00:00Z', '2026-09-11T00:00:00Z'),
       '10–10 September 2026',
     );
+  });
+});
+
+/**
+ * The dual-zone line (0028).
+ *
+ * Every booking email used to render the facilitator's zone to both parties,
+ * so an overseas client was always the one converting. These pin the two rules
+ * that keep the fix useful: show the other zone when it says something, and
+ * stay quiet when it does not.
+ */
+describe('formatWhenFor — the reader’s time, with the other party’s beside it', () => {
+  // 15:00 in Manila, which is 18:00 in Sydney on this date.
+  const at = '2026-03-12T07:00:00Z';
+
+  it('adds the other zone when it differs', () => {
+    const line = formatWhenFor(at, 'Asia/Manila', {
+      timezone: 'Australia/Sydney',
+      label: 'for your client',
+    });
+    assert.match(line, /3:00/);
+    assert.match(line, /6:00/);
+    assert.match(line, /for your client$/);
+  });
+
+  it('leads with whichever zone it was given, not the facilitator’s', () => {
+    const clientLine = formatWhenFor(at, 'Australia/Sydney', {
+      timezone: 'Asia/Manila',
+      label: 'for Maya',
+    });
+    // The Sydney reader sees 6pm first — the bug was that they saw 3pm.
+    assert.match(clientLine, /^[^—]*6:00/);
+  });
+
+  it('says one time when the two zones agree at that instant', () => {
+    const line = formatWhenFor(at, 'Asia/Manila', {
+      timezone: 'Asia/Singapore',
+      label: 'for your client',
+    });
+    assert.doesNotMatch(line, /for your client/);
+  });
+
+  it('says one time when the other zone is unknown', () => {
+    const line = formatWhenFor(at, 'Asia/Manila', { timezone: null, label: 'for your client' });
+    assert.doesNotMatch(line, /for your client/);
+  });
+
+  it('degrades rather than throwing on an unusable zone name', () => {
+    const line = formatWhenFor(at, 'Asia/Manila', { timezone: 'Not/AZone', label: 'for them' });
+    assert.match(line, /3:00/);
+    assert.doesNotMatch(line, /for them/);
+  });
+
+  it('tracks DST rather than assuming a fixed offset', () => {
+    // Manila does not observe DST; Sydney does. The gap is +3 in January and
+    // +2 in July, and a hardcoded offset would be wrong for half the year.
+    const january = formatWhenFor('2026-01-12T07:00:00Z', 'Asia/Manila', {
+      timezone: 'Australia/Sydney',
+      label: 'x',
+    });
+    const july = formatWhenFor('2026-07-12T07:00:00Z', 'Asia/Manila', {
+      timezone: 'Australia/Sydney',
+      label: 'x',
+    });
+    assert.match(january, /6:00/);
+    assert.match(july, /5:00/);
   });
 });

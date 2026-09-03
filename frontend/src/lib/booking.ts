@@ -93,7 +93,11 @@ export interface FacilitatorService {
   min_notice_minutes: number;
   max_advance_days: number;
   max_per_day: number | null;
+  /** The facilitator's own notes, shown *beside* the generated policy line. */
   cancellation_policy: string | null;
+  /** Notice needed for a full refund, then for half. See `describeRefundPolicy`. */
+  refund_full_hours: number;
+  refund_half_hours: number;
   is_active: boolean;
   sort_order: number;
   /**
@@ -118,6 +122,8 @@ export interface Booking {
   service_kind: ServiceKind;
   client_email: string;
   client_name: string | null;
+  /** The client's zone, captured at booking time. Null on a pre-0028 booking. */
+  client_timezone: string | null;
   client_notes: string | null;
   starts_at: string;
   ends_at: string;
@@ -131,6 +137,13 @@ export interface Booking {
   cancelled_by: string | null;
   cancellation_reason: string | null;
   refund_centavos: number | null;
+  /**
+   * The refund ladder snapshotted at booking time (0027). Null on a booking
+   * taken before that migration, which is judged by the old fixed 24/12 rule —
+   * `bookingRefundPolicy` below resolves both cases.
+   */
+  refund_full_hours: number | null;
+  refund_half_hours: number | null;
   created_at: string;
   facilitators?: { slug: string; display_name: string; photo_url: string | null; timezone: string } | null;
   facilitator_services?: { title: string; duration_minutes: number } | null;
@@ -190,7 +203,11 @@ export const createBooking = (input: {
   apiFetch<CreateBookingResult>('/bookings', {
     method: 'POST',
     headers: jsonAuthHeaders(),
-    body: JSON.stringify(input),
+    // The browser's zone is added here rather than asked for in the form: it
+    // is the one thing about the client the platform needs in order to show
+    // both parties both times, and nobody should have to type it. The server
+    // treats an unrecognised value as absent.
+    body: JSON.stringify({ ...input, timezone: viewerTimezone() }),
   });
 
 export interface BookingStatusResult {
@@ -732,10 +749,115 @@ export function zoneLabel(timezone: string, at: Date = new Date()): string {
   return part?.value ?? timezone;
 }
 
+/**
+ * An instant in the viewer's zone, with the other party's beside it.
+ *
+ * The dashboards used to render every time in `viewerTimezone()` alone, which
+ * is right for the reader and useless for the conversation: a Manila
+ * facilitator arranging with a Sydney client needs to see both, every time,
+ * or one of them is always converting in their head.
+ *
+ * Returns a single time whenever the other zone is unknown (a booking taken
+ * before it was captured) or resolves to the same wall clock at that instant —
+ * "3:00 PM (3:00 PM for them)" is noise that teaches people to skim the line.
+ *
+ * Mirrors `formatWhenFor` in backend/src/lib/booking-email.ts so a session
+ * reads the same in the dashboard as in the email about it.
+ */
+export function formatDualZone(
+  value: string | Date,
+  other: { timezone?: string | null; label: string },
+  options: Intl.DateTimeFormatOptions = { dateStyle: 'full', timeStyle: 'short' },
+  viewerZone: string = viewerTimezone(),
+): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const mine = `${formatInZone(date, viewerZone, options)} (${zoneLabel(viewerZone, date)})`;
+
+  if (!other.timezone) return mine;
+  let theirs: string;
+  try {
+    theirs = new Intl.DateTimeFormat('en-PH', {
+      timeZone: other.timezone,
+      weekday: 'short',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    }).format(date);
+  } catch {
+    // An IANA name this browser does not know. One correct time beats a throw.
+    return mine;
+  }
+
+  // Same wall clock in both zones — nothing to add.
+  if (formatInZone(date, viewerZone, options) === formatInZone(date, other.timezone, options)) {
+    return mine;
+  }
+  return `${mine} · ${theirs} ${other.label}`;
+}
+
 /** "1 hour", "90 minutes" — durations read better than "60 min" in prose. */
 export function formatDuration(minutes: number): string {
   if (minutes < 60) return `${minutes} minutes`;
   const hours = minutes / 60;
   if (Number.isInteger(hours)) return `${hours} hour${hours === 1 ? '' : 's'}`;
   return `${minutes} minutes`;
+}
+
+/** "24 hours" / "1 hour". */
+function hoursPhrase(hours: number): string {
+  return hours === 1 ? '1 hour' : `${hours} hours`;
+}
+
+/**
+ * The cancellation policy as a sentence, from the numbers the backend will
+ * actually apply.
+ *
+ * A deliberate second copy of `describeRefundPolicy` in
+ * `backend/src/lib/booking-domain.ts`. The two must say the same thing, and the
+ * duplication is the price of the frontend not importing across the workspace
+ * boundary — but only the *wording* is duplicated. The thresholds themselves
+ * come from the service row, so the number a client reads is always the number
+ * the refund is computed from, which is the whole point of the change.
+ */
+/**
+ * The ladder a *booking* is judged by, snapshot or pre-0027 default.
+ *
+ * The frontend needs this to tell someone what cancelling will cost them
+ * before they confirm it. The backend recomputes the same thing from the same
+ * columns when the cancellation actually lands, so this is a preview, never
+ * the decision.
+ */
+export function bookingRefundPolicy(booking: {
+  refund_full_hours: number | null;
+  refund_half_hours: number | null;
+}): { refund_full_hours: number; refund_half_hours: number } {
+  const full = booking.refund_full_hours ?? 24;
+  return {
+    refund_full_hours: full,
+    refund_half_hours: Math.min(full, booking.refund_half_hours ?? 12),
+  };
+}
+
+export function describeRefundPolicy(service: {
+  refund_full_hours: number;
+  refund_half_hours: number;
+}): string {
+  const full = service.refund_full_hours ?? 24;
+  const half = Math.min(full, service.refund_half_hours ?? 12);
+
+  if (full === 0) return 'Cancel at any time before the session for a full refund.';
+  if (half === full) {
+    return (
+      `Cancel at least ${hoursPhrase(full)} before the session for a full refund. ` +
+      'Closer than that, the session is not refundable.'
+    );
+  }
+  if (half === 0) {
+    return `Cancel at least ${hoursPhrase(full)} before the session for a full refund, or later for a half refund.`;
+  }
+  return (
+    `Cancel at least ${hoursPhrase(full)} before the session for a full refund, ` +
+    `or at least ${hoursPhrase(half)} before for a half refund. ` +
+    `Under ${hoursPhrase(half)}, the session is not refundable.`
+  );
 }
