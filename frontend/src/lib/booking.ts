@@ -146,6 +146,16 @@ export interface Booking {
   proposed_at: string | null;
   proposed_note: string | null;
   /**
+   * Who created the row (0031). A 'facilitator' booking was arranged by hand —
+   * offline payment, pro bono, a goodwill rebooking — and carries zero in every
+   * money column on purpose, because Hilom collected nothing and must not pay
+   * out what it does not hold.
+   */
+  booked_by?: 'client' | 'facilitator';
+  /** What the client paid the facilitator directly. A note, never an amount owed. */
+  off_platform_centavos?: number | null;
+  facilitator_note?: string | null;
+  /**
    * The refund ladder snapshotted at booking time (0027). Null on a booking
    * taken before that migration, which is judged by the old fixed 24/12 rule —
    * `bookingRefundPolicy` below resolves both cases.
@@ -577,6 +587,27 @@ export const revokeMyCalendarFeed = () =>
     headers: authHeaders(),
   });
 
+/**
+ * Book a client in directly, skipping the public paid flow.
+ *
+ * `offPlatformPesos` records what they paid the facilitator outside Hilom. It
+ * is bookkeeping only — the booking's own money columns are zero, so it never
+ * reaches a payout batch. See 0031.
+ */
+export const createBookingForClient = (input: {
+  serviceId: string;
+  clientEmail: string;
+  clientName?: string;
+  startsAt: string;
+  offPlatformPesos?: string;
+  note?: string;
+}) =>
+  apiFetch<{ bookingId: string; status: BookingStatus; startsAt: string }>('/facilitator/bookings', {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  });
+
 export const listMyFacilitatorBookings = () =>
   apiFetch<{ bookings: Booking[]; timezone: string }>('/facilitator/bookings', {
     headers: authHeaders(),
@@ -622,6 +653,12 @@ export const getMyEarnings = () =>
   apiFetch<{
     thisMonth: EarningsTotals;
     awaitingPayout: EarningsTotals;
+    /**
+     * Sessions the facilitator entered themselves this month, and what they
+     * reported being paid for them directly. Deliberately outside the totals
+     * above: Hilom collected none of it and will pay out none of it (0031).
+     */
+    offPlatformThisMonth: { sessions: number; centavos: number };
     platformFeeBps: number;
     payouts: Payout[];
   }>('/facilitator/earnings', { headers: authHeaders() });

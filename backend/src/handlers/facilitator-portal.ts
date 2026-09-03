@@ -40,9 +40,13 @@ import {
   type ServiceRow,
   type FacilitatorSchedulingRow,
 } from '../lib/scheduling.js';
-import { refundForCancellation } from '../lib/booking-domain.js';
+import {
+  refundForCancellation,
+  EXCLUSION_VIOLATION,
+  UNIQUE_VIOLATION,
+} from '../lib/booking-domain.js';
 import { sendBookingCancelled, sendRescheduleProposed } from '../lib/booking-email.js';
-import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
+import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import {
   validateProfile,
   validateApplication,
@@ -679,7 +683,7 @@ async function blackouts(
 }
 
 const FACILITATOR_BOOKING_COLUMNS =
-  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, payout_id, created_at';
+  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, payout_id, created_at';
 
 /**
  * A facilitator offers the client a different time, or withdraws the offer.
@@ -796,6 +800,155 @@ async function proposeTime(
   return ok({ bookingId, proposedStartsAt: slot.startsAt, proposedNote: noteText });
 }
 
+/**
+ * A facilitator books a client in themselves.
+ *
+ * Covers what the public paid flow does not: someone who paid by bank transfer
+ * or in cash, a pro-bono session, a goodwill rebooking after a cancellation, a
+ * long-standing client who has always just texted to arrange the next one.
+ *
+ * Confirmed immediately — there is no payment to wait for — which means it goes
+ * through `confirmBooking` exactly as a paid booking does, so the meeting link
+ * is created in the facilitator's connected account and both parties are
+ * emailed. A session arranged this way should be indistinguishable from any
+ * other once it exists; only how it came to exist differs.
+ *
+ * **The money is recorded as zero, deliberately.** See 0031: a session paid for
+ * off-platform must not enter the payout pipeline, because payouts disburse
+ * money Hilom actually collected. What the client paid the facilitator directly
+ * is kept in `off_platform_centavos` as a note for their own bookkeeping, and
+ * is read by nothing that moves money.
+ *
+ * The client does not need a Hilom account. Bookings are keyed by email, not by
+ * a user row, so anyone signing in later with that address finds the session
+ * waiting in their bookings — the same way a booking made before someone signed
+ * up behaves.
+ */
+async function createForClient(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(event);
+
+  const clientEmail = typeof body.clientEmail === 'string' ? body.clientEmail.trim().toLowerCase() : '';
+  // Deliberately permissive — this is a facilitator typing a client's address,
+  // not an untrusted signup — but it must be an address, because it is both the
+  // identity on the booking and where the confirmation goes.
+  if (!clientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail) || clientEmail.length > 254) {
+    return badRequest('A valid client email is required');
+  }
+  const clientName = typeof body.clientName === 'string' ? body.clientName.trim().slice(0, 160) : null;
+  const facilitatorNote =
+    typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 1000) : null;
+
+  const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
+  const startsAtRaw = typeof body.startsAt === 'string' ? body.startsAt : '';
+  const startsAt = new Date(startsAtRaw);
+  if (!serviceId || !startsAtRaw || Number.isNaN(startsAt.getTime())) {
+    return badRequest('serviceId and an ISO-8601 startsAt are required');
+  }
+
+  const now = new Date();
+  if (startsAt <= now) return badRequest('Book a time in the future');
+
+  // Pesos in, centavos out — the same conversion the service editor does, kept
+  // at the edge so nothing downstream ever sees a fractional centavo.
+  let offPlatformCentavos: number | null = null;
+  if (body.offPlatformPesos !== undefined && body.offPlatformPesos !== null && body.offPlatformPesos !== '') {
+    const pesos = Number(body.offPlatformPesos);
+    if (!Number.isFinite(pesos) || pesos < 0) return badRequest('What they paid must be a number');
+    offPlatformCentavos = Math.round(pesos * 100);
+  }
+
+  const { data: service, error: serviceError } = await supabase
+    .from('facilitator_services')
+    .select(`${SERVICE_PUBLIC_COLUMNS}, meeting_url`)
+    .eq('id', serviceId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<ServiceRow>();
+  if (serviceError) throw serviceError;
+  if (!service) return notFound('Service not found');
+  // Same guard as the public flow: a package charges for N sessions and
+  // delivers one, so it must not be bookable by any route.
+  if (service.kind === 'package') return badRequest('Multi-session packages are not bookable yet.');
+
+  const { data: scheduling, error: schedulingError } = await supabase
+    .from('facilitators')
+    .select('id, timezone, vacation_until, status')
+    .eq('id', facilitator.id)
+    .maybeSingle<FacilitatorSchedulingRow>();
+  if (schedulingError) throw schedulingError;
+  if (!scheduling) return notFound('Facilitator not found');
+
+  await releaseExpiredHolds(supabase, facilitator.id, now);
+
+  // Checked against the same engine as a public booking, with one exception.
+  // The weekly grid, blackouts, notice period and daily cap all still govern:
+  // a facilitator entering a booking by hand has decided this one is fine, but
+  // there is no reason to invent a second notion of "free hour" alongside the
+  // one the exclusion constraint enforces.
+  const slot = await verifySlot(
+    supabase,
+    // Vacation is the exception. Booking a client into a week you are away is
+    // either a mistake you will catch on the confirmation screen, or exactly
+    // the exception you opened this form to make.
+    { ...scheduling, vacation_until: null },
+    service,
+    startsAt,
+    now,
+  );
+  if (!slot) return json(409, { error: 'That time is not free — pick another' });
+
+  const { data: booking, error: insertError } = await supabase
+    .from('bookings')
+    .insert({
+      facilitator_id: facilitator.id,
+      service_id: service.id,
+      service_kind: service.kind,
+      client_email: clientEmail,
+      client_name: clientName,
+      starts_at: slot.startsAt,
+      ends_at: slot.blockEndsAt,
+      // No payment to wait for.
+      status: 'confirmed',
+      // Zero, and not a rounding of anything. See 0031.
+      price_centavos: 0,
+      platform_fee_centavos: 0,
+      facilitator_net_centavos: 0,
+      currency: service.currency,
+      meeting_url: service.meeting_url ?? null,
+      refund_full_hours: service.refund_full_hours ?? 24,
+      refund_half_hours: service.refund_half_hours ?? 12,
+      booked_by: 'facilitator',
+      off_platform_centavos: offPlatformCentavos,
+      facilitator_note: facilitatorNote,
+    })
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (insertError) {
+    // Both are ordinary outcomes of a human filling in a form, not faults.
+    if (insertError.code === EXCLUSION_VIOLATION) {
+      return json(409, { error: 'Something else is already booked at that time' });
+    }
+    if (insertError.code === UNIQUE_VIOLATION) {
+      return json(409, {
+        error:
+          'That client has already had their complimentary call with you — book a paid session instead.',
+      });
+    }
+    throw insertError;
+  }
+  if (!booking) throw new Error('Booking insert returned no row');
+
+  // The same fulfilment path as a paid booking: meeting link created in the
+  // facilitator's account, both parties emailed.
+  await confirmBooking(booking.id);
+
+  return ok({ bookingId: booking.id, status: 'confirmed', startsAt: slot.startsAt });
+}
+
 async function bookings(
   supabase: SupabaseClient,
   facilitator: FacilitatorRow,
@@ -806,6 +959,7 @@ async function bookings(
   const bookingId = event.pathParameters?.bookingId;
 
   if (!bookingId) {
+    if (method === 'POST') return await createForClient(supabase, facilitator, event);
     if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
     const { data, error } = await supabase
       .from('bookings')
@@ -947,7 +1101,9 @@ async function earnings(
   const [monthRes, unpaidRes, payoutRes] = await Promise.all([
     supabase
       .from('bookings')
-      .select('price_centavos, platform_fee_centavos, facilitator_net_centavos, status')
+      .select(
+        'price_centavos, platform_fee_centavos, facilitator_net_centavos, status, booked_by, off_platform_centavos',
+      )
       .eq('facilitator_id', facilitator.id)
       .in('status', EARNING_STATUSES)
       .gte('starts_at', monthStart),
@@ -987,9 +1143,21 @@ async function earnings(
       { sessions: 0, gross: 0, fees: 0, net: 0 },
     );
 
+  // Sessions the facilitator entered themselves carry zero everywhere the
+  // payout arithmetic looks, on purpose (see 0031). Reported separately so
+  // their own month still adds up — "6 sessions, ₱2,400 through Hilom" with
+  // no mention of the two they arranged directly would look like a bug.
+  const selfBooked = (monthRes.data ?? []).filter((row) => row.booked_by === 'facilitator');
+
   return ok({
     thisMonth: sum(monthRes.data),
     awaitingPayout: sum(unpaidRes.data),
+    offPlatformThisMonth: {
+      sessions: selfBooked.length,
+      // Null (\"not recorded\") and 0 (\"nothing was charged\") both add nothing,
+      // which is right: neither is money Hilom will ever pay out.
+      centavos: selfBooked.reduce((total, row) => total + Number(row.off_platform_centavos ?? 0), 0),
+    },
     platformFeeBps: facilitator.platform_fee_bps,
     payouts: payoutRes.data ?? [],
   });

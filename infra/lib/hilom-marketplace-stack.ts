@@ -342,7 +342,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/calendar-feed', [GET, POST, DELETE]],
       ['/facilitator/blackouts', [GET, POST]],
       ['/facilitator/blackouts/{blackoutId}', [DELETE]],
-      ['/facilitator/bookings', [GET]],
+      ['/facilitator/bookings', [GET, POST]],
       ['/facilitator/bookings/{bookingId}/cancel', [POST]],
       ['/facilitator/bookings/{bookingId}/no-show', [POST]],
       ['/facilitator/bookings/{bookingId}/propose-time', [POST]],

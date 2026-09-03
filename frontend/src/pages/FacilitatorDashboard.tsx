@@ -25,11 +25,14 @@ import {
   getMyFacilitatorProfile,
   listMyFacilitatorBookings,
   cancelMyFacilitatorBooking,
+  createBookingForClient,
+  listMyServices,
   markNoShow,
   previewMySlots,
   proposeNewTime,
   withdrawProposedTime,
   formatInZone,
+  type FacilitatorService,
   type SlotOption,
   formatDualZone,
   viewerTimezone,
@@ -318,6 +321,213 @@ function Stat({ label, value }: { label: string; value: string }) {
  * Nothing here moves the session. It records an offer; the client's answer is
  * what moves it (see 0029).
  */
+/**
+ * Book a client in by hand.
+ *
+ * For everything the public paid flow does not cover: someone who paid by bank
+ * transfer or in cash, a pro-bono session, a goodwill rebooking after a
+ * cancellation, the long-standing client who has always just texted.
+ *
+ * The copy is careful about one thing above all — that what they type into
+ * "what they paid you" is a note for their own records and not a sum Hilom will
+ * ever send them. That is the money rule from 0031, and a facilitator who
+ * believed otherwise would be waiting on a payout that is never coming.
+ *
+ * Times come from `previewMySlots`, the same engine a client's picker uses, so
+ * the offered slots are genuinely free ones.
+ */
+function BookAClient({
+  timezone,
+  onBooked,
+}: {
+  timezone: string;
+  onBooked: (message: string) => void;
+}) {
+  const [services, setServices] = useState<FacilitatorService[] | null>(null);
+  const [serviceId, setServiceId] = useState('');
+  const [slots, setSlots] = useState<SlotOption[] | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [clientEmail, setClientEmail] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [paidPesos, setPaidPesos] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    listMyServices()
+      .then((list) => {
+        setServices(list);
+        if (list.length > 0) setServiceId((current) => current || list[0].id);
+      })
+      .catch((err: Error) => setError(err.message));
+  }, []);
+
+  useEffect(() => {
+    if (!serviceId) return;
+    let live = true;
+    setSlots(null);
+    setChosen(null);
+    const from = new Date();
+    const to = new Date(from.getTime() + 28 * 86_400_000);
+    previewMySlots(serviceId, from, to)
+      .then((r) => live && setSlots(r.slots))
+      .catch((err: Error) => live && setError(err.message));
+    return () => {
+      live = false;
+    };
+  }, [serviceId]);
+
+  async function submit() {
+    if (!chosen || !clientEmail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await createBookingForClient({
+        serviceId,
+        clientEmail,
+        clientName: clientName || undefined,
+        startsAt: chosen,
+        offPlatformPesos: paidPesos || undefined,
+        note: note || undefined,
+      });
+      onBooked(`Booked — we've emailed ${clientEmail} the details.`);
+      setClientEmail('');
+      setClientName('');
+      setPaidPesos('');
+      setNote('');
+      setChosen(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not book that');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const byDay = new Map<string, SlotOption[]>();
+  for (const slot of slots ?? []) {
+    const day = formatInZone(slot.startsAt, timezone, { dateStyle: 'full', timeStyle: undefined });
+    byDay.set(day, [...(byDay.get(day) ?? []), slot]);
+  }
+
+  if (services !== null && services.length === 0) {
+    return (
+      <div className="panel">
+        <p className="small muted" style={{ margin: 0 }}>
+          Set up a session under Services first — that is what says how long it runs and how it is
+          delivered.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel">
+      <div className="two-col">
+        <label className="field">
+          <span>Which session</span>
+          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
+            {(services ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Their email</span>
+          <input
+            type="email"
+            value={clientEmail}
+            onChange={(e) => setClientEmail(e.target.value)}
+            placeholder="them@example.com"
+          />
+          <small className="muted">
+            They do not need a Hilom account. If they make one later with this address, the session
+            is already there.
+          </small>
+        </label>
+      </div>
+
+      <label className="field">
+        <span>Their name (optional)</span>
+        <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
+      </label>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      <p className="small muted" style={{ marginBottom: '0.3rem' }}>
+        Pick a time — these are your genuinely free slots, in your own zone.
+      </p>
+      {slots === null && <div className="spinner" aria-label="Loading" />}
+      {slots !== null && slots.length === 0 && (
+        <p className="muted small">
+          No free times in the next four weeks. Open some hours under Availability first.
+        </p>
+      )}
+      {[...byDay.entries()].map(([day, daySlots]) => (
+        <div key={day} style={{ marginBottom: '0.5rem' }}>
+          <strong className="small">{day}</strong>
+          <div className="row" style={{ gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.3rem' }}>
+            {daySlots.map((slot) => (
+              <button
+                key={slot.startsAt}
+                type="button"
+                className={chosen === slot.startsAt ? 'btn btn-accent small' : 'btn btn-ghost small'}
+                onClick={() => setChosen(slot.startsAt)}
+              >
+                {formatInZone(slot.startsAt, timezone, { dateStyle: undefined, timeStyle: 'short' })}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {chosen && (
+        <>
+          <div className="two-col">
+            <label className="field">
+              <span>What they paid you (₱, optional)</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={paidPesos}
+                onChange={(e) => setPaidPesos(e.target.value)}
+                placeholder="Leave blank for pro bono"
+              />
+            </label>
+            <label className="field">
+              <span>Note to yourself (optional)</span>
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Paid by bank transfer, 12 Sept"
+              />
+            </label>
+          </div>
+
+          {/* The one thing that must not be misunderstood. */}
+          <div className="alert alert-info">
+            No payment is taken and nothing is owed to you by Hilom for this session — you have
+            already been paid, or chosen not to be. What you type above is a note for your own
+            records; it stays out of your Hilom earnings and payouts.
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-accent"
+            disabled={busy || !clientEmail}
+            onClick={() => void submit()}
+          >
+            {busy ? 'Booking…' : 'Book this session'}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProposeTime({
   booking,
   timezone,
@@ -424,6 +634,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
   const [busyId, setBusyId] = useState<string | null>(null);
   // Which booking's "suggest another time" panel is open, if any.
   const [proposingId, setProposingId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   function reload() {
     listMyFacilitatorBookings()
@@ -482,9 +693,33 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
 
   return (
     <>
-      <h2>Bookings</h2>
+      <div className="admin-toolbar">
+        <h2 style={{ margin: 0 }}>Bookings</h2>
+        <button
+          type="button"
+          className="btn btn-accent small"
+          onClick={() => setAdding((open) => !open)}
+        >
+          {adding ? 'Close' : 'Book a client in'}
+        </button>
+      </div>
+
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
+
+      {/* For sessions arranged outside the public flow — paid offline, pro
+          bono, a goodwill rebooking. The money is recorded as zero on purpose;
+          see 0031 and the note inside the form. */}
+      {adding && (
+        <BookAClient
+          timezone={zone}
+          onBooked={(message) => {
+            setAdding(false);
+            setNotice(message);
+            reload();
+          }}
+        />
+      )}
       {bookings === null && <div className="spinner" aria-label="Loading" />}
       {bookings !== null && bookings.length === 0 && <p className="muted">No bookings yet.</p>}
 
@@ -516,8 +751,22 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
             </p>
             <p className="small muted" style={{ margin: '0 0 0.5rem' }}>
               {b.client_name || b.client_email} · {b.client_email} ·{' '}
-              {b.price_centavos === 0 ? 'Complimentary' : `you earn ${money(b.facilitator_net_centavos)}`}
+              {/* A session the facilitator entered themselves carries zero in
+                  every money column (0031), so "Complimentary" would be a lie
+                  about one they were paid for offline. */}
+              {b.booked_by === 'facilitator'
+                ? b.off_platform_centavos
+                  ? `booked by you · they paid you ${money(b.off_platform_centavos)} directly`
+                  : 'booked by you · nothing charged through Hilom'
+                : b.price_centavos === 0
+                  ? 'Complimentary'
+                  : `you earn ${money(b.facilitator_net_centavos)}`}
             </p>
+            {b.facilitator_note && (
+              <p className="small muted" style={{ margin: '0 0 0.5rem' }}>
+                Your note: {b.facilitator_note}
+              </p>
+            )}
             {b.client_notes && (
               <p className="small" style={{ margin: '0 0 0.5rem' }}>
                 <em>“{b.client_notes}”</em>
@@ -611,6 +860,7 @@ function EarningsTab() {
   const [data, setData] = useState<{
     thisMonth: EarningsTotals;
     awaitingPayout: EarningsTotals;
+    offPlatformThisMonth: { sessions: number; centavos: number };
     platformFeeBps: number;
     payouts: Payout[];
   } | null>(null);
@@ -646,6 +896,28 @@ function EarningsTab() {
         <hr />
         <Line label="Your earnings" value={money(data.thisMonth.net)} strong />
       </div>
+
+      {/* Kept out of the totals above and given its own panel, because it is
+          money Hilom never touched — see 0031. A facilitator whose month shows
+          six sessions and four sessions' worth of earnings needs to see the
+          other two accounted for somewhere, or the numbers look broken. */}
+      {data.offPlatformThisMonth.sessions > 0 && (
+        <div className="panel">
+          <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Arranged by you this month</h3>
+          <p className="small muted" style={{ marginTop: 0 }}>
+            Sessions you booked in yourself. No payment went through Hilom, so no fee was charged
+            and nothing here is owed to you by Hilom — it is recorded for your own books.
+          </p>
+          <Line
+            label={`${data.offPlatformThisMonth.sessions} session${data.offPlatformThisMonth.sessions === 1 ? '' : 's'}`}
+            value={
+              data.offPlatformThisMonth.centavos > 0
+                ? `${money(data.offPlatformThisMonth.centavos)} paid to you directly`
+                : 'nothing recorded'
+            }
+          />
+        </div>
+      )}
 
       <div className="panel">
         <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Awaiting payout</h3>
