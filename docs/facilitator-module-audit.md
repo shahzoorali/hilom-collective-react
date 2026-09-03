@@ -12,7 +12,8 @@ profile redesign landed.
 > done and, where the shipped design differs from what the audit assumed, why.
 >
 > The "polish and growth" list near the end is untouched and remains the
-> backlog. **Nothing here is deployed or migrated yet** — see *Deploying this*.
+> backlog. **Migrations are applied and the backend is deployed; the frontend
+> is not yet pushed** — see *Deploying this*.
 
 ---
 
@@ -391,20 +392,30 @@ with the small correctness fix first and reviews last.
 
 ## Deploying this
 
-None of it is live. Before it is:
+**Backend is live as of 2026-09-04. The frontend is not.**
 
-1. **Apply migrations 0027–0036** to Supabase, in order. Each is re-runnable.
-2. **Deploy `HilomMarketplaceStack`.** There are new routes on nearly every
-   handler in it — `/facilitator/slot-preview`, `/facilitator/calendar-feed`,
-   `/facilitator/clients*`, `/facilitator/messages`, `/packages`,
-   `/me/packages`, `/admin/reviews*`, `/facilitator-calendar/{token}`, and
-   several per-booking sub-paths — plus a new `API_BASE_URL` environment
-   variable on the facilitator portal function for the calendar feed URL.
-   Check the branch first, and confirm before deploying.
-3. **Amplify** picks up the frontend from `main` as usual.
+1. ~~**Apply migrations 0027–0036** to Supabase, in order.~~ **Done.** All ten
+   applied, each in its own transaction. Verified afterwards against the
+   *intent* of each migration rather than by re-reading the files, so a
+   migration that ran but guarded itself into a no-op would still have shown up
+   as missing. Both existing services kept the 24/12 refund ladder, so no
+   already-booked client's terms moved.
+2. ~~**Deploy `HilomMarketplaceStack`.**~~ **Done** — `--exclusively`, so
+   `HilomBackendStack` (which carries undeployed Cognito CustomEmailSender work
+   from another workstream) was untouched. The diff was additions only: new
+   routes, their API-Gateway invoke permissions, updated Lambda bundles, and
+   `API_BASE_URL` on the facilitator portal function. Every new route smoke-
+   tests to its own handler rather than to an API Gateway 404, and the sweep
+   runs clean on the new code.
+3. **Amplify — still to do.** It builds from the git remote, and these commits
+   are local only. Until they are pushed, the API has all the new endpoints and
+   the live site has none of the UI that calls them.
 
-One thing to watch on the first deploy: the completion sweep now sends a review
-request for every session it transitions to `completed`. Its first run will move
-any backlog of past-but-still-`confirmed` sessions at once and email each of
-those clients. If that backlog is non-trivial, clear it in SQL first or accept
-the batch knowingly.
+That mismatch is safe rather than broken: every response-shape change is
+additive, so the currently-deployed frontend ignores the new fields and keeps
+working. The new features are simply unreachable until the push.
+
+The review-request backlog warning that used to be here turned out to be moot —
+there were zero past-but-still-`confirmed` sessions at deploy time, so the first
+sweep sent nothing. Worth re-checking if this is ever replayed on a database
+with real history.
