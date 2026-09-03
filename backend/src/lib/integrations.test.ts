@@ -18,7 +18,15 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { OAuthTokenError, PROVIDERS, isProvider, providerLabel } from './integrations.js';
+import {
+  MeetingCreationError,
+  OAuthTokenError,
+  PROVIDERS,
+  deleteMeeting,
+  isProvider,
+  providerLabel,
+  updateMeetingTime,
+} from './integrations.js';
 import { fromBytea, toBytea, TokenCryptoError } from './token-crypto.js';
 
 describe('OAuthTokenError — permanent vs transient', () => {
@@ -69,6 +77,38 @@ describe('providers', () => {
     for (const p of PROVIDERS) {
       assert.ok(providerLabel(p), `${p} has no label`);
     }
+  });
+});
+
+describe('meeting lifecycle — Google has none', () => {
+  // A Meet space has no start time and no teardown, so update and delete must
+  // return before touching Supabase or the network. Passing a null client
+  // proves they never reach it. The Zoom path is not exercised here — it needs
+  // a real token — but the "Google is a no-op" contract is what the reschedule
+  // and cancel handlers depend on to stay simple.
+  const noClient = null as unknown as Parameters<typeof updateMeetingTime>[0];
+
+  it('updateMeetingTime is a no-op for google_meet', async () => {
+    await updateMeetingTime(noClient, 'fac-1', 'google_meet', 'spaces/x', {
+      title: '',
+      startsAt: new Date(),
+      durationMinutes: 60,
+      timezone: 'Asia/Manila',
+    });
+  });
+
+  it('deleteMeeting is a no-op for google_meet', async () => {
+    await deleteMeeting(noClient, 'fac-1', 'google_meet', 'spaces/x');
+  });
+});
+
+describe('MeetingCreationError', () => {
+  it('carries the provider and a readable message', () => {
+    const err = new MeetingCreationError('zoom', '429 too many requests');
+    assert.equal(err.provider, 'zoom');
+    assert.equal(err.name, 'MeetingCreationError');
+    assert.match(err.message, /Zoom/);
+    assert.match(err.message, /429/);
   });
 });
 

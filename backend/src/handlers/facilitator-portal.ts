@@ -35,6 +35,7 @@ import { requireUser, requireGroup, UnauthorizedError } from '../lib/auth.js';
 import { SERVICE_PUBLIC_COLUMNS } from '../lib/scheduling.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
 import { sendBookingCancelled } from '../lib/booking-email.js';
+import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import {
   validateProfile,
   validateApplication,
@@ -575,6 +576,9 @@ async function bookings(
     if (!cancelled) {
       return json(409, { error: 'That booking was already cancelled.' });
     }
+
+    // Tear down the provider-hosted meeting if there is one. Non-blocking.
+    await syncBookingMeeting(supabase, bookingId, 'cancelled');
 
     await sendBookingCancelled(
       {

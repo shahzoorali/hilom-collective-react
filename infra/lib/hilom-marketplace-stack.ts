@@ -46,6 +46,8 @@ export interface HilomMarketplaceStackProps extends HilomCommonProps {
   readonly mediaBucket: s3.IBucket;
   /** `https://dxxxx.cloudfront.net` — stored on every media_assets row. */
   readonly mediaCdnBase: string;
+  /** Core-owned. Encrypts facilitator OAuth tokens; both stacks decrypt with it. */
+  readonly integrationTokenKey: kms.IKey;
 }
 
 export class HilomMarketplaceStack extends cdk.Stack {
@@ -85,27 +87,12 @@ export class HilomMarketplaceStack extends cdk.Stack {
 
     // ---- connected meeting accounts (Google Meet / Zoom) ----
     //
-    // A customer-managed key rather than the S3/Secrets default, because what
-    // it protects is different in kind from everything else here: these are
-    // OAuth tokens belonging to *facilitators*, not to Hilom. A leaked Supabase
-    // key is Hilom's to rotate; a leaked Zoom refresh token is a standing
-    // ability to act inside a real person's account, and they would never know.
-    //
-    // Its own key means the blast radius is bounded, `kms:Decrypt` on it is a
-    // single auditable permission held by two functions, and rotation is
-    // independent of anything else.
-    const integrationTokenKey = new kms.Key(this, 'IntegrationTokenKey', {
-      description: 'Encrypts facilitator OAuth tokens for Google Meet and Zoom',
-      enableKeyRotation: true,
-      // Destroying the key would make every stored token permanently
-      // undecryptable and silently break every connected account.
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-    });
-
-    new kms.Alias(this, 'IntegrationTokenKeyAlias', {
-      aliasName: 'alias/hilom-integration-tokens',
-      targetKey: integrationTokenKey,
-    });
+    // The key that encrypts facilitator OAuth tokens is core-owned (see the
+    // note on its prop). What is done with those tokens is split across
+    // functions in this stack — connect/refresh in facilitatorIntegrations,
+    // meeting creation and lifecycle sync reached from bookings, the
+    // facilitator portal and admin — so each is granted decrypt below.
+    const integrationTokenKey = props.integrationTokenKey;
 
     const googleMeetSecret = secretsmanager.Secret.fromSecretNameV2(
       this,
@@ -189,14 +176,19 @@ export class HilomMarketplaceStack extends cdk.Stack {
       supabaseSecret.grantRead(fn);
     }
 
-    // Only the integrations function may touch facilitator OAuth tokens. When
-    // meeting creation lands it will need `grantDecrypt` too, and adding it
-    // there rather than granting broadly now keeps "who can read a
-    // facilitator's Zoom credentials" answerable by reading this block.
+    // facilitatorIntegrations writes tokens, so it needs encrypt as well as
+    // decrypt. The other three only ever read a token back to create, move or
+    // delete a meeting — decrypt only. Everyone who can reach a facilitator's
+    // Zoom credentials is in this one list.
     integrationTokenKey.grantEncryptDecrypt(facilitatorIntegrations);
-    googleMeetSecret.grantRead(facilitatorIntegrations);
-    zoomSecret.grantRead(facilitatorIntegrations);
-    facilitatorIntegrations.addEnvironment('INTEGRATION_TOKEN_KEY_ID', integrationTokenKey.keyArn);
+    for (const fn of [bookings, facilitatorPortal, adminFacilitators]) {
+      integrationTokenKey.grantDecrypt(fn);
+    }
+    for (const fn of [facilitatorIntegrations, bookings, facilitatorPortal, adminFacilitators]) {
+      googleMeetSecret.grantRead(fn);
+      zoomSecret.grantRead(fn);
+      fn.addEnvironment('INTEGRATION_TOKEN_KEY_ID', integrationTokenKey.keyArn);
+    }
     facilitatorIntegrations.addEnvironment('API_BASE_URL', props.apiBaseUrl ?? DEFAULT_API_BASE_URL);
     facilitatorIntegrations.addEnvironment('FRONTEND_URL', props.frontendUrl ?? DEFAULT_FRONTEND_URL);
 

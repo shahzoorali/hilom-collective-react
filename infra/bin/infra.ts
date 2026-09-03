@@ -79,6 +79,7 @@ const marketplace = new HilomMarketplaceStack(app, 'HilomMarketplaceStack', {
   // stack owns, with no distribution in front of it.
   mediaBucket: core.mediaBucket,
   mediaCdnBase: `https://${core.mediaDistribution.distributionDomainName}`,
+  integrationTokenKey: core.integrationTokenKey,
   ...common,
 });
 

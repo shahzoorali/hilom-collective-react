@@ -329,3 +329,57 @@ export async function sendFacilitatorApproved(to: string, displayName: string): 
 
   await send(to, 'Your Hilom facilitator application is approved', text, html);
 }
+
+/**
+ * Tells a facilitator that automatic meeting-link creation failed for a
+ * confirmed session and they need to send a link by hand.
+ *
+ * Only sent when there was no fallback — the service has an integrated
+ * provider but no backup `meeting_url`. It goes *alongside* the normal "new
+ * booking" email, not instead of it: the client has a real, paid, confirmed
+ * session, and the gap is only that nobody has a way to join yet.
+ */
+export async function sendMeetingLinkFailed(ctx: {
+  facilitatorEmail: string;
+  facilitatorName: string;
+  facilitatorTimezone: string;
+  clientName: string;
+  serviceTitle: string;
+  startsAt: string | Date;
+}): Promise<void> {
+  const when = formatWhen(ctx.startsAt, ctx.facilitatorTimezone);
+
+  const html = renderEmail({
+    preheader: `Action needed: ${ctx.serviceTitle} on ${when} has no meeting link yet`,
+    heading: 'A booking needs a meeting link',
+    body:
+      p(
+        `We couldn't create the video link for your upcoming session automatically, and you ` +
+          `don't have a backup link set on this service.`,
+      ) +
+      details([
+        { label: 'Session', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'Client', value: escapeHtml(ctx.clientName) },
+        { label: 'When', value: escapeHtml(when) },
+      ]) +
+      p(
+        `Please message the client with a joining link before the session, and check your ` +
+          `connected account under Connections. Adding a backup link to the service will ` +
+          `prevent this next time.`,
+      ) +
+      button('Open your bookings', FACILITATOR_BOOKINGS_URL),
+  });
+
+  const text = renderText('A booking needs a meeting link', [
+    "We couldn't create the video link for your session automatically, and no backup link is set.",
+    '',
+    `Session: ${ctx.serviceTitle}`,
+    `Client: ${ctx.clientName}`,
+    `When: ${when}`,
+    '',
+    'Send the client a joining link before the session, and check Connections in your dashboard.',
+    FACILITATOR_BOOKINGS_URL,
+  ]);
+
+  await send(ctx.facilitatorEmail, `Action needed: meeting link for ${ctx.serviceTitle}`, text, html);
+}

@@ -49,6 +49,7 @@ function int(value: unknown, field: string, min: number, max: number, fallback?:
 }
 
 const DELIVERY_MODES = new Set(['online', 'in_person', 'both']);
+const MEETING_PROVIDERS = new Set(['manual', 'google_meet', 'zoom']);
 /**
  * Every kind the `service_kind` enum knows about. `package` is present here
  * because the column, the profile page and the payout code all still
@@ -387,6 +388,7 @@ export interface ServiceInput {
   currency: string;
   sessions_count: number;
   delivery_mode: string;
+  meeting_provider: string;
   meeting_url: string | null;
   buffer_minutes: number;
   min_notice_minutes: number;
@@ -411,6 +413,20 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
   const deliveryMode = typeof body.delivery_mode === 'string' ? body.delivery_mode : 'online';
   if (!DELIVERY_MODES.has(deliveryMode)) throw new FacilitatorInputError('Invalid delivery mode');
 
+  // Which video account creates the link. 'manual' keeps the old behaviour —
+  // `meeting_url` is the link. For 'google_meet' / 'zoom', `meeting_url`
+  // becomes an optional backup and Hilom creates a real meeting per booking.
+  //
+  // Not validated against the facilitator's *connected* accounts here: that is
+  // a live check the dashboard does, and a facilitator disconnecting an
+  // account should not retroactively make their saved services unsavable. A
+  // provider with no connection just falls back to the backup link at booking
+  // time, and the dashboard nudges them to reconnect.
+  const meetingProvider = typeof body.meeting_provider === 'string' ? body.meeting_provider : 'manual';
+  if (!MEETING_PROVIDERS.has(meetingProvider)) {
+    throw new FacilitatorInputError('Invalid meeting provider');
+  }
+
   // The free call has to actually be free. Without this the "one per client"
   // limit would be attached to something chargeable, which is not what any of
   // the copy on the site promises.
@@ -427,6 +443,7 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
     currency: str(body.currency, 'Currency', 3) ?? 'PHP',
     sessions_count: kind === 'package' ? int(body.sessions_count, 'Sessions', 1, 50, 1) : 1,
     delivery_mode: deliveryMode,
+    meeting_provider: meetingProvider,
     meeting_url: url(body.meeting_url, 'Meeting link'),
     buffer_minutes: int(body.buffer_minutes, 'Buffer', 0, 240, 0),
     min_notice_minutes: int(body.min_notice_minutes, 'Minimum notice', 0, 43_200, 720),

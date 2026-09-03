@@ -10,16 +10,27 @@
  * one-centavo discrepancy in a payout batch.
  */
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { money } from '../../components/Layout';
 import {
   createMyService,
   deactivateMyService,
   formatDuration,
+  listMyConnections,
   listMyServices,
   updateMyService,
+  type Connection,
   type FacilitatorService,
+  type IntegrationProvider,
   type ServiceKind,
 } from '../../lib/booking';
+
+type MeetingProvider = 'manual' | IntegrationProvider;
+
+const PROVIDER_LABEL: Record<IntegrationProvider, string> = {
+  google_meet: 'Google Meet',
+  zoom: 'Zoom',
+};
 
 interface Draft {
   kind: ServiceKind;
@@ -29,6 +40,7 @@ interface Draft {
   pricePesos: string;
   sessions_count: number;
   delivery_mode: 'online' | 'in_person' | 'both';
+  meeting_provider: MeetingProvider;
   meeting_url: string;
   buffer_minutes: number;
   min_notice_minutes: number;
@@ -47,6 +59,7 @@ const blankDraft = (): Draft => ({
   pricePesos: '',
   sessions_count: 1,
   delivery_mode: 'online',
+  meeting_provider: 'manual',
   meeting_url: '',
   buffer_minutes: 0,
   min_notice_minutes: 720,
@@ -66,6 +79,7 @@ function toDraft(s: FacilitatorService): Draft {
     pricePesos: s.price_centavos ? String(s.price_centavos / 100) : '',
     sessions_count: s.sessions_count,
     delivery_mode: s.delivery_mode,
+    meeting_provider: s.meeting_provider ?? 'manual',
     meeting_url: s.meeting_url ?? '',
     buffer_minutes: s.buffer_minutes,
     min_notice_minutes: s.min_notice_minutes,
@@ -88,6 +102,7 @@ function toInput(d: Draft): Record<string, unknown> {
     price_centavos: d.kind === 'exploratory' ? 0 : Math.round(Number(d.pricePesos || 0) * 100),
     sessions_count: d.sessions_count,
     delivery_mode: d.delivery_mode,
+    meeting_provider: d.meeting_provider,
     meeting_url: d.meeting_url || null,
     buffer_minutes: d.buffer_minutes,
     min_notice_minutes: d.min_notice_minutes,
@@ -101,6 +116,7 @@ function toInput(d: Draft): Record<string, unknown> {
 
 export default function ServicesTab() {
   const [services, setServices] = useState<FacilitatorService[] | null>(null);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [openId, setOpenId] = useState<string | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(blankDraft());
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +129,19 @@ export default function ServicesTab() {
       .catch((err: Error) => setError(err.message));
   }
 
-  useEffect(() => reload(), []);
+  useEffect(() => {
+    reload();
+    // Which providers are connected decides which picker options are live. A
+    // failure here is not worth blocking the screen — the options just fall
+    // back to "connect first".
+    listMyConnections()
+      .then(setConnections)
+      .catch(() => setConnections([]));
+  }, []);
+
+  const connectedProviders = new Set(
+    connections.filter((c) => c.connected && !c.broken).map((c) => c.provider),
+  );
 
   function open(service?: FacilitatorService) {
     setError(null);
@@ -196,7 +224,13 @@ export default function ServicesTab() {
             {s.kind === 'exploratory' && ' · complimentary intro call'}
             {s.kind === 'package' && ` · ${s.sessions_count} sessions`}
             {!s.is_active && ' · not shown on your profile'}
-            {!s.meeting_url && s.delivery_mode !== 'in_person' && ' · no meeting link set'}
+            {s.delivery_mode !== 'in_person' && (
+              s.meeting_provider === 'google_meet'
+                ? ' · Google Meet'
+                : s.meeting_provider === 'zoom'
+                  ? ' · Zoom'
+                  : !s.meeting_url && ' · no meeting link set'
+            )}
           </p>
           <div className="row" style={{ gap: '0.5rem' }}>
             <button type="button" className="btn btn-ghost small" onClick={() => open(s)}>
@@ -309,20 +343,15 @@ export default function ServicesTab() {
                 </select>
               </label>
 
-              <label className="field">
-                <span>Meeting link</span>
-                <input
-                  value={draft.meeting_url}
-                  onChange={(e) => set('meeting_url', e.target.value)}
-                  placeholder="https://zoom.us/j/..."
+              {draft.delivery_mode !== 'in_person' && (
+                <MeetingProviderPicker
+                  provider={draft.meeting_provider}
+                  onProvider={(p) => set('meeting_provider', p)}
+                  backupUrl={draft.meeting_url}
+                  onBackupUrl={(v) => set('meeting_url', v)}
+                  connectedProviders={connectedProviders}
                 />
-                {/* Only reaches the client on a confirmed booking — never on
-                    the public profile. */}
-                <small className="muted">
-                  Your standing room. Sent to the client once their booking is confirmed, never shown
-                  publicly.
-                </small>
-              </label>
+              )}
 
               <h4>Scheduling rules</h4>
 
@@ -406,5 +435,106 @@ export default function ServicesTab() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * "Where do you meet?" — the meeting-link choice for one service.
+ *
+ * Three options. Google Meet and Zoom generate a real link per booking in the
+ * facilitator's own account; "I'll provide my own link" is the original
+ * behaviour, a single standing room typed by hand.
+ *
+ * An unconnected provider is shown but disabled, with the connect prompt
+ * inline. Hiding it would make the feature undiscoverable; enabling it would
+ * produce a service that silently cannot create links. The "you need an
+ * account" message lives here, at the moment of the decision, not in a
+ * tooltip.
+ */
+function MeetingProviderPicker({
+  provider,
+  onProvider,
+  backupUrl,
+  onBackupUrl,
+  connectedProviders,
+}: {
+  provider: MeetingProvider;
+  onProvider: (p: MeetingProvider) => void;
+  backupUrl: string;
+  onBackupUrl: (v: string) => void;
+  connectedProviders: Set<string>;
+}) {
+  const integrated: IntegrationProvider[] = ['google_meet', 'zoom'];
+
+  return (
+    <fieldset className="field choice-set">
+      <legend>Where do you meet?</legend>
+
+      {integrated.map((p) => {
+        const connected = connectedProviders.has(p);
+        const selected = provider === p;
+        return (
+          <label
+            key={p}
+            className={`choice-row${selected ? ' choice-row--on' : ''}`}
+            style={connected ? undefined : { opacity: 0.7 }}
+          >
+            <input
+              type="radio"
+              name="meeting_provider"
+              checked={selected}
+              disabled={!connected}
+              onChange={() => onProvider(p)}
+            />
+            <span>
+              <strong>{PROVIDER_LABEL[p]}</strong>
+              <span className="small muted" style={{ display: 'block' }}>
+                {p === 'google_meet'
+                  ? 'A fresh Meet link is created for each booking.'
+                  : 'Each booking becomes a scheduled meeting in your Zoom account, with you as host.'}
+              </span>
+              {!connected && (
+                <span className="small" style={{ display: 'block', marginTop: '0.15rem' }}>
+                  <Link to="/facilitator/connections">Connect your {PROVIDER_LABEL[p]} account</Link>{' '}
+                  first.
+                </span>
+              )}
+            </span>
+          </label>
+        );
+      })}
+
+      <label className={`choice-row${provider === 'manual' ? ' choice-row--on' : ''}`}>
+        <input
+          type="radio"
+          name="meeting_provider"
+          checked={provider === 'manual'}
+          onChange={() => onProvider('manual')}
+        />
+        <span>
+          <strong>I’ll provide my own link</strong>
+          <span className="small muted" style={{ display: 'block' }}>
+            One standing room you enter below, reused for every session.
+          </span>
+        </span>
+      </label>
+
+      {/* The URL field does double duty: the link itself for 'manual', an
+          optional backup for the integrated providers (used only if automatic
+          creation fails at booking time). */}
+      <label className="field" style={{ marginTop: '0.75rem' }}>
+        <span>{provider === 'manual' ? 'Meeting link' : 'Backup link (optional)'}</span>
+        <input
+          value={backupUrl}
+          onChange={(e) => onBackupUrl(e.target.value)}
+          placeholder="https://zoom.us/j/..."
+        />
+        <small className="muted">
+          {provider === 'manual'
+            ? 'Sent to the client once their booking is confirmed. Never shown publicly.'
+            : 'Used only if the automatic link cannot be created. Setting one is a good safety net.'}
+        </small>
+      </label>
+    </fieldset>
   );
 }

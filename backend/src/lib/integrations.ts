@@ -597,6 +597,183 @@ export async function disconnect(
   if (error) throw error;
 }
 
+// ---------------------------------------------------------------------------
+// Creating a meeting
+// ---------------------------------------------------------------------------
+
+export interface MeetingRequest {
+  /** Shown as the meeting topic in the facilitator's account. */
+  title: string;
+  /** UTC instant the session starts. */
+  startsAt: Date;
+  durationMinutes: number;
+  /** IANA zone — Zoom stores a meeting against one. */
+  timezone: string;
+}
+
+export interface CreatedMeeting {
+  /** The join link, put on the booking and emailed to the client. */
+  url: string;
+  /**
+   * The provider's own id: a Zoom numeric meeting id, or a Meet space resource
+   * name (`spaces/xxxx`). Null for Google — a space has no lifecycle to manage,
+   * so nothing downstream needs to reference it.
+   */
+  externalId: string | null;
+}
+
+/**
+ * Creates a meeting in the facilitator's connected account.
+ *
+ * Throws on any failure — `IntegrationError` for "no healthy connection",
+ * `MeetingCreationError` for a provider that was reachable but refused. The
+ * caller (booking confirmation) is responsible for the fallback: a booking must
+ * never fail because this did.
+ */
+export async function createMeeting(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  provider: Provider,
+  req: MeetingRequest,
+): Promise<CreatedMeeting> {
+  const accessToken = await getAccessToken(supabase, facilitatorId, provider);
+  return provider === 'google_meet'
+    ? createGoogleSpace(accessToken)
+    : createZoomMeeting(accessToken, req);
+}
+
+export class MeetingCreationError extends Error {
+  constructor(
+    readonly provider: Provider,
+    detail: string,
+  ) {
+    super(`${CONFIG[provider].label} meeting creation failed: ${detail}`);
+    this.name = 'MeetingCreationError';
+  }
+}
+
+/**
+ * A Meet space: a persistent room with a join URI and no start time.
+ *
+ * That "no start time" is why Google needs no reschedule or cancel handling —
+ * the same URI works whenever the session ends up being, and there is nothing
+ * to tear down afterwards.
+ */
+async function createGoogleSpace(accessToken: string): Promise<CreatedMeeting> {
+  const res = await fetch('https://meet.googleapis.com/v2/spaces', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    throw new MeetingCreationError('google_meet', `${res.status} ${text.slice(0, 300)}`);
+  }
+
+  const space = JSON.parse(text) as { meetingUri?: string; name?: string };
+  if (!space.meetingUri) {
+    throw new MeetingCreationError('google_meet', 'response had no meetingUri');
+  }
+  return { url: space.meetingUri, externalId: space.name ?? null };
+}
+
+/**
+ * A scheduled Zoom meeting (type 2): it has a start time and duration, so it
+ * shows up correctly in the facilitator's Zoom app and upcoming list — which is
+ * most of the reason a facilitator picks Zoom over a persistent room. The cost
+ * is that reschedule and cancel have to keep the Zoom object in step; that
+ * lives in `updateZoomMeeting` / `deleteZoomMeeting` below.
+ */
+async function createZoomMeeting(accessToken: string, req: MeetingRequest): Promise<CreatedMeeting> {
+  const res = await fetch('https://api.zoom.us/v2/users/me/meetings', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      topic: req.title.slice(0, 200),
+      type: 2,
+      start_time: req.startsAt.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      duration: Math.max(1, Math.round(req.durationMinutes)),
+      timezone: req.timezone,
+      settings: {
+        // The client should be able to arrive before the host without a
+        // manual admit step — a wellness session is not a webinar.
+        join_before_host: true,
+        waiting_room: false,
+      },
+    }),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    throw new MeetingCreationError('zoom', `${res.status} ${text.slice(0, 300)}`);
+  }
+
+  const meeting = JSON.parse(text) as { id?: number; join_url?: string };
+  if (!meeting.join_url || meeting.id === undefined) {
+    throw new MeetingCreationError('zoom', 'response had no join_url or id');
+  }
+  return { url: meeting.join_url, externalId: String(meeting.id) };
+}
+
+/**
+ * Moves a Zoom meeting to a new time. Google is a no-op — a space has no time.
+ *
+ * Best-effort: a failure here leaves a Zoom meeting at the old time, which is
+ * untidy but not broken (the join URL still works, and the client's email
+ * carries the new time). So the caller logs and carries on rather than failing
+ * the reschedule.
+ */
+export async function updateMeetingTime(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  provider: Provider,
+  externalId: string,
+  req: MeetingRequest,
+): Promise<void> {
+  if (provider !== 'zoom') return;
+
+  const accessToken = await getAccessToken(supabase, facilitatorId, provider);
+  const res = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(externalId)}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      start_time: req.startsAt.toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      duration: Math.max(1, Math.round(req.durationMinutes)),
+      timezone: req.timezone,
+    }),
+  });
+  if (!res.ok && res.status !== 204) {
+    throw new MeetingCreationError('zoom', `update ${res.status} ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
+/**
+ * Deletes a Zoom meeting on cancellation. Google is a no-op.
+ *
+ * Also best-effort. An orphaned Zoom meeting for a session that is not
+ * happening is clutter in the facilitator's account, not a correctness
+ * problem, so a failure here does not block the cancellation.
+ */
+export async function deleteMeeting(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  provider: Provider,
+  externalId: string,
+): Promise<void> {
+  if (provider !== 'zoom') return;
+
+  const accessToken = await getAccessToken(supabase, facilitatorId, provider);
+  const res = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(externalId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  // 404 means it is already gone — a fine outcome for a delete.
+  if (!res.ok && res.status !== 204 && res.status !== 404) {
+    throw new MeetingCreationError('zoom', `delete ${res.status}`);
+  }
+}
+
 async function revokeUpstream(provider: Provider, token: string): Promise<void> {
   const config = CONFIG[provider];
   const headers: Record<string, string> = {

@@ -29,6 +29,7 @@ import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
 import { sendFacilitatorApproved, sendBookingCancelled } from '../lib/booking-email.js';
+import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
@@ -416,6 +417,9 @@ async function adminCancelBooking(
 
   if (updateError) throw updateError;
   if (!cancelled) return json(409, { error: 'That booking was already cancelled.' });
+
+  // Tear down the provider-hosted meeting if there is one. Non-blocking.
+  await syncBookingMeeting(supabase, bookingId, 'cancelled');
 
   const facilitator = booking.facilitators;
   const service = booking.facilitator_services;

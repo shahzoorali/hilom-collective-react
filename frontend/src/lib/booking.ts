@@ -96,6 +96,12 @@ export interface FacilitatorService {
   cancellation_policy: string | null;
   is_active: boolean;
   sort_order: number;
+  /**
+   * How the meeting link is produced. 'manual' → `meeting_url` is the link.
+   * 'google_meet' / 'zoom' → Hilom creates one per booking in the facilitator's
+   * connected account, and `meeting_url` is an optional backup.
+   */
+  meeting_provider: 'manual' | 'google_meet' | 'zoom';
   /** Present only on the facilitator's own view — never on a public profile. */
   meeting_url?: string | null;
 }

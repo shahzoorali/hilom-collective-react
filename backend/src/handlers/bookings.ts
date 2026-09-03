@@ -40,7 +40,7 @@ import {
   UNIQUE_VIOLATION,
   type BookingStatus,
 } from '../lib/booking-domain.js';
-import { confirmBooking } from '../lib/booking-fulfillment.js';
+import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { sendBookingCancelled, sendBookingRescheduled } from '../lib/booking-email.js';
 
 /** 409 — the request was well-formed but the world moved. */
@@ -407,6 +407,11 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     return conflict('That booking was already cancelled.');
   }
 
+  // Delete the provider-hosted meeting if there is one. No-op for a manual
+  // link or a Google Meet space; a DELETE for a scheduled Zoom meeting. Never
+  // blocks the cancellation.
+  await syncBookingMeeting(supabase, bookingId, 'cancelled');
+
   await sendBookingCancelled(
     {
       clientEmail: booking.client_email,
@@ -500,6 +505,11 @@ async function reschedule(
   if (!moved) {
     return conflict('That booking was cancelled — it can no longer be moved.');
   }
+
+  // Move the provider-hosted meeting to match. No-op for a manual link or a
+  // Google Meet space; a PATCH for a scheduled Zoom meeting. Never blocks —
+  // the client already has the authoritative new time from their email.
+  await syncBookingMeeting(supabase, bookingId, 'rescheduled');
 
   await sendBookingRescheduled(
     {

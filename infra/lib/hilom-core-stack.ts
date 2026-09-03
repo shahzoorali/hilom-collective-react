@@ -75,6 +75,16 @@ export class HilomCoreStack extends cdk.Stack {
   /** CMS media. Written by the CMS stack's media function, which lives there. */
   public readonly mediaBucket: s3.Bucket;
   public readonly mediaDistribution: cloudfront.Distribution;
+  /**
+   * Encrypts facilitator OAuth tokens for Google Meet and Zoom. Lives in the
+   * core stack rather than the marketplace one because two stacks now hold
+   * functions that decrypt with it — the marketplace's booking/portal/admin
+   * handlers, and this stack's PayMongo webhook (which confirms a paid booking
+   * and, for an integrated service, creates the meeting). A key in the
+   * marketplace stack would make core depend on marketplace, and marketplace
+   * already depends on core for the HTTP API — a cycle CDK rejects.
+   */
+  public readonly integrationTokenKey: kms.Key;
 
   constructor(scope: Construct, id: string, props: HilomCoreStackProps = {}) {
     super(scope, id, props);
@@ -252,6 +262,17 @@ export class HilomCoreStack extends cdk.Stack {
       },
     });
 
+    // No alias. The application references this key only by ARN (via the
+    // INTEGRATION_TOKEN_KEY_ID env var), and giving it the alias the previous
+    // marketplace-stack key held would collide during the migration deploy.
+    this.integrationTokenKey = new kms.Key(this, 'IntegrationTokenKey', {
+      description: 'Encrypts facilitator OAuth tokens for Google Meet and Zoom',
+      enableKeyRotation: true,
+      // Destroying it makes every stored token permanently undecryptable and
+      // silently breaks every connected account.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
     const productsList = makeFn('ProductsListFn', 'handlers/products.ts', 'list');
     const productsDetail = makeFn('ProductsDetailFn', 'handlers/products.ts', 'detail');
     const coursesList = makeFn('CoursesListFn', 'handlers/courses.ts', 'list');
@@ -422,6 +443,16 @@ export class HilomCoreStack extends cdk.Stack {
     // already covers both the account-created welcome email and the
     // enrollment-confirmation email (enrollment-email.ts), since both are
     // plain SES API calls with no region tie to the function's own region.
+    // The webhook confirms a paid booking, and for a service set to Google
+    // Meet or Zoom that means decrypting the facilitator's token and creating
+    // a meeting. Read on both OAuth secrets, decrypt on the token key.
+    const googleMeetSecret = secretsmanager.Secret.fromSecretNameV2(this, 'GoogleMeetSecret', 'hilom/google-meet');
+    const zoomSecret = secretsmanager.Secret.fromSecretNameV2(this, 'ZoomSecret', 'hilom/zoom');
+    googleMeetSecret.grantRead(paymongoWebhook);
+    zoomSecret.grantRead(paymongoWebhook);
+    this.integrationTokenKey.grantDecrypt(paymongoWebhook);
+    paymongoWebhook.addEnvironment('INTEGRATION_TOKEN_KEY_ID', this.integrationTokenKey.keyArn);
+
     for (const fn of [paymongoWebhook, retryEnrollment, enrollmentRetryConsumer]) {
       supabaseSecret.grantRead(fn);
       moodleSecret.grantRead(fn);

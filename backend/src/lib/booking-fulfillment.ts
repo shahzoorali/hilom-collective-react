@@ -13,8 +13,16 @@
  * quoted is what they are charged and what the facilitator is owed, even if the
  * service is edited or the fee tier renegotiated in between.
  */
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from './supabase.js';
-import { sendBookingConfirmed } from './booking-email.js';
+import { sendBookingConfirmed, sendMeetingLinkFailed } from './booking-email.js';
+import {
+  createMeeting,
+  deleteMeeting,
+  isProvider,
+  updateMeetingTime,
+  type Provider,
+} from './integrations.js';
 import type { BookingStatus } from './booking-domain.js';
 
 export interface ConfirmResult {
@@ -35,12 +43,18 @@ interface BookingWithRelations {
   client_name: string | null;
   price_centavos: number;
   meeting_url: string | null;
-  facilitators: { email: string; display_name: string; timezone: string } | null;
-  facilitator_services: { title: string } | null;
+  facilitators: { id: string; email: string; display_name: string; timezone: string } | null;
+  facilitator_services: {
+    title: string;
+    duration_minutes: number;
+    meeting_provider: string;
+  } | null;
 }
 
 const JOINED =
-  'id, status, starts_at, client_email, client_name, price_centavos, meeting_url, facilitators(email, display_name, timezone), facilitator_services(title)';
+  'id, status, starts_at, client_email, client_name, price_centavos, meeting_url, ' +
+  'facilitators(id, email, display_name, timezone), ' +
+  'facilitator_services(title, duration_minutes, meeting_provider)';
 
 /**
  * Marks a booking confirmed and notifies both parties.
@@ -120,6 +134,55 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
   const facilitator = booking.facilitators;
   const service = booking.facilitator_services;
 
+  // The meeting link. `booking.meeting_url` was snapshotted from the service at
+  // insert time — for a 'manual' service that is the link; for an integrated
+  // one it is the backup, used only if creation below fails.
+  let meetingUrl = booking.meeting_url;
+  let linkFailed = false;
+
+  if (facilitator && service && isProvider(service.meeting_provider)) {
+    const provider = service.meeting_provider as Provider;
+    try {
+      const meeting = await createMeeting(supabase, facilitator.id, provider, {
+        title: service.title,
+        startsAt: new Date(booking.starts_at),
+        durationMinutes: service.duration_minutes,
+        timezone: facilitator.timezone,
+      });
+      meetingUrl = meeting.url;
+      await supabase
+        .from('bookings')
+        .update({
+          meeting_url: meeting.url,
+          meeting_provider: provider,
+          meeting_external_id: meeting.externalId,
+        })
+        .eq('id', bookingId);
+    } catch (err) {
+      // The rule the whole booking flow is built on: recording the money and
+      // confirming the slot must not depend on a third party being up. So the
+      // booking stays confirmed, and the fallback chain is:
+      //   1. the service's backup meeting_url, if one was set
+      //   2. otherwise: no link in the client email, and the facilitator is
+      //      told to send one.
+      linkFailed = !booking.meeting_url;
+      await supabase
+        .from('bookings')
+        .update({
+          meeting_provider: provider,
+          error_detail: `meeting link creation failed: ${
+            err instanceof Error ? err.message.slice(0, 300) : String(err)
+          }`,
+        })
+        .eq('id', bookingId);
+      console.error('[booking-fulfillment] meeting link creation failed', {
+        bookingId,
+        provider,
+        fallbackUsed: Boolean(booking.meeting_url),
+      });
+    }
+  }
+
   if (facilitator && service) {
     await sendBookingConfirmed({
       clientEmail: booking.client_email,
@@ -129,9 +192,27 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
       facilitatorTimezone: facilitator.timezone,
       serviceTitle: service.title,
       startsAt: booking.starts_at,
-      meetingUrl: booking.meeting_url,
+      meetingUrl,
       isFree: booking.price_centavos === 0,
     });
+
+    if (linkFailed) {
+      // Sent in addition to the confirmation, not instead of it: the client
+      // has a confirmed session, the facilitator needs to know it has no link.
+      await sendMeetingLinkFailed({
+        facilitatorEmail: facilitator.email,
+        facilitatorName: facilitator.display_name,
+        facilitatorTimezone: facilitator.timezone,
+        clientName: booking.client_name ?? booking.client_email,
+        serviceTitle: service.title,
+        startsAt: booking.starts_at,
+      }).catch((err: unknown) => {
+        console.error('[booking-fulfillment] could not alert facilitator about missing link', {
+          bookingId,
+          err,
+        });
+      });
+    }
   } else {
     // Not fatal — the booking is confirmed either way, and a missing join here
     // means a data problem worth seeing rather than a reason to fail the call.
@@ -139,4 +220,66 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
   }
 
   return { bookingId, status: 'confirmed', alreadyConfirmed: false };
+}
+
+/**
+ * Keeps a booking's provider-hosted meeting in step after the booking moved or
+ * was cancelled.
+ *
+ * Only Zoom has anything to do: a scheduled Zoom meeting carries a start time,
+ * so a reschedule has to PATCH it and a cancellation should DELETE it. A Google
+ * Meet space has no time and no lifecycle, so both are no-ops there.
+ *
+ * **Best-effort by contract.** The booking's own state change has already
+ * happened and been emailed by the time this runs. A stale or orphaned Zoom
+ * meeting is untidy, not broken — the join URL still resolves, and the client
+ * always has the authoritative time from their email. So every failure here is
+ * logged and swallowed; this never throws to the caller and never blocks a
+ * reschedule or a cancellation.
+ */
+export async function syncBookingMeeting(
+  supabase: SupabaseClient,
+  bookingId: string,
+  change: 'rescheduled' | 'cancelled',
+): Promise<void> {
+  try {
+    const { data, error } = await supabase
+      .from('bookings')
+      .select(
+        'facilitator_id, meeting_provider, meeting_external_id, starts_at, ' +
+          'facilitator_services(duration_minutes), facilitators(timezone)',
+      )
+      .eq('id', bookingId)
+      .maybeSingle<{
+        facilitator_id: string;
+        meeting_provider: string | null;
+        meeting_external_id: string | null;
+        starts_at: string;
+        facilitator_services: { duration_minutes: number } | null;
+        facilitators: { timezone: string } | null;
+      }>();
+
+    if (error) throw error;
+    if (!data || !data.meeting_external_id || !isProvider(data.meeting_provider ?? '')) return;
+
+    const provider = data.meeting_provider as Provider;
+
+    if (change === 'cancelled') {
+      await deleteMeeting(supabase, data.facilitator_id, provider, data.meeting_external_id);
+      return;
+    }
+
+    await updateMeetingTime(supabase, data.facilitator_id, provider, data.meeting_external_id, {
+      title: '',
+      startsAt: new Date(data.starts_at),
+      durationMinutes: data.facilitator_services?.duration_minutes ?? 60,
+      timezone: data.facilitators?.timezone ?? 'Asia/Manila',
+    });
+  } catch (err) {
+    console.error('[booking-fulfillment] meeting sync failed (non-blocking)', {
+      bookingId,
+      change,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

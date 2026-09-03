@@ -15,11 +15,10 @@ export default function FacilitatorApply() {
     <>
       <section className="hero">
         <div className="container">
-          <h1>Facilitate on Hilom</h1>
+          <h1>Facilitate with Hilom</h1>
           <p className="lede">
-            Offer your coaching, breathwork, or wellness practice through the same site our
-            clients already trust — you set your own hours and prices, and we handle booking and
-            payment.
+            Share your holistic health and wellness expertise through Hilom Collective. Set your
+            own hours and rates—we’ll handle the bookings and payments.
           </p>
         </div>
       </section>
