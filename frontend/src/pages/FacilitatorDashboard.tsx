@@ -46,6 +46,7 @@ const ServicesTab = lazy(() => import('./facilitator/ServicesTab'));
 const AvailabilityTab = lazy(() => import('./facilitator/AvailabilityTab'));
 const ProfileTab = lazy(() => import('./facilitator/ProfileTab'));
 const ConnectionsTab = lazy(() => import('./facilitator/ConnectionsTab'));
+const ClientsTab = lazy(() => import('./facilitator/ClientsTab'));
 
 /**
  * Is this confirmed session inside the facilitator's vacation window?
@@ -64,6 +65,7 @@ function inVacation(booking: Booking, vacationUntil: string | null | undefined):
 const TABS = [
   { label: 'Overview', path: 'overview', icon: '📊' },
   { label: 'Bookings', path: 'bookings', icon: '📅' },
+  { label: 'Clients', path: 'clients', icon: '🫂' },
   { label: 'Services', path: 'services', icon: '🌿' },
   { label: 'Availability', path: 'availability', icon: '🕰️' },
   { label: 'Earnings', path: 'earnings', icon: '💰' },
@@ -185,6 +187,7 @@ export default function FacilitatorDashboard() {
             <Route index element={<Navigate to="overview" replace />} />
             <Route path="overview" element={<Overview profile={profile} />} />
             <Route path="bookings" element={<BookingsTab profile={profile} />} />
+            <Route path="clients" element={<ClientsTab />} />
             <Route path="services" element={<ServicesTab />} />
             <Route path="availability" element={<AvailabilityTab timezone={profile.timezone} />} />
             <Route path="earnings" element={<EarningsTab />} />

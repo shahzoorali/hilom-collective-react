@@ -127,6 +127,10 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await blackouts(supabase, facilitator, event, method);
     }
 
+    if (path.includes('/facilitator/clients')) {
+      return await clients(supabase, facilitator, event, method);
+    }
+
     if (path.includes('/facilitator/bookings')) {
       return await bookings(supabase, facilitator, event, method, path);
     }
@@ -683,7 +687,7 @@ async function blackouts(
 }
 
 const FACILITATOR_BOOKING_COLUMNS =
-  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, intake_answers, intake_completed_at, payout_id, created_at';
+  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, intake_answers, intake_completed_at, session_notes, payout_id, created_at';
 
 /**
  * A facilitator offers the client a different time, or withdraws the offer.
@@ -951,6 +955,274 @@ async function createForClient(
   return ok({ bookingId: booking.id, status: 'confirmed', startsAt: slot.startsAt });
 }
 
+/**
+ * The facilitator's view of a client, rather than of a booking (0033).
+ *
+ *   GET   /facilitator/clients             — everyone they have seen
+ *   GET   /facilitator/clients/{email}     — one person's timeline and notes
+ *   PUT   /facilitator/clients/{email}     — the standing "about" note
+ *   PUT   /facilitator/bookings/{id}/notes — what happened in one session
+ *
+ * The list is derived rather than stored. There is no client entity in this
+ * schema — a client is an email on a booking, the same as a course buyer is an
+ * email on an order — and inventing one here would mean keeping it in step with
+ * every booking write for the sake of a query that is a group-by.
+ */
+
+/** What the client list needs about one person. */
+interface ClientSummary {
+  email: string;
+  name: string | null;
+  sessions: number;
+  firstSessionAt: string | null;
+  lastSessionAt: string | null;
+  nextSessionAt: string | null;
+  /**
+   * What this facilitator has actually earned from them, through Hilom. Excludes
+   * sessions they entered by hand, which carry zero on purpose (0031).
+   */
+  netCentavos: number;
+  hasAbout: boolean;
+}
+
+/** Statuses that mean a session was real: held, or held and not attended. */
+const DELIVERED = new Set(['confirmed', 'completed', 'no_show']);
+
+async function clients(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  event: APIGatewayProxyEventV2,
+  method: string,
+): Promise<APIGatewayProxyResultV2> {
+  // Path-encoded so a client's address never appears in a query string, which
+  // is the one place URLs reliably end up in logs and referrers.
+  const rawEmail = event.pathParameters?.clientEmail;
+  const clientEmail = rawEmail ? decodeURIComponent(rawEmail).trim().toLowerCase() : '';
+
+  if (!clientEmail) {
+    if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
+    return await listClients(supabase, facilitator);
+  }
+
+  if (method === 'GET') return await clientDetail(supabase, facilitator, clientEmail);
+  if (method === 'PUT') return await saveClientAbout(supabase, facilitator, clientEmail, event);
+  return badRequest(`Unsupported method ${method}`);
+}
+
+/**
+ * Everyone this facilitator has seen, most recent first.
+ *
+ * Grouped in memory rather than in SQL. PostgREST cannot express the group-by
+ * this needs without a database view or an RPC, and one facilitator's bookings
+ * is a list in the hundreds — a size where the round trip costs more than the
+ * loop does.
+ */
+async function listClients(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+): Promise<APIGatewayProxyResultV2> {
+  const [bookingRes, aboutRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('client_email, client_name, starts_at, status, facilitator_net_centavos')
+      .eq('facilitator_id', facilitator.id)
+      // A lapsed hold was never a client.
+      .neq('status', 'pending_payment')
+      .order('starts_at', { ascending: false })
+      .limit(2000),
+    supabase
+      .from('facilitator_clients')
+      .select('client_email, about')
+      .eq('facilitator_id', facilitator.id),
+  ]);
+
+  if (bookingRes.error) throw bookingRes.error;
+  if (aboutRes.error) throw aboutRes.error;
+
+  const withAbout = new Set(
+    (aboutRes.data ?? [])
+      .filter((row) => typeof row.about === 'string' && row.about.trim())
+      .map((row) => String(row.client_email).toLowerCase()),
+  );
+
+  const now = Date.now();
+  const byEmail = new Map<string, ClientSummary>();
+
+  for (const row of bookingRes.data ?? []) {
+    const email = String(row.client_email).toLowerCase();
+    const startsAt = String(row.starts_at);
+    const delivered = DELIVERED.has(String(row.status));
+    const isFuture = new Date(startsAt).getTime() > now;
+
+    const current =
+      byEmail.get(email) ??
+      ({
+        email,
+        name: null,
+        sessions: 0,
+        firstSessionAt: null,
+        lastSessionAt: null,
+        nextSessionAt: null,
+        netCentavos: 0,
+        hasAbout: withAbout.has(email),
+      } satisfies ClientSummary);
+
+    // The most recent name they gave wins — rows arrive newest first, so the
+    // first non-null is it. Someone who married between sessions should not be
+    // filed under their old name forever.
+    if (!current.name && row.client_name) current.name = String(row.client_name);
+
+    if (delivered) {
+      current.sessions += 1;
+      current.netCentavos += Number(row.facilitator_net_centavos ?? 0);
+      // Descending order, so the first delivered row is the latest and the
+      // last one seen is the earliest.
+      if (!current.lastSessionAt && !isFuture) current.lastSessionAt = startsAt;
+      if (!isFuture) current.firstSessionAt = startsAt;
+      // Likewise: the *last* future row seen is the soonest one.
+      if (isFuture) current.nextSessionAt = startsAt;
+    }
+
+    byEmail.set(email, current);
+  }
+
+  // Someone with a session tomorrow is more interesting than someone last seen
+  // in March, so upcoming sorts first; otherwise by recency.
+  const list = [...byEmail.values()].sort((a, b) => {
+    if (a.nextSessionAt && b.nextSessionAt) return a.nextSessionAt.localeCompare(b.nextSessionAt);
+    if (a.nextSessionAt) return -1;
+    if (b.nextSessionAt) return 1;
+    return (b.lastSessionAt ?? '').localeCompare(a.lastSessionAt ?? '');
+  });
+
+  return ok({ clients: list });
+}
+
+/**
+ * One client: every session with this facilitator, and both kinds of note.
+ *
+ * The timeline is the answer to "what have we done" — which is the question a
+ * facilitator has thirty seconds before a session with someone they last saw
+ * six weeks ago, and which the bookings list could never answer because it is
+ * ordered by time rather than by person.
+ */
+async function clientDetail(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  clientEmail: string,
+): Promise<APIGatewayProxyResultV2> {
+  const [bookingRes, aboutRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select(
+        'id, starts_at, ends_at, status, price_centavos, facilitator_net_centavos, off_platform_centavos, ' +
+          'booked_by, client_name, client_notes, session_notes, intake_answers, intake_completed_at, ' +
+          'facilitator_services(title, duration_minutes)',
+      )
+      .eq('facilitator_id', facilitator.id)
+      // `lower()` on both sides, matching the unique index: a client who typed
+      // their address with a capital once must not become a second person.
+      .ilike('client_email', clientEmail)
+      .neq('status', 'pending_payment')
+      .order('starts_at', { ascending: false }),
+    supabase
+      .from('facilitator_clients')
+      .select('about, updated_at')
+      .eq('facilitator_id', facilitator.id)
+      .ilike('client_email', clientEmail)
+      .maybeSingle<{ about: string | null; updated_at: string }>(),
+  ]);
+
+  if (bookingRes.error) throw bookingRes.error;
+  if (aboutRes.error) throw aboutRes.error;
+
+  // `any[]` because the embedded relation defeats PostgREST's inferred row
+  // type, exactly as it does on every other joined read in this file.
+  const bookings = (bookingRes.data ?? []) as any[];
+  // Nobody by that address has ever booked with this facilitator. Not found
+  // rather than an empty timeline: an empty page for an address they have
+  // never seen is a way to probe whether it exists.
+  if (bookings.length === 0 && !aboutRes.data) return notFound('No client by that address');
+
+  return ok({
+    email: clientEmail,
+    name: bookings.find((row) => row.client_name)?.client_name ?? null,
+    about: aboutRes.data?.about ?? null,
+    aboutUpdatedAt: aboutRes.data?.updated_at ?? null,
+    bookings,
+  });
+}
+
+/** The standing note. Upserted, because "no note yet" and "an empty note" are the same thing. */
+async function saveClientAbout(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  clientEmail: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(event);
+  const about = typeof body.about === 'string' ? body.about.trim().slice(0, 10_000) : '';
+
+  // Only for someone they have actually seen. Without this the endpoint is a
+  // notepad addressable by any email, which is both a storage vector and a way
+  // to write a record about a person with no relationship to this facilitator.
+  const { count, error: countError } = await supabase
+    .from('bookings')
+    .select('id', { count: 'exact', head: true })
+    .eq('facilitator_id', facilitator.id)
+    .ilike('client_email', clientEmail)
+    .neq('status', 'pending_payment');
+  if (countError) throw countError;
+  if (!count) return notFound('No client by that address');
+
+  const { error } = await supabase.from('facilitator_clients').upsert(
+    {
+      facilitator_id: facilitator.id,
+      client_email: clientEmail,
+      about: about || null,
+    },
+    // Matches the unique index in 0033. Without naming it, a second save would
+    // insert a duplicate rather than updating the note.
+    { onConflict: 'facilitator_id,client_email' },
+  );
+  if (error) throw error;
+
+  return ok({ about: about || null });
+}
+
+/**
+ * What happened in one session (0033).
+ *
+ * Private to the facilitator and never returned by any client-facing handler —
+ * see the disclosure note in the migration. Writable at any time, including
+ * before the session: a facilitator preparing for one is exactly as entitled to
+ * write in it as one reflecting afterwards.
+ */
+async function saveSessionNotes(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  bookingId: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(event);
+  const notes = typeof body.notes === 'string' ? body.notes.trim().slice(0, 20_000) : '';
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .update({ session_notes: notes || null })
+    .eq('id', bookingId)
+    // The whole of the authorization: a booking that is not this facilitator's
+    // matches nothing and comes back as a 404.
+    .eq('facilitator_id', facilitator.id)
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) throw error;
+  if (!data) return notFound('Booking not found');
+
+  return ok({ bookingId, sessionNotes: notes || null });
+}
+
 async function bookings(
   supabase: SupabaseClient,
   facilitator: FacilitatorRow,
@@ -971,6 +1243,11 @@ async function bookings(
       .order('starts_at', { ascending: false });
     if (error) throw error;
     return ok({ bookings: data ?? [], timezone: facilitator.timezone });
+  }
+
+  if (path.endsWith('/notes')) {
+    if (method !== 'PUT') return badRequest(`Unsupported method ${method}`);
+    return await saveSessionNotes(supabase, facilitator, bookingId, event);
   }
 
   if (method !== 'POST') return badRequest(`Unsupported method ${method}`);

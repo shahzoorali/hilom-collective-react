@@ -1080,3 +1080,72 @@ export function intakeQuestionId(label: string, index: number): string {
     .slice(0, 40);
   return slug || `q${index + 1}`;
 }
+
+// ---------------------------------------------------------------------------
+// Clients (0033)
+// ---------------------------------------------------------------------------
+
+export interface ClientSummary {
+  email: string;
+  name: string | null;
+  sessions: number;
+  firstSessionAt: string | null;
+  lastSessionAt: string | null;
+  nextSessionAt: string | null;
+  netCentavos: number;
+  hasAbout: boolean;
+}
+
+/** One session in a client's timeline, with both kinds of note attached. */
+export interface ClientBooking {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  status: BookingStatus;
+  price_centavos: number;
+  facilitator_net_centavos: number;
+  off_platform_centavos: number | null;
+  booked_by: 'client' | 'facilitator';
+  client_name: string | null;
+  /** What the client wrote at booking time. */
+  client_notes: string | null;
+  /** What the facilitator wrote about the session. Never shown to the client. */
+  session_notes: string | null;
+  intake_answers: IntakeAnswer[];
+  intake_completed_at: string | null;
+  facilitator_services: { title: string; duration_minutes: number } | null;
+}
+
+export const listMyClients = () =>
+  apiFetch<{ clients: ClientSummary[] }>('/facilitator/clients', { headers: authHeaders() }).then(
+    (r) => r.clients,
+  );
+
+/**
+ * One client's history with this facilitator.
+ *
+ * The address goes in the path rather than a query string — that is the one
+ * place URLs reliably end up in logs and referrers, and this one identifies a
+ * person.
+ */
+export const getMyClient = (email: string) =>
+  apiFetch<{
+    email: string;
+    name: string | null;
+    about: string | null;
+    aboutUpdatedAt: string | null;
+    bookings: ClientBooking[];
+  }>(`/facilitator/clients/${encodeURIComponent(email)}`, { headers: authHeaders() });
+
+export const saveMyClientAbout = (email: string, about: string) =>
+  apiFetch<{ about: string | null }>(`/facilitator/clients/${encodeURIComponent(email)}`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ about }),
+  });
+
+export const saveMySessionNotes = (bookingId: string, notes: string) =>
+  apiFetch<{ bookingId: string; sessionNotes: string | null }>(
+    `/facilitator/bookings/${encodeURIComponent(bookingId)}/notes`,
+    { method: 'PUT', headers: jsonAuthHeaders(), body: JSON.stringify({ notes }) },
+  );
