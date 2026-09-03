@@ -12,6 +12,7 @@
  */
 import { useState } from 'react';
 import { updateMyFacilitatorProfile, type OwnProfile } from '../../lib/booking';
+import { YEARS_EXPERIENCE } from '../../lib/facilitator-intake';
 
 export default function ProfileTab({
   profile,
@@ -31,6 +32,11 @@ export default function ProfileTab({
     location: profile.location ?? '',
     delivery_mode: profile.delivery_mode,
     scope_note: profile.scope_note ?? '',
+    website_url: profile.website_url ?? '',
+    years_experience: profile.years_experience ?? '',
+    // The application form writes this under the `social` key; anything else
+    // an admin has put in social_links is left untouched by the save below.
+    social_handle: String(profile.social_links?.social ?? ''),
     timezone: profile.timezone,
     legal_name: profile.legal_name ?? '',
     phone: profile.phone ?? '',
@@ -76,6 +82,11 @@ export default function ProfileTab({
         location: draft.location,
         delivery_mode: draft.delivery_mode,
         scope_note: draft.scope_note,
+        website_url: draft.website_url,
+        years_experience: draft.years_experience || null,
+        // Merged rather than replaced, so saving the profile cannot drop a key
+        // the application form or an admin put in social_links.
+        social_links: { ...profile.social_links, social: draft.social_handle },
         timezone: draft.timezone,
         legal_name: draft.legal_name,
         phone: draft.phone,
@@ -201,6 +212,42 @@ export default function ProfileTab({
           <input value={draft.languages} onChange={(e) => set('languages', e.target.value)} />
         </label>
       </div>
+
+      {/* All three come from the application form. They are editable here
+          because otherwise they are write-once: a facilitator who changes
+          their site or handle would have to ask an admin to fix it. */}
+      <div className="two-col">
+        <label className="field">
+          <span>Website</span>
+          <input
+            value={draft.website_url}
+            onChange={(e) => set('website_url', e.target.value)}
+            placeholder="yoursite.com"
+          />
+        </label>
+        <label className="field">
+          <span>Social handle or link</span>
+          <input
+            value={draft.social_handle}
+            onChange={(e) => set('social_handle', e.target.value)}
+            placeholder="@yourhandle or instagram.com/yourhandle"
+          />
+        </label>
+      </div>
+
+      <label className="field">
+        <span>How long you've been doing this work</span>
+        <select
+          value={draft.years_experience}
+          onChange={(e) => set('years_experience', e.target.value as typeof draft.years_experience)}
+        >
+          <option value="">Prefer not to say</option>
+          {YEARS_EXPERIENCE.map((y) => (
+            <option key={y.value} value={y.value}>{y.label}</option>
+          ))}
+        </select>
+        <small className="muted">Shown on your public profile.</small>
+      </label>
 
       <div className="two-col">
         <label className="field">

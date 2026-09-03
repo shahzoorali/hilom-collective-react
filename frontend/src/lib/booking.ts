@@ -65,6 +65,9 @@ export interface Facilitator {
   delivery_mode: DeliveryMode;
   scope_note: string | null;
   social_links: Record<string, string>;
+  /** Collected on the application form; the only two intake fields shown publicly. */
+  website_url: string | null;
+  years_experience: YearsExperience | null;
   timezone: string;
   status: FacilitatorStatus;
 }
@@ -459,11 +462,11 @@ export interface AdminFacilitator extends OwnProfile {
 
   // Intake, from the application form. Every field is nullable or empty for a
   // facilitator an admin entered directly, who never filled one in.
+  // `website_url` and `years_experience` are inherited from Facilitator —
+  // they are the two intake fields that are also public profile fields.
   contact_method: ContactMethod | null;
-  years_experience: YearsExperience | null;
   support_needed: SupportTrack[];
   program_status: ProgramStatus[];
-  website_url: string | null;
   /** Presence means a document exists; the bytes come from a signed URL. */
   cert_document_key: string | null;
   cert_document_name: string | null;

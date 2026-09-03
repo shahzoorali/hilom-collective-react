@@ -1,0 +1,30 @@
+-- Two intake columns become public profile fields.
+--
+-- 0023 added the application-form columns and deliberately kept every one of
+-- them out of the anon/authenticated column grant, with a note saying that
+-- adding one later to make some screen easier would publish an applicant's
+-- contact preference, referral source and consent record.
+--
+-- This is that decision made on purpose for exactly two of them:
+--
+--   website_url      — a link the facilitator published about themselves. It
+--                      was already being collected and then shown nowhere,
+--                      which is the worst of both worlds.
+--   years_experience — a coarse bucket ('under_1', '1_3', '3_5', '5_plus'),
+--                      not a date of birth or a CV. It is the credibility
+--                      signal a client actually weighs when choosing between
+--                      practitioners, and it is why the form asks.
+--
+-- Everything else from 0023 stays private and is named here so the omission
+-- reads as a decision rather than an oversight: contact_method, phone,
+-- referral_source, referral_source_other, support_needed, program_status,
+-- cert_document_key, cert_document_name, privacy_accepted_at,
+-- privacy_policy_version.
+--
+-- The grant is the second layer, not the first. Every read goes through Lambda
+-- with the secret key, which bypasses RLS entirely, and
+-- FACILITATOR_PUBLIC_COLUMNS in backend/src/lib/scheduling.ts is what actually
+-- decides the response shape. This keeps the two layers stating the same
+-- intent, so a future direct-from-browser query cannot quietly expose more
+-- than the API does.
+grant select (website_url, years_experience) on public.facilitators to anon, authenticated;

@@ -125,6 +125,8 @@ export interface ProfileInput {
   delivery_mode: string;
   scope_note: string | null;
   social_links: Record<string, string>;
+  website_url: string | null;
+  years_experience: string | null;
   timezone: string;
   vacation_until: string | null;
 }
@@ -137,7 +139,11 @@ export function validateProfile(body: Record<string, unknown>): ProfileInput {
   const social: Record<string, string> = {};
   if (socialRaw && typeof socialRaw === 'object' && !Array.isArray(socialRaw)) {
     for (const [key, value] of Object.entries(socialRaw as Record<string, unknown>)) {
-      const link = url(value, `social_links.${key}`);
+      // `socialLink`, not `url`: the same field on the application form accepts
+      // a bare "@handle" or a scheme-less "instagram.com/x". Validating it
+      // strictly here would mean a value the apply form accepted could not be
+      // re-saved from the dashboard without being retyped.
+      const link = socialLink(value, `social_links.${key}`);
       if (link) social[key.slice(0, 40)] = link;
     }
   }
@@ -164,6 +170,12 @@ export function validateProfile(body: Record<string, unknown>): ProfileInput {
     delivery_mode: deliveryMode,
     scope_note: str(body.scope_note, 'Scope of practice', 1000),
     social_links: social,
+    // Both are collected by the application form and are public profile
+    // fields. Editable here so they are not write-once at apply time — a
+    // facilitator who changes their site or their handle must not have to ask
+    // an admin to fix it.
+    website_url: socialLink(body.website_url, 'Website'),
+    years_experience: oneOf(body.years_experience, 'Years of experience', YEARS_EXPERIENCE, false),
     timezone: timezone(body.timezone),
     vacation_until: vacationUntil,
   };

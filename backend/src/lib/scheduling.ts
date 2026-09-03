@@ -11,8 +11,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { computeSlots, isBookableSlot, type Slot, type SlotServiceRules } from './slots.js';
 import { HOLD_MINUTES } from './booking-domain.js';
 
+/**
+ * What a visitor may see of a facilitator.
+ *
+ * `website_url` and `years_experience` are the only two intake columns from
+ * 0023 that belong here — a link the facilitator published themselves, and a
+ * coarse experience bucket that is a credibility signal rather than personal
+ * data. Everything else the application form collects (contact preference,
+ * phone, referral source, which Hilom service track they asked for, their
+ * certification document, the consent record) is internal and must stay off
+ * this list.
+ */
 export const FACILITATOR_PUBLIC_COLUMNS =
-  'id, slug, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, timezone, status';
+  'id, slug, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, timezone, status';
 
 export const SERVICE_PUBLIC_COLUMNS =
   'id, facilitator_id, kind, title, description, duration_minutes, price_centavos, currency, sessions_count, delivery_mode, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, cancellation_policy, is_active, sort_order';

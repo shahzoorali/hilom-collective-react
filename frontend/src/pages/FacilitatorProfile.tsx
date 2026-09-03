@@ -16,6 +16,7 @@ import {
 } from '../lib/booking';
 import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton';
 import { playFlip } from '../lib/pageFlip';
+import { YEARS_EXPERIENCE, labelFor } from '../lib/facilitator-intake';
 
 export default function FacilitatorProfile() {
   const { slug = '' } = useParams();
@@ -84,6 +85,19 @@ export default function FacilitatorProfile() {
   const freeCall = services.find((s) => s.kind === 'exploratory');
   const paid = services.filter((s) => s.kind !== 'exploratory');
 
+  // The application form accepts a bare "@handle" as well as a URL, so a value
+  // here is not necessarily linkable — an un-linkable one is rendered as plain
+  // text rather than as a dead anchor.
+  const links = [
+    f.website_url ? { label: 'Website', href: f.website_url } : null,
+    ...Object.entries(f.social_links ?? {})
+      .filter(([, value]) => Boolean(value))
+      .map(([key, value]) => ({
+        label: key === 'social' ? String(value).replace(/^https?:\/\/(www\.)?/, '') : key,
+        href: /^https?:\/\//.test(String(value)) ? String(value) : null,
+      })),
+  ].filter((l): l is { label: string; href: string | null } => l !== null);
+
   return (
     <section className="section" ref={root}>
       <div className="container">
@@ -113,10 +127,32 @@ export default function FacilitatorProfile() {
                     ? 'In person'
                     : 'Online',
                 f.languages.length > 0 ? f.languages.join(', ') : null,
+                // Sits with the other at-a-glance facts rather than in its own
+                // block — it is a qualifier on everything above it, not a
+                // separate claim.
+                f.years_experience ? `${labelFor(YEARS_EXPERIENCE, f.years_experience)} in practice` : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}
             </p>
+
+            {/* Collected on the application form and, until now, shown nowhere.
+                Rendered with rel="noopener nofollow": these are links a
+                facilitator submitted about themselves, not endorsements. */}
+            {links.length > 0 && (
+              <p className="small" style={{ marginTop: '-0.4rem' }}>
+                {links.map(({ label, href }, i) => (
+                  <span key={label}>
+                    {i > 0 && ' · '}
+                    {href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer nofollow">{label}</a>
+                    ) : (
+                      label
+                    )}
+                  </span>
+                ))}
+              </p>
+            )}
 
             {f.specialties.length > 0 && (
               <>
