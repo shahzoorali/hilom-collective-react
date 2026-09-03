@@ -22,6 +22,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as kms from 'aws-cdk-lib/aws-kms';
 import { Construct } from 'constructs';
 import {
   ADMIN_KEY_SECRET_NAME,
@@ -29,6 +30,7 @@ import {
   DEFAULT_CHECKOUT_PAYMENT_METHODS,
   DEFAULT_COGNITO_SPA_CLIENT_ID,
   DEFAULT_COGNITO_USER_POOL_ID,
+  DEFAULT_API_BASE_URL,
   DEFAULT_FRONTEND_URL,
   DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS,
   lambdaFactory,
@@ -75,6 +77,42 @@ export class HilomMarketplaceStack extends cdk.Stack {
     const bookings = makeFn('BookingsFn', 'handlers/bookings.ts', 'handler');
     const facilitatorPortal = makeFn('FacilitatorPortalFn', 'handlers/facilitator-portal.ts', 'handler');
     const facilitatorUploads = makeFn('FacilitatorUploadsFn', 'handlers/facilitator-uploads.ts', 'handler');
+    const facilitatorIntegrations = makeFn(
+      'FacilitatorIntegrationsFn',
+      'handlers/facilitator-integrations.ts',
+      'handler',
+    );
+
+    // ---- connected meeting accounts (Google Meet / Zoom) ----
+    //
+    // A customer-managed key rather than the S3/Secrets default, because what
+    // it protects is different in kind from everything else here: these are
+    // OAuth tokens belonging to *facilitators*, not to Hilom. A leaked Supabase
+    // key is Hilom's to rotate; a leaked Zoom refresh token is a standing
+    // ability to act inside a real person's account, and they would never know.
+    //
+    // Its own key means the blast radius is bounded, `kms:Decrypt` on it is a
+    // single auditable permission held by two functions, and rotation is
+    // independent of anything else.
+    const integrationTokenKey = new kms.Key(this, 'IntegrationTokenKey', {
+      description: 'Encrypts facilitator OAuth tokens for Google Meet and Zoom',
+      enableKeyRotation: true,
+      // Destroying the key would make every stored token permanently
+      // undecryptable and silently break every connected account.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    new kms.Alias(this, 'IntegrationTokenKeyAlias', {
+      aliasName: 'alias/hilom-integration-tokens',
+      targetKey: integrationTokenKey,
+    });
+
+    const googleMeetSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      'GoogleMeetSecret',
+      'hilom/google-meet',
+    );
+    const zoomSecret = secretsmanager.Secret.fromSecretNameV2(this, 'ZoomSecret', 'hilom/zoom');
     const adminFacilitators = makeFn('AdminFacilitatorsFn', 'handlers/admin-facilitators.ts', 'handler');
 
     // ---- applicant credential documents ----
@@ -144,11 +182,23 @@ export class HilomMarketplaceStack extends cdk.Stack {
 
     // ---- grants ----
     for (const fn of [
-      facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, adminFacilitators, bookingSweep,
+      facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations,
+      adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
     ]) {
       supabaseSecret.grantRead(fn);
     }
+
+    // Only the integrations function may touch facilitator OAuth tokens. When
+    // meeting creation lands it will need `grantDecrypt` too, and adding it
+    // there rather than granting broadly now keeps "who can read a
+    // facilitator's Zoom credentials" answerable by reading this block.
+    integrationTokenKey.grantEncryptDecrypt(facilitatorIntegrations);
+    googleMeetSecret.grantRead(facilitatorIntegrations);
+    zoomSecret.grantRead(facilitatorIntegrations);
+    facilitatorIntegrations.addEnvironment('INTEGRATION_TOKEN_KEY_ID', integrationTokenKey.keyArn);
+    facilitatorIntegrations.addEnvironment('API_BASE_URL', props.apiBaseUrl ?? DEFAULT_API_BASE_URL);
+    facilitatorIntegrations.addEnvironment('FRONTEND_URL', props.frontendUrl ?? DEFAULT_FRONTEND_URL);
 
     // Presigning can only sign what the signing role may itself do, so these
     // grants are both what makes an upload URL work and what bounds it.
@@ -201,7 +251,8 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // Every function that authenticates a caller from a Cognito id token needs
     // the pool id and SPA client id to build the verifier.
     for (const fn of [
-      bookings, facilitatorPortal, facilitatorUploads, adminFacilitators, eventRegistrations,
+      bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations, adminFacilitators,
+      eventRegistrations,
     ]) {
       fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
       fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
@@ -308,6 +359,17 @@ export class HilomMarketplaceStack extends cdk.Stack {
     attach(facilitatorUploads, 'FacilitatorUploadsInt', [
       ['/facilitator/upload-url', [POST]],
       ['/facilitator/upload', [POST]],
+    ]);
+
+    // Its own function again, by the same audience rule: `/callback` is reached
+    // by an OAuth provider redirecting a browser, with no bearer token, so it
+    // cannot live behind the portal's unconditional group check. Keeping it
+    // separate means that check stays unconditional.
+    attach(facilitatorIntegrations, 'FacilitatorIntegrationsInt', [
+      ['/facilitator/integrations', [GET]],
+      ['/facilitator/integrations/{provider}', [DELETE]],
+      ['/facilitator/integrations/{provider}/start', [POST]],
+      ['/facilitator/integrations/{provider}/callback', [GET]],
     ]);
 
     attach(facilitatorsPublic, 'FacilitatorsPublicInt', [

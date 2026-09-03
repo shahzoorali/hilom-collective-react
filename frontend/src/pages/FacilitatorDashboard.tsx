@@ -37,6 +37,7 @@ import {
 const ServicesTab = lazy(() => import('./facilitator/ServicesTab'));
 const AvailabilityTab = lazy(() => import('./facilitator/AvailabilityTab'));
 const ProfileTab = lazy(() => import('./facilitator/ProfileTab'));
+const ConnectionsTab = lazy(() => import('./facilitator/ConnectionsTab'));
 
 const TABS = [
   { label: 'Overview', path: 'overview', icon: '📊' },
@@ -45,6 +46,7 @@ const TABS = [
   { label: 'Availability', path: 'availability', icon: '🕰️' },
   { label: 'Earnings', path: 'earnings', icon: '💰' },
   { label: 'Profile', path: 'profile', icon: '👤' },
+  { label: 'Connections', path: 'connections', icon: '🔗' },
 ] as const;
 
 export default function FacilitatorDashboard() {
@@ -165,6 +167,7 @@ export default function FacilitatorDashboard() {
             <Route path="availability" element={<AvailabilityTab timezone={profile.timezone} />} />
             <Route path="earnings" element={<EarningsTab />} />
             <Route path="profile" element={<ProfileTab profile={profile} onSaved={setProfile} />} />
+            <Route path="connections" element={<ConnectionsTab />} />
             <Route path="*" element={<Navigate to="overview" replace />} />
           </Routes>
         </Suspense>

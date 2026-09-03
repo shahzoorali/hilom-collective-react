@@ -363,6 +363,49 @@ export const updateMyFacilitatorProfile = (body: Record<string, unknown>) =>
     body: JSON.stringify(body),
   }).then((r) => r.facilitator);
 
+// ---------------------------------------------------------------------------
+// Connected meeting accounts
+// ---------------------------------------------------------------------------
+
+export type IntegrationProvider = 'google_meet' | 'zoom';
+
+export interface Connection {
+  provider: IntegrationProvider;
+  label: string;
+  connected: boolean;
+  /** Which account, so "connected" is not an anonymous green tick. */
+  email: string | null;
+  scopes: string[];
+  connectedAt: string | null;
+  /** Revoked or expired upstream — needs reconnecting, not retrying. */
+  broken: boolean;
+  brokenReason: string | null;
+}
+
+export const listMyConnections = () =>
+  apiFetch<{ connections: Connection[] }>('/facilitator/integrations', {
+    headers: authHeaders(),
+  }).then((r) => r.connections);
+
+/**
+ * Starts a connect flow.
+ *
+ * Returns the provider's consent URL rather than following a redirect: the
+ * browser has to navigate there itself, because `fetch` following a 302 to
+ * accounts.google.com fails CORS before the user ever sees a consent screen.
+ */
+export const startConnectingProvider = (provider: IntegrationProvider, returnTo?: string) =>
+  apiFetch<{ authorizeUrl: string }>(
+    `/facilitator/integrations/${encodeURIComponent(provider)}/start`,
+    { method: 'POST', headers: jsonAuthHeaders(), body: JSON.stringify({ returnTo }) },
+  ).then((r) => r.authorizeUrl);
+
+export const disconnectProvider = (provider: IntegrationProvider) =>
+  apiFetch<{ disconnected: boolean }>(
+    `/facilitator/integrations/${encodeURIComponent(provider)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+
 export const listMyServices = () =>
   apiFetch<{ services: FacilitatorService[] }>('/facilitator/services', {
     headers: authHeaders(),

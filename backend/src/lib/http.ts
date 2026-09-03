@@ -23,6 +23,21 @@ export function json(statusCode: number, body: unknown): APIGatewayProxyResultV2
 export const ok = (body: unknown) => json(200, body);
 export const notFound = (message = 'Not found') => json(404, { error: message });
 export const badRequest = (message: string) => json(400, { error: message });
+
+/**
+ * A browser redirect.
+ *
+ * Deliberately not JSON: the one caller is an OAuth provider bouncing a *person*
+ * back to us, and a person needs to end up on a page. `Content-Type` is dropped
+ * because there is no body to describe.
+ */
+export function redirect(location: string): APIGatewayProxyResultV2 {
+  return {
+    statusCode: 302,
+    headers: { 'Access-Control-Allow-Origin': corsHeaders['Access-Control-Allow-Origin'], Location: location },
+    body: '',
+  };
+}
 export const unauthorized = (message = 'Unauthorized') => json(401, { error: message });
 
 /**

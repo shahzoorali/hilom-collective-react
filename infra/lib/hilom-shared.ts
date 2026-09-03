@@ -45,6 +45,15 @@ export const DEFAULT_COGNITO_USER_POOL_ID = 'ap-southeast-1_AA9IeeZ2z';
 export const DEFAULT_COGNITO_SPA_CLIENT_ID = '29bo0gpj7j9u7ofbcii22emj8l';
 export const DEFAULT_ALERT_EMAIL = 'don.poky@gmail.com';
 export const DEFAULT_FRONTEND_URL = 'https://www.hilomcollective.com';
+
+/**
+ * The API's own public origin.
+ *
+ * Needed because OAuth redirect URIs must be absolute and must match, byte for
+ * byte, what is registered with Google and Zoom — a Lambda cannot derive this
+ * from the request, since the custom domain is in front of API Gateway.
+ */
+export const DEFAULT_API_BASE_URL = 'https://api.hilomcollective.com';
 export const DEFAULT_CHECKOUT_PAYMENT_METHODS = 'qrph';
 
 /**
@@ -99,6 +108,13 @@ export interface HilomCommonProps extends cdk.StackProps {
    * path via a separate redirect microservice rather than reaching the app.
    */
   readonly frontendUrl?: string;
+
+  /**
+   * The API's own public origin, used to build OAuth redirect URIs. Must match
+   * exactly what is registered with Google and Zoom — those providers compare
+   * the redirect URI byte for byte and reject a mismatch outright.
+   */
+  readonly apiBaseUrl?: string;
 
   /**
    * Comma-separated event ids whose confirmation email attaches the
