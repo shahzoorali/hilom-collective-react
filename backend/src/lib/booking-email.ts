@@ -497,6 +497,58 @@ export async function sendRescheduleDeclined(ctx: BookingEmailContext): Promise<
   await send(ctx.facilitatorEmail, `Declined: new time for ${ctx.serviceTitle}`, text, html);
 }
 
+/**
+ * Sent to the other party when someone writes in a booking's thread (0034).
+ *
+ * Carries the message body rather than only "you have a new message". The
+ * whole point of in-platform messaging is that neither side has to hand over a
+ * personal address, and an email that says nothing forces a trip to the site to
+ * read one sentence — which is exactly the friction that sends people back to
+ * mailing each other directly.
+ *
+ * Consecutive messages from the same person collapse into one notification;
+ * see NOTIFICATION_QUIET_MINUTES in booking-messages.ts.
+ */
+export async function sendNewMessage(
+  ctx: BookingEmailContext,
+  detail: { toClient: boolean; fromName: string; body: string },
+): Promise<void> {
+  const when = bothWhen(ctx);
+  const inbox = detail.toClient ? ACCOUNT_BOOKINGS_URL : FACILITATOR_BOOKINGS_URL;
+  const sessionWhen = detail.toClient ? when.forClient : when.forFacilitator;
+
+  const html = renderEmail({
+    preheader: `${detail.fromName}: ${detail.body.slice(0, 120)}`,
+    heading: `A message from ${detail.fromName}`,
+    body:
+      // Pre-wrapped: a message typed with line breaks should arrive with them,
+      // and `escapeHtml` leaves newlines alone.
+      `<div style="white-space:pre-wrap;margin:0 0 1rem;">${escapeHtml(detail.body)}</div>` +
+      details([
+        { label: 'About', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'Session', value: escapeHtml(sessionWhen) },
+      ]) +
+      button('Reply', inbox) +
+      note('Replying here keeps the conversation attached to the session for both of you.'),
+  });
+
+  const text = renderText(`A message from ${detail.fromName}`, [
+    detail.body,
+    '',
+    `About: ${ctx.serviceTitle}`,
+    `Session: ${sessionWhen}`,
+    '',
+    `Reply: ${inbox}`,
+  ]);
+
+  await send(
+    detail.toClient ? ctx.clientEmail : ctx.facilitatorEmail,
+    `${detail.fromName} sent you a message about ${ctx.serviceTitle}`,
+    text,
+    html,
+  );
+}
+
 /** Sent when an admin approves a facilitator application. */
 export async function sendFacilitatorApproved(to: string, displayName: string): Promise<void> {
   const dashboard = 'https://www.hilomcollective.com/facilitator';

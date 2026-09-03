@@ -20,6 +20,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-r
 import hilomLogo from '../assets/hilom-logo.png';
 import { currentUser, login, logout } from '../lib/auth';
 import { money } from '../components/Layout';
+import MessageThread from '../components/MessageThread';
 import {
   getMyEarnings,
   getMyFacilitatorProfile,
@@ -47,6 +48,7 @@ const AvailabilityTab = lazy(() => import('./facilitator/AvailabilityTab'));
 const ProfileTab = lazy(() => import('./facilitator/ProfileTab'));
 const ConnectionsTab = lazy(() => import('./facilitator/ConnectionsTab'));
 const ClientsTab = lazy(() => import('./facilitator/ClientsTab'));
+const MessagesTab = lazy(() => import('./facilitator/MessagesTab'));
 
 /**
  * Is this confirmed session inside the facilitator's vacation window?
@@ -66,6 +68,7 @@ const TABS = [
   { label: 'Overview', path: 'overview', icon: '📊' },
   { label: 'Bookings', path: 'bookings', icon: '📅' },
   { label: 'Clients', path: 'clients', icon: '🫂' },
+  { label: 'Messages', path: 'messages', icon: '💬' },
   { label: 'Services', path: 'services', icon: '🌿' },
   { label: 'Availability', path: 'availability', icon: '🕰️' },
   { label: 'Earnings', path: 'earnings', icon: '💰' },
@@ -188,6 +191,7 @@ export default function FacilitatorDashboard() {
             <Route path="overview" element={<Overview profile={profile} />} />
             <Route path="bookings" element={<BookingsTab profile={profile} />} />
             <Route path="clients" element={<ClientsTab />} />
+            <Route path="messages" element={<MessagesTab />} />
             <Route path="services" element={<ServicesTab />} />
             <Route path="availability" element={<AvailabilityTab timezone={profile.timezone} />} />
             <Route path="earnings" element={<EarningsTab />} />
@@ -638,6 +642,8 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
   // Which booking's "suggest another time" panel is open, if any.
   const [proposingId, setProposingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // Which booking's conversation is open inline, if any.
+  const [messagingId, setMessagingId] = useState<string | null>(null);
 
   function reload() {
     listMyFacilitatorBookings()
@@ -843,7 +849,25 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
               />
             )}
 
+            {messagingId === b.id && (
+              <MessageThread
+                bookingId={b.id}
+                side="facilitator"
+                otherName={(b.client_name || b.client_email).split(' ')[0] ?? 'your client'}
+              />
+            )}
+
             <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
+              {/* Also reachable from the Messages tab. Offered here too because
+                  "can we start ten minutes later?" is a thought someone has
+                  while looking at the session, not at an inbox. */}
+              <button
+                type="button"
+                className="btn btn-ghost small"
+                onClick={() => setMessagingId(messagingId === b.id ? null : b.id)}
+              >
+                {messagingId === b.id ? 'Close messages' : 'Message'}
+              </button>
               {b.meeting_url && isFuture && (
                 <a className="btn btn-ghost small" href={b.meeting_url} target="_blank" rel="noreferrer">
                   Join

@@ -1149,3 +1149,58 @@ export const saveMySessionNotes = (bookingId: string, notes: string) =>
     `/facilitator/bookings/${encodeURIComponent(bookingId)}/notes`,
     { method: 'PUT', headers: jsonAuthHeaders(), body: JSON.stringify({ notes }) },
   );
+
+// ---------------------------------------------------------------------------
+// Messages (0034)
+// ---------------------------------------------------------------------------
+
+export interface BookingMessage {
+  id: string;
+  sender: 'client' | 'facilitator';
+  body: string;
+  created_at: string;
+  /** Null while the other party has not opened the thread. */
+  read_at: string | null;
+}
+
+/**
+ * One thread in the facilitator's inbox.
+ *
+ * A facilitator's unit of attention is not the booking — someone with a full
+ * week does not open twelve sessions to find out whether anyone asked them
+ * anything.
+ */
+export interface MessageThread {
+  bookingId: string;
+  lastMessage: string;
+  lastSender: 'client' | 'facilitator';
+  lastAt: string;
+  unread: number;
+  startsAt: string | null;
+  status: BookingStatus | null;
+  clientName: string | null;
+  clientEmail: string | null;
+  serviceTitle: string;
+}
+
+/** Reading the thread marks the other side's messages read. */
+export const listBookingMessages = (bookingId: string, asFacilitator = false) =>
+  apiFetch<{ messages: BookingMessage[] }>(
+    asFacilitator
+      ? `/facilitator/bookings/${encodeURIComponent(bookingId)}/messages`
+      : `/bookings/${encodeURIComponent(bookingId)}/messages`,
+    { headers: authHeaders() },
+  ).then((r) => r.messages);
+
+export const sendBookingMessage = (bookingId: string, body: string, asFacilitator = false) =>
+  apiFetch<{ message: BookingMessage }>(
+    asFacilitator
+      ? `/facilitator/bookings/${encodeURIComponent(bookingId)}/messages`
+      : `/bookings/${encodeURIComponent(bookingId)}/messages`,
+    { method: 'POST', headers: jsonAuthHeaders(), body: JSON.stringify({ body }) },
+  ).then((r) => r.message);
+
+export const listMyMessageThreads = () =>
+  apiFetch<{ threads: MessageThread[] }>('/facilitator/messages', { headers: authHeaders() }).then(
+    (r) => r.threads,
+  );

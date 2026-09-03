@@ -18,6 +18,7 @@ import { Link } from 'react-router-dom';
 import { money } from '../../components/Layout';
 import SlotPicker, { type SlotPickerHandle } from '../../components/SlotPicker';
 import IntakeForm from '../../components/IntakeForm';
+import MessageThread from '../../components/MessageThread';
 import { currentUser } from '../../lib/auth';
 import {
   cancelBooking,
@@ -185,6 +186,8 @@ export default function BookingsTab() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [movingId, setMovingId] = useState<string | null>(null);
+  // Which booking's conversation is open, if any.
+  const [threadId, setThreadId] = useState<string | null>(null);
   const [newSlot, setNewSlot] = useState<string | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
   const pickerRef = useRef<SlotPickerHandle>(null);
@@ -353,6 +356,30 @@ export default function BookingsTab() {
               {/* Answerable right up until the session starts — see 0032 and
                   IntakePanel for why revising matters as much as answering. */}
               <IntakePanel booking={b} />
+
+              {/* Collapsed by default: most sessions have no conversation, and
+                  a thread per booking loaded eagerly is a request per row for
+                  nothing. */}
+              {b.facilitators && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost small"
+                    onClick={() => setThreadId(threadId === b.id ? null : b.id)}
+                  >
+                    {threadId === b.id
+                      ? 'Close messages'
+                      : `Message ${b.facilitators.display_name.split(' ')[0]}`}
+                  </button>
+                  {threadId === b.id && (
+                    <MessageThread
+                      bookingId={b.id}
+                      side="client"
+                      otherName={b.facilitators.display_name.split(' ')[0]}
+                    />
+                  )}
+                </div>
+              )}
 
               {/* An offer, not a change — the session above is still the real
                   one until this is accepted. The copy has to keep saying so,

@@ -48,6 +48,12 @@ import {
   IntakeError,
 } from '../lib/intake.js';
 import {
+  listMessages,
+  markThreadRead,
+  postMessage,
+  MessageError,
+} from '../lib/booking-messages.js';
+import {
   sendBookingCancelled,
   sendBookingRescheduled,
   sendRescheduleDeclined,
@@ -87,6 +93,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (path.endsWith('/status')) return await status(bookingId, user.email);
     if (path.endsWith('/cancel')) return await cancel(bookingId, user.email);
     if (path.endsWith('/reschedule')) return await reschedule(bookingId, user.email, event);
+    if (path.endsWith('/messages')) return await messages(bookingId, user.email, method, event);
     if (path.endsWith('/intake')) return await intake(bookingId, user.email, method, event);
     if (path.endsWith('/accept-time')) return await respondToProposal(bookingId, user.email, true);
     if (path.endsWith('/decline-time')) return await respondToProposal(bookingId, user.email, false);
@@ -95,6 +102,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // A client mis-answering an intake form is a 400 with the question that
     // needs answering, not an opaque 500.
     if (err instanceof IntakeError) return badRequest(err.message);
+    if (err instanceof MessageError) return badRequest(err.message);
     return serverError('bookings', err);
   }
 }
@@ -505,6 +513,64 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     refundCentavos: decision.refundCentavos,
     refundNote: decision.reason,
   });
+}
+
+/**
+ * The client's half of a booking's message thread (0034).
+ *
+ *   GET  — the conversation, and everything the facilitator wrote is marked read
+ *   POST — say something
+ *
+ * Ownership is `loadOwned`, exactly as for cancelling or rescheduling: the
+ * thread belongs to the booking, so "may I read this" is a question this
+ * handler already knew how to answer. That is most of why threads are scoped to
+ * a booking rather than to a pair of people — see 0034.
+ */
+async function messages(
+  bookingId: string,
+  email: string,
+  method: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const loaded = await loadOwned(bookingId, email);
+  if (!loaded) return notFound('Booking not found');
+  const { supabase, booking } = loaded;
+
+  if (method === 'GET') {
+    const thread = await listMessages(supabase, bookingId);
+    // Opening the thread is reading it. Only the facilitator's messages are
+    // touched — see markThreadRead.
+    await markThreadRead(supabase, bookingId, 'client');
+    return ok({ messages: thread });
+  }
+
+  if (method !== 'POST') return badRequest(`Unsupported method ${method}`);
+
+  // Nothing to talk about on a session that was cancelled or has long passed —
+  // and an open channel on a dead booking is a channel with no context.
+  if (booking.status !== 'confirmed' && booking.status !== 'completed' && booking.status !== 'no_show') {
+    return badRequest('This session is no longer active, so the conversation is closed.');
+  }
+
+  const facilitator = booking.facilitators as { email: string; display_name: string; timezone: string };
+  const message = await postMessage(supabase, {
+    bookingId,
+    sender: 'client',
+    senderEmail: email,
+    body: parseBody(event).body,
+    notify: {
+      clientEmail: booking.client_email,
+      clientName: booking.client_name,
+      clientTimezone: booking.client_timezone,
+      facilitatorEmail: facilitator.email,
+      facilitatorName: facilitator.display_name,
+      facilitatorTimezone: facilitator.timezone,
+      serviceTitle: (booking.facilitator_services as { title: string }).title,
+      startsAt: booking.starts_at,
+    },
+  });
+
+  return ok({ message });
 }
 
 /**

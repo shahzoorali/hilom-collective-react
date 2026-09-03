@@ -48,6 +48,12 @@ import {
 import { sendBookingCancelled, sendRescheduleProposed } from '../lib/booking-email.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import {
+  listMessages,
+  markThreadRead,
+  postMessage,
+  MessageError,
+} from '../lib/booking-messages.js';
+import {
   validateProfile,
   validateApplication,
   validateService,
@@ -127,6 +133,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await blackouts(supabase, facilitator, event, method);
     }
 
+    if (path.endsWith('/facilitator/messages')) {
+      if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
+      return await messageInbox(supabase, facilitator);
+    }
+
     if (path.includes('/facilitator/clients')) {
       return await clients(supabase, facilitator, event, method);
     }
@@ -143,6 +154,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   } catch (err) {
     if (err instanceof UnauthorizedError) return unauthorized(err.message);
     if (err instanceof FacilitatorInputError) return badRequest(err.message);
+    if (err instanceof MessageError) return badRequest(err.message);
     if (err instanceof SlugError) return badRequest(err.message);
     return serverError('facilitatorPortal', err);
   }
@@ -1223,6 +1235,134 @@ async function saveSessionNotes(
   return ok({ bookingId, sessionNotes: notes || null });
 }
 
+/**
+ * The facilitator's half of a booking's message thread, and their inbox (0034).
+ *
+ *   GET  /facilitator/messages                     — threads with something in them
+ *   GET  /facilitator/bookings/{id}/messages       — one conversation
+ *   POST /facilitator/bookings/{id}/messages       — reply
+ *
+ * The inbox exists because a facilitator's unit of attention is not the
+ * booking. Someone with a full week does not open twelve sessions to find out
+ * whether anyone has asked them anything; they want the one list that says who
+ * is waiting on a reply.
+ */
+async function messageInbox(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+): Promise<APIGatewayProxyResultV2> {
+  // Every message on this facilitator's bookings, newest first. Bounded rather
+  // than paginated: an inbox is a thing you clear, and a facilitator who is
+  // 500 messages behind has a different problem than pagination solves.
+  const { data, error } = await supabase
+    .from('booking_messages')
+    .select('id, booking_id, sender, body, created_at, read_at, bookings!inner(facilitator_id)')
+    .eq('bookings.facilitator_id', facilitator.id)
+    .order('created_at', { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+
+  // Collapsed to one row per booking in memory. PostgREST cannot express
+  // "latest message per booking" without a view, and this is a few hundred rows.
+  const threads = new Map<
+    string,
+    { bookingId: string; lastMessage: string; lastSender: string; lastAt: string; unread: number }
+  >();
+
+  for (const row of (data ?? []) as any[]) {
+    const bookingId = String(row.booking_id);
+    const existing = threads.get(bookingId);
+    // Descending order, so the first row seen for a booking is its latest.
+    const thread = existing ?? {
+      bookingId,
+      lastMessage: String(row.body),
+      lastSender: String(row.sender),
+      lastAt: String(row.created_at),
+      unread: 0,
+    };
+    // Unread means "written by the client and not yet opened by me" — a
+    // facilitator's own messages are never unread to themselves.
+    if (row.sender === 'client' && row.read_at === null) thread.unread += 1;
+    threads.set(bookingId, thread);
+  }
+
+  if (threads.size === 0) return ok({ threads: [] });
+
+  // The session each thread is about. Fetched in one query rather than joined
+  // through the message read, which would repeat the booking on every row.
+  const { data: bookings, error: bookingError } = await supabase
+    .from('bookings')
+    .select('id, starts_at, status, client_name, client_email, facilitator_services(title)')
+    .in('id', [...threads.keys()]);
+  if (bookingError) throw bookingError;
+
+  const byId = new Map((bookings ?? []).map((row: any) => [String(row.id), row]));
+
+  const list = [...threads.values()]
+    .map((thread) => {
+      const booking = byId.get(thread.bookingId);
+      return {
+        ...thread,
+        startsAt: booking?.starts_at ?? null,
+        status: booking?.status ?? null,
+        clientName: booking?.client_name ?? null,
+        clientEmail: booking?.client_email ?? null,
+        serviceTitle: booking?.facilitator_services?.title ?? 'Session',
+      };
+    })
+    // Anything unread first, then by recency. A reply someone is waiting on
+    // outranks a conversation that ended a week ago.
+    .sort((a, b) => {
+      if (Boolean(a.unread) !== Boolean(b.unread)) return a.unread ? -1 : 1;
+      return b.lastAt.localeCompare(a.lastAt);
+    });
+
+  return ok({ threads: list });
+}
+
+/** One thread, from the facilitator's side. Ownership is the booking's. */
+async function facilitatorMessages(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  booking: any,
+  method: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const bookingId = booking.id as string;
+
+  if (method === 'GET') {
+    const thread = await listMessages(supabase, bookingId);
+    await markThreadRead(supabase, bookingId, 'facilitator');
+    return ok({ messages: thread });
+  }
+
+  if (method !== 'POST') return badRequest(`Unsupported method ${method}`);
+
+  if (booking.status !== 'confirmed' && booking.status !== 'completed' && booking.status !== 'no_show') {
+    return badRequest('This session is no longer active, so the conversation is closed.');
+  }
+
+  const message = await postMessage(supabase, {
+    bookingId,
+    sender: 'facilitator',
+    senderEmail: facilitator.email,
+    body: parseBody(event).body,
+    notify: {
+      clientEmail: booking.client_email,
+      clientName: booking.client_name,
+      clientTimezone: booking.client_timezone,
+      facilitatorEmail: facilitator.email,
+      facilitatorName: facilitator.display_name,
+      facilitatorTimezone: facilitator.timezone,
+      serviceTitle: booking.facilitator_services?.title ?? 'Session',
+      startsAt: booking.starts_at,
+    },
+  });
+
+  return ok({ message });
+}
+
 async function bookings(
   supabase: SupabaseClient,
   facilitator: FacilitatorRow,
@@ -1250,7 +1390,11 @@ async function bookings(
     return await saveSessionNotes(supabase, facilitator, bookingId, event);
   }
 
-  if (method !== 'POST') return badRequest(`Unsupported method ${method}`);
+  // The message thread is the one per-booking route that is also a GET, so the
+  // POST-only guard below sits after the booking is loaded rather than before.
+  if (method !== 'POST' && !path.endsWith('/messages')) {
+    return badRequest(`Unsupported method ${method}`);
+  }
 
   const { data: booking, error } = await supabase
     .from('bookings')
@@ -1260,6 +1404,10 @@ async function bookings(
     .maybeSingle<any>();
   if (error) throw error;
   if (!booking) return notFound('Booking not found');
+
+  if (path.endsWith('/messages')) {
+    return await facilitatorMessages(supabase, facilitator, booking, method, event);
+  }
 
   const now = new Date();
 
