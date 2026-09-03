@@ -25,6 +25,8 @@ export const RESERVED_SLUGS = new Set([
   'booking',
   'bookings',
   'account',
+  // Static legal page rendered from frontend/src/pages/PrivacyPolicy.tsx.
+  'privacy-policy',
 ]);
 
 /**

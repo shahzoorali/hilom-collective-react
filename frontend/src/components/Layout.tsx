@@ -144,12 +144,20 @@ export default function Layout({ children }: { children: ReactNode }) {
           <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" style={{ marginBottom: '0.9rem' }} />
           <p style={{ margin: 0 }}>
             © {new Date().getFullYear()} Hilom Collective
-            {menus.footer.map((item) => (
-              <span key={`${item.label}-${item.href}`}>
-                {' · '}
-                <MenuLinkView item={item} />
-              </span>
-            ))}
+            {menus.footer
+              // Hardcoded below, so drop an editor-added duplicate rather than
+              // showing the Privacy Policy twice.
+              .filter((item) => item.href !== '/privacy-policy')
+              .map((item) => (
+                <span key={`${item.label}-${item.href}`}>
+                  {' · '}
+                  <MenuLinkView item={item} />
+                </span>
+              ))}
+            {/* Not part of the editable footer menu: a legal notice must stay
+                reachable even if someone empties or rearranges that menu. */}
+            {' · '}
+            <Link to="/privacy-policy">Privacy Policy</Link>
           </p>
         </div>
       </footer>
