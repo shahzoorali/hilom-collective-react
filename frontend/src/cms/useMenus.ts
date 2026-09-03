@@ -28,7 +28,10 @@ export const FALLBACK_HEADER: MenuLink[] = [
   link('Login to Hilom Learning Hub ➞', MOODLE_URL, 'blank'),
 ];
 
-export const FALLBACK_FOOTER: MenuLink[] = [link('Learning platform', MOODLE_URL, 'blank')];
+export const FALLBACK_FOOTER: MenuLink[] = [
+  link('Learning platform', MOODLE_URL, 'blank'),
+  link('Privacy Policy', '/privacy-policy'),
+];
 
 let cache: Record<string, MenuLink[]> | null = null;
 

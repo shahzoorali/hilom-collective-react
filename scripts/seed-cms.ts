@@ -369,6 +369,187 @@ function buildCommunity() {
   ];
 }
 
+/**
+ * The Privacy Policy, one `richText` block per numbered section so an admin can
+ * edit or reorder a single clause without scrolling through the whole document.
+ * Must stay in sync with frontend/src/pages/PrivacyPolicy.tsx, which is what
+ * visitors see until this page is published.
+ */
+function buildPrivacyPolicy(): unknown[] {
+  const section = (html: string, background?: string) =>
+    block('richText', background ? { html, background } : { html });
+
+  const list = (...items: string[]) => `<ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
+
+  return [
+    section(
+      '<h1>Privacy Policy</h1>' +
+        '<p>Hilom Collective Website &amp; Learning Management System (LMS)</p>' +
+        '<p><strong>Effective Date:</strong> May 19, 2026<br /><strong>Last Updated:</strong> May 19, 2026</p>' +
+        '<p>Welcome to <a href="https://hilomcollective.com">Hilom Collective</a> (“Hilom Collective,” “we,” “our,” or “us”).</p>' +
+        '<p>Hilom Collective is committed to protecting your privacy and ensuring transparency in how we collect, use, store, and safeguard your personal information across our website, Learning Management System (LMS), community platforms, wellness programs, events, and digital services.</p>' +
+        '<p>By accessing or using our website, LMS, or related services, you agree to the terms outlined in this Privacy Policy.</p>',
+    ),
+    section(
+      '<h2>1. Information We Collect</h2>' +
+        '<p>We may collect the following types of information:</p>' +
+        '<h3>A. Personal Information</h3>' +
+        '<p>Information you voluntarily provide, including:</p>' +
+        list(
+          'Full name',
+          'Email address',
+          'Mobile number',
+          'Date of birth',
+          'Gender or pronouns (optional)',
+          'Billing or payment details',
+          'Wellness interests and preferences',
+          'LMS account credentials',
+          'Uploaded assignments, reflections, or learning outputs',
+          'Event registration details',
+          'Community participation information',
+        ) +
+        '<h3>B. Automatically Collected Information</h3>' +
+        '<p>When you use our website or LMS, we may automatically collect:</p>' +
+        list(
+          'IP address',
+          'Browser type',
+          'Device information',
+          'Operating system',
+          'Website usage behavior',
+          'Login timestamps',
+          'Pages visited',
+          'Cookies and analytics data',
+        ) +
+        '<h3>C. Sensitive Wellness Information</h3>' +
+        '<p>Some courses, coaching services, or wellness assessments may involve personal reflections or wellness-related information.</p>' +
+        '<p>Hilom Collective does <strong>not</strong> provide medical diagnosis, psychiatric treatment, or emergency healthcare services. Any wellness information voluntarily shared by users will be treated with reasonable confidentiality and used solely for educational, coaching, or community-support purposes.</p>' +
+        '<p>We encourage users not to share highly sensitive medical or personal information unless necessary.</p>',
+      'cream',
+    ),
+    section(
+      '<h2>2. How We Use Your Information</h2>' +
+        '<p>We may use your information to:</p>' +
+        list(
+          'Create and manage your LMS account',
+          'Deliver courses, programs, and wellness content',
+          'Personalize your learning experience',
+          'Process payments and registrations',
+          'Communicate updates, reminders, and announcements',
+          'Improve website functionality and user experience',
+          'Analyze engagement and learning outcomes',
+          'Provide customer support',
+          'Ensure platform security and fraud prevention',
+          'Comply with legal obligations',
+        ),
+    ),
+    section(
+      '<h2>3. Cookies &amp; Analytics</h2>' +
+        '<p>Our website and LMS may use cookies, analytics tools, and similar technologies to improve user experience and understand platform performance.</p>' +
+        '<p>These tools may help us:</p>' +
+        list(
+          'Remember user preferences',
+          'Track website traffic',
+          'Measure course engagement',
+          'Improve accessibility and usability',
+        ) +
+        '<p>Users may disable cookies through their browser settings; however, some features may not function properly.</p>',
+      'cream',
+    ),
+    section(
+      '<h2>4. Sharing of Information</h2>' +
+        '<p>Hilom Collective does not sell personal data.</p>' +
+        '<p>We may share information only with:</p>' +
+        list(
+          'Trusted service providers and technology partners',
+          'Payment processors',
+          'LMS hosting providers',
+          'Email and communication platforms',
+          'Legal authorities when required by law',
+          'Business partners involved in program delivery (with appropriate safeguards)',
+        ) +
+        '<p>All third-party providers are expected to maintain reasonable security and confidentiality standards.</p>',
+    ),
+    section(
+      '<h2>5. Data Retention</h2>' +
+        '<p>We retain personal information only for as long as necessary to:</p>' +
+        list(
+          'Provide our services',
+          'Maintain educational records',
+          'Comply with legal obligations',
+          'Resolve disputes',
+          'Enforce agreements',
+        ) +
+        '<p>Users may request deletion of their account and personal information, subject to applicable legal and operational requirements.</p>',
+      'cream',
+    ),
+    section(
+      '<h2>6. Data Security</h2>' +
+        '<p>Hilom Collective implements reasonable administrative, technical, and organizational measures to protect user information from unauthorized access, disclosure, misuse, or loss.</p>' +
+        '<p>However, no online platform or transmission method can guarantee absolute security.</p>' +
+        '<p>Users are responsible for maintaining the confidentiality of their account credentials.</p>',
+    ),
+    section(
+      '<h2>7. User Rights</h2>' +
+        '<p>Depending on applicable laws, users may have the right to:</p>' +
+        list(
+          'Access their personal information',
+          'Request correction of inaccurate information',
+          'Request deletion of personal data',
+          'Withdraw consent',
+          'Object to certain forms of processing',
+          'Request a copy of stored data',
+        ) +
+        '<p>Requests may be submitted through our official contact channels.</p>',
+      'cream',
+    ),
+    section(
+      '<h2>8. Children’s Privacy</h2>' +
+        '<p>Hilom Collective does not knowingly collect personal information from children under the age required by applicable law without parental or guardian consent.</p>' +
+        '<p>If we become aware that information from a minor has been collected improperly, we will take reasonable steps to delete it.</p>',
+    ),
+    section(
+      '<h2>9. Third-Party Links &amp; Platforms</h2>' +
+        '<p>Our website or LMS may contain links to third-party websites, applications, or wellness resources.</p>' +
+        '<p>Hilom Collective is not responsible for the privacy practices, policies, or content of third-party services.</p>' +
+        '<p>Users are encouraged to review the privacy policies of external platforms they access.</p>',
+      'cream',
+    ),
+    section(
+      '<h2>10. Community Guidelines &amp; User Content</h2>' +
+        '<p>Users participating in forums, discussions, group coaching, or community spaces within the LMS should understand that:</p>' +
+        list(
+          'Shared content may be visible to other participants',
+          'Respectful and ethical communication is expected',
+          'Users remain responsible for the content they voluntarily post or share',
+        ) +
+        '<p>Hilom Collective reserves the right to moderate or remove harmful, abusive, discriminatory, or inappropriate content.</p>',
+    ),
+    section(
+      '<h2>11. Compliance with Philippine Data Privacy Laws</h2>' +
+        '<p>Hilom Collective aims to comply with applicable provisions of the National Privacy Commission and the Data Privacy Act of 2012.</p>' +
+        '<p>Users located outside the Philippines acknowledge that their information may be processed and stored in jurisdictions where our technology providers operate.</p>',
+      'cream',
+    ),
+    section(
+      '<h2>12. Changes to This Privacy Policy</h2>' +
+        '<p>Hilom Collective may update this Privacy Policy periodically to reflect operational, legal, or technological changes.</p>' +
+        '<p>Updated versions will be posted on our website with a revised “Last Updated” date.</p>' +
+        '<p>Continued use of our services after updates constitutes acceptance of the revised policy.</p>',
+    ),
+    section(
+      '<h2>13. Contact Information</h2>' +
+        '<p>For questions, requests, or concerns regarding this Privacy Policy or your personal data, you may contact:</p>' +
+        '<p><strong>Hilom Collective</strong><br />Email: <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a><br />Website: <a href="https://hilomcollective.com">Hilom Collective Official Website</a></p>',
+      'cream',
+    ),
+    section(
+      '<h2>14. Disclaimer</h2>' +
+        '<p>Hilom Collective provides wellness education, community learning, coaching support, and holistic development resources.</p>' +
+        '<p>Our content and programs are not intended to replace professional medical, psychiatric, legal, or financial advice. Users are encouraged to consult qualified professionals when appropriate.</p>',
+    ),
+  ];
+}
+
 async function main(): Promise<void> {
   const { pages } = await api<{ pages: { id: string; slug: string; title: string }[] }>('/admin/pages');
   const bySlug = new Map(pages.map((p) => [p.slug, p]));
@@ -379,6 +560,7 @@ async function main(): Promise<void> {
     services: buildServices,
     events: buildEvents,
     community: buildCommunity,
+    'privacy-policy': buildPrivacyPolicy,
   };
 
   console.log('\nevents:');
@@ -387,7 +569,7 @@ async function main(): Promise<void> {
   for (const [slug, build] of Object.entries(builders)) {
     const page = bySlug.get(slug);
     if (!page) {
-      console.warn(`! no page row for "${slug}" — run db/seed/0002_seed_cms.sql first`);
+      console.warn(`! no page row for "${slug}" — run the db/seed/*.sql files first`);
       continue;
     }
     console.log(`\n${slug}:`);
