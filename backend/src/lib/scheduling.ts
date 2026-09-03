@@ -27,9 +27,14 @@ import { HOLD_MINUTES } from './booking-domain.js';
  * phone, referral source, which Hilom service track they asked for, their
  * certification document, the consent record) is internal and must stay off
  * this list.
+ *
+ * `rating_count` and `rating_sum` (0036) are the running totals behind the
+ * public star rating. They say exactly what the approved reviews already say
+ * publicly, and having them on the row is what lets the directory render a
+ * rating per card in one query instead of N+1.
  */
 export const FACILITATOR_PUBLIC_COLUMNS =
-  'id, slug, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, timezone, status';
+  'id, slug, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, timezone, status, rating_count, rating_sum';
 
 export const SERVICE_PUBLIC_COLUMNS =
   'id, facilitator_id, kind, title, description, duration_minutes, price_centavos, currency, sessions_count, delivery_mode, meeting_provider, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, cancellation_policy, refund_full_hours, refund_half_hours, intake_questions, is_active, sort_order';

@@ -45,6 +45,7 @@ import {
 } from '../lib/booking-domain.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { PACKAGE_COLUMNS, packageState, type PackageRow } from '../lib/packages.js';
+import { validateReview, reviewerLabel, isReviewable, ReviewError } from '../lib/reviews.js';
 import {
   parseIntakeQuestions,
   validateIntakeAnswers,
@@ -101,6 +102,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (path.endsWith('/status')) return await status(bookingId, user.email);
     if (path.endsWith('/cancel')) return await cancel(bookingId, user.email);
     if (path.endsWith('/reschedule')) return await reschedule(bookingId, user.email, event);
+    if (path.endsWith('/review')) return await review(bookingId, user.email, method, event);
     if (path.endsWith('/messages')) return await messages(bookingId, user.email, method, event);
     if (path.endsWith('/intake')) return await intake(bookingId, user.email, method, event);
     if (path.endsWith('/accept-time')) return await respondToProposal(bookingId, user.email, true);
@@ -111,6 +113,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // needs answering, not an opaque 500.
     if (err instanceof IntakeError) return badRequest(err.message);
     if (err instanceof MessageError) return badRequest(err.message);
+    if (err instanceof ReviewError) return badRequest(err.message);
     return serverError('bookings', err);
   }
 }
@@ -599,7 +602,14 @@ async function listMine(email: string): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
   const { data, error } = await supabase
     .from('bookings')
-    .select(`${BOOKING_COLUMNS}, facilitators(slug, display_name, photo_url, timezone), facilitator_services(title, duration_minutes, intake_questions)`)
+    // `facilitator_reviews(id, status)` is embedded so the list can say
+    // "reviewed" or "how was it?" without a request per past session. Only the
+    // id and status: the comment is the client's own, and they can open it.
+    .select(
+      `${BOOKING_COLUMNS}, facilitators(slug, display_name, photo_url, timezone), ` +
+        'facilitator_services(title, duration_minutes, intake_questions), ' +
+        'facilitator_reviews(id, status)',
+    )
     .eq('client_email', email.toLowerCase())
     // Holds are an implementation detail of checkout, not something to show in
     // a bookings list — an abandoned one is about to be deleted anyway.
@@ -717,6 +727,92 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     refundCentavos: decision.refundCentavos,
     refundNote: decision.reason,
   });
+}
+
+/**
+ * The client's review of a session they actually had (0013).
+ *
+ *   GET  /bookings/{id}/review — what they wrote, if anything
+ *   PUT  /bookings/{id}/review — write or revise it
+ *
+ * Two things make this a review rather than a comment box, and both are
+ * enforced here because both are the reason anyone would trust the result:
+ *
+ *  * It is attached to a *booking*, and `booking_id` is unique on the table, so
+ *    one review means one session that was paid for and took place. There is no
+ *    endpoint that reviews a facilitator in the abstract.
+ *  * `loadOwned` proves the caller is the client on that booking. A review is a
+ *    permanent public statement about a named practitioner; being able to leave
+ *    one has to be something that was earned by turning up.
+ *
+ * Revising is allowed and re-enters moderation. Someone who rated a session 5
+ * on the evening and thinks better of it a week later should be able to say so,
+ * and a facilitator should not be able to keep the flattering version by virtue
+ * of it having been approved first.
+ */
+async function review(
+  bookingId: string,
+  email: string,
+  method: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const loaded = await loadOwned(bookingId, email);
+  if (!loaded) return notFound('Booking not found');
+  const { supabase, booking } = loaded;
+
+  if (method === 'GET') {
+    const { data, error } = await supabase
+      .from('facilitator_reviews')
+      .select('id, rating, comment, status, created_at, updated_at')
+      .eq('booking_id', bookingId)
+      .maybeSingle();
+    if (error) throw error;
+
+    return ok({
+      review: data ?? null,
+      // Said explicitly rather than left for the screen to infer from the
+      // status: "you cannot review this yet" and "you cannot review this at
+      // all" are different answers and the reason differs too.
+      reviewable: isReviewable(booking.status),
+      status: booking.status,
+    });
+  }
+
+  if (method !== 'PUT') return badRequest(`Unsupported method ${method}`);
+
+  if (!isReviewable(booking.status)) {
+    return badRequest(
+      booking.status === 'confirmed'
+        ? 'You can leave a review once the session has happened.'
+        : 'Only a session that took place can be reviewed.',
+    );
+  }
+
+  const input = validateReview(parseBody(event));
+
+  // Always back to `pending`, including on a revision of an already-approved
+  // review — the new text has not been read by anyone.
+  const { data, error } = await supabase
+    .from('facilitator_reviews')
+    .upsert(
+      {
+        booking_id: bookingId,
+        facilitator_id: booking.facilitator_id,
+        rating: input.rating,
+        comment: input.comment,
+        client_label: reviewerLabel(booking.client_name),
+        status: 'pending',
+      },
+      // The unique constraint from 0013. Without naming it, a revision would
+      // insert a second review for the same session.
+      { onConflict: 'booking_id' },
+    )
+    .select('id, rating, comment, status, created_at')
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return ok({ review: data });
 }
 
 /**

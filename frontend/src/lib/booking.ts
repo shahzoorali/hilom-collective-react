@@ -72,10 +72,44 @@ export interface Facilitator {
   status: FacilitatorStatus;
 }
 
+/**
+ * The public star rating (0013, aggregates 0036).
+ *
+ * `average` is null when there are no approved reviews — an average of nothing
+ * is not zero stars, and rendering it as one would make a new facilitator look
+ * worse than a badly-reviewed one.
+ */
+export interface RatingSummary {
+  average: number | null;
+  count: number;
+}
+
 /** Directory cards carry a "from ₱X" summary the profile does not need. */
 export interface FacilitatorCard extends Facilitator {
   fromCentavos: number | null;
   hasFreeCall: boolean;
+  rating: RatingSummary;
+}
+
+/** An approved review as shown on a profile. Never carries the booking it came from. */
+export interface PublicReview {
+  id: string;
+  rating: number;
+  comment: string | null;
+  /** "Maria C." or "A client" — see reviewerLabel in backend/src/lib/reviews.ts. */
+  client_label: string | null;
+  created_at: string;
+}
+
+export type ReviewStatus = 'pending' | 'approved' | 'rejected';
+
+/** The client's own review of one session, in whatever state it is in. */
+export interface MyReview {
+  id: string;
+  rating: number;
+  comment: string | null;
+  status: ReviewStatus;
+  created_at: string;
 }
 
 export interface FacilitatorService {
@@ -180,6 +214,12 @@ export interface Booking {
     /** Present on the client's own list, so a session with no form costs no request. */
     intake_questions?: IntakeQuestion[];
   } | null;
+  /**
+   * Embedded on the client's own list so the page can say "reviewed" without a
+   * request per past session. Just the id and status — the text is theirs to
+   * open.
+   */
+  facilitator_reviews?: { id: string; status: ReviewStatus } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,9 +232,12 @@ export const listFacilitators = (specialty?: string) =>
   ).then((r) => r.facilitators);
 
 export const getFacilitator = (slug: string) =>
-  apiFetch<{ facilitator: Facilitator; services: FacilitatorService[] }>(
-    `/facilitators/${encodeURIComponent(slug)}`,
-  );
+  apiFetch<{
+    facilitator: Facilitator;
+    services: FacilitatorService[];
+    rating: RatingSummary;
+    reviews: PublicReview[];
+  }>(`/facilitators/${encodeURIComponent(slug)}`);
 
 export const getAvailability = (slug: string, serviceId: string, from: Date, to: Date) =>
   apiFetch<{ timezone: string; durationMinutes: number; slots: SlotOption[] }>(
@@ -1265,4 +1308,72 @@ export const buyPackage = (input: { facilitatorSlug: string; serviceId: string }
 export const listMyPackages = () =>
   apiFetch<{ packages: BookingPackage[] }>('/me/packages', { headers: authHeaders() }).then(
     (r) => r.packages,
+  );
+
+// ---------------------------------------------------------------------------
+// Reviews (0013, aggregates 0036)
+// ---------------------------------------------------------------------------
+
+/**
+ * The client's review of one session.
+ *
+ * `reviewable` is said explicitly rather than inferred from the booking status,
+ * because "not yet" and "not ever" are different answers with different copy.
+ */
+export const getMyReview = (bookingId: string) =>
+  apiFetch<{ review: MyReview | null; reviewable: boolean; status: BookingStatus }>(
+    `/bookings/${encodeURIComponent(bookingId)}/review`,
+    { headers: authHeaders() },
+  );
+
+/** Writing or revising one. Either way it goes back into moderation. */
+export const saveMyReview = (bookingId: string, rating: number, comment: string) =>
+  apiFetch<{ review: MyReview }>(`/bookings/${encodeURIComponent(bookingId)}/review`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ rating, comment }),
+  });
+
+/**
+ * A review in the moderation queue, with enough around it to judge.
+ *
+ * Which facilitator, which session, and when — the three things needed to tell
+ * a real report from an unrelated grievance, without having to go and look the
+ * booking up.
+ */
+export interface AdminReview {
+  id: string;
+  facilitator_id: string;
+  rating: number;
+  comment: string | null;
+  client_label: string | null;
+  status: ReviewStatus;
+  created_at: string;
+  updated_at: string;
+  facilitators?: { slug: string; display_name: string } | null;
+  bookings?: {
+    starts_at: string;
+    client_email: string;
+    facilitator_services?: { title: string } | null;
+  } | null;
+}
+
+export const adminListReviews = (adminKey: string, status?: ReviewStatus) =>
+  apiFetch<{ reviews: AdminReview[] }>(
+    `/admin/reviews${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+    { headers: { 'x-admin-key': adminKey } },
+  ).then((r) => r.reviews);
+
+export const adminSetReviewStatus = (
+  adminKey: string,
+  reviewId: string,
+  status: 'approved' | 'rejected',
+) =>
+  apiFetch<{ review: { id: string; status: ReviewStatus } }>(
+    `/admin/reviews/${encodeURIComponent(reviewId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    },
   );

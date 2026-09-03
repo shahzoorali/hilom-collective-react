@@ -45,6 +45,9 @@ const ADMIN_FACILITATOR_COLUMNS =
 
 const VALID_STATUSES = new Set(['applied', 'approved', 'published', 'suspended', 'rejected']);
 
+/** Kept in step with `public.review_status` in 0013_payouts_reviews.sql. */
+const REVIEW_STATUSES = new Set(['pending', 'approved', 'rejected']);
+
 /** Kept in step with SUPPORT_TRACKS in facilitator-input.ts. */
 const SUPPORT_TRACKS = new Set(['design', 'build_launch', 'live_experiences']);
 
@@ -71,6 +74,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     const supabase = await getSupabase();
 
+    if (path.includes('/admin/reviews')) return await reviews(supabase, event, method);
     if (path.includes('/admin/payouts')) return await payouts(supabase, event, method);
     if (path.includes('/admin/bookings')) {
       const bookingId = event.pathParameters?.bookingId;
@@ -99,6 +103,82 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (err instanceof FacilitatorInputError || err instanceof SlugError) return badRequest(err.message);
     return serverError('adminFacilitators', err);
   }
+}
+
+/**
+ * Review moderation (0013 gave the statuses; this is the screen behind them).
+ *
+ *   GET   /admin/reviews?status=pending
+ *   PATCH /admin/reviews/{reviewId}   { status }
+ *
+ * Everything a client writes lands as `pending` and is invisible until someone
+ * reads it. That is not a quality bar on the *opinion* — a one-star review of a
+ * bad session is exactly what the feature is for, and rejecting it because it
+ * is unflattering would make the whole rating worthless. It is a check that
+ * what is about to be published permanently, under a real practitioner's name,
+ * is not abuse, not somebody's phone number, and not a clinical disclosure the
+ * client will regret making public.
+ *
+ * Rejection is reversible: a rejected review can be approved later, and the
+ * aggregate follows either way (the trigger in 0036 keys on the status, not on
+ * the transition). Nothing is deleted, because a deleted review is one the
+ * client can no longer see was ever considered.
+ */
+async function reviews(
+  supabase: SupabaseClient,
+  event: APIGatewayProxyEventV2,
+  method: string,
+): Promise<APIGatewayProxyResultV2> {
+  const reviewId = event.pathParameters?.reviewId;
+
+  if (!reviewId) {
+    if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
+
+    const status = event.queryStringParameters?.status?.trim();
+    if (status && !REVIEW_STATUSES.has(status)) return badRequest('Unknown review status');
+
+    let query = supabase
+      .from('facilitator_reviews')
+      .select(
+        'id, booking_id, facilitator_id, rating, comment, client_label, status, created_at, updated_at, ' +
+          'facilitators(slug, display_name), bookings(starts_at, client_email, facilitator_services(title))',
+      )
+      // Oldest first: a moderation queue is worked from the front, and the
+      // review someone has been waiting on for three days is the urgent one.
+      .order('created_at', { ascending: true })
+      .limit(200);
+
+    // Defaults to the queue rather than to everything — that is what this
+    // screen is for, and "all" is one click away.
+    if (status) query = query.eq('status', status);
+    else query = query.eq('status', 'pending');
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return ok({ reviews: data ?? [] });
+  }
+
+  if (method !== 'PATCH') return badRequest(`Unsupported method ${method}`);
+
+  const body = parseBody(event);
+  const status = typeof body.status === 'string' ? body.status : '';
+  if (!REVIEW_STATUSES.has(status)) return badRequest('status must be approved or rejected');
+  if (status === 'pending') return badRequest('A review cannot be sent back to the queue');
+
+  const { data, error } = await supabase
+    .from('facilitator_reviews')
+    .update({ status })
+    .eq('id', reviewId)
+    .select('id, status')
+    .maybeSingle<{ id: string; status: string }>();
+
+  if (error) throw error;
+  if (!data) return notFound('Review not found');
+
+  // The rating totals on the facilitator row are maintained by the trigger in
+  // 0036, so there is nothing to recompute here — which is the point of them
+  // being a trigger rather than something every writer has to remember.
+  return ok({ review: data });
 }
 
 function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {

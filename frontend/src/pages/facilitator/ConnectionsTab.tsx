@@ -309,9 +309,7 @@ function CalendarFeed() {
                 onClick={() => {
                   if (
                     window.confirm(
-                      'Generate a new link?
-
-The old one stops working immediately, and any calendar already subscribed to it will need the new one.',
+                      'Generate a new link?\n\nThe old one stops working immediately, and any calendar already subscribed to it will need the new one.',
                     )
                   ) {
                     void run(createMyCalendarFeed);
@@ -327,9 +325,7 @@ The old one stops working immediately, and any calendar already subscribed to it
                 onClick={() => {
                   if (
                     window.confirm(
-                      'Turn off the calendar feed?
-
-Any calendar subscribed to it will stop updating.',
+                      'Turn off the calendar feed?\n\nAny calendar subscribed to it will stop updating.',
                     )
                   ) {
                     void run(revokeMyCalendarFeed);

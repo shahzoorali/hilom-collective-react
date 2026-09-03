@@ -30,7 +30,7 @@
  * sendDueReminders for why that ordering is the one that matters.
  */
 import { getSupabase } from '../lib/supabase.js';
-import { sendBookingReminder } from '../lib/booking-email.js';
+import { sendBookingReminder, sendReviewRequest } from '../lib/booking-email.js';
 
 /**
  * How long after a session ends before it counts as delivered.
@@ -63,10 +63,59 @@ async function completePastSessions(now: Date): Promise<number> {
     .update({ status: 'completed' })
     .eq('status', 'confirmed')
     .lt('ends_at', cutoff)
-    .select('id');
+    // Everything the review request needs, read back from the same statement
+    // that transitions the row. This is what makes the ask exactly-once: only
+    // the invocation whose update actually moved a booking out of `confirmed`
+    // sees it, so two overlapping sweeps cannot both email about it.
+    .select(
+      'id, starts_at, client_email, client_name, client_timezone, price_centavos, ' +
+        'facilitators(email, display_name, timezone), facilitator_services(title)',
+    );
 
   if (error) throw error;
-  return (data ?? []).length;
+  const completed = (data ?? []) as unknown as CompletedRow[];
+
+  for (const booking of completed) {
+    const facilitator = booking.facilitators;
+    const service = booking.facilitator_services;
+    if (!facilitator || !service) continue;
+
+    // Complimentary calls are not reviewed. The intro call is a fifteen-minute
+    // conversation about whether to work together, and rating it says nothing
+    // about the practice — it would mostly measure how many free calls someone
+    // offers.
+    if (booking.price_centavos === 0) continue;
+
+    // Never blocks the sweep: the booking is already completed, and the sweep
+    // has holds to release and reminders to send after this.
+    await sendReviewRequest({
+      clientEmail: booking.client_email,
+      clientName: booking.client_name,
+      clientTimezone: booking.client_timezone,
+      facilitatorEmail: facilitator.email,
+      facilitatorName: facilitator.display_name,
+      facilitatorTimezone: facilitator.timezone,
+      serviceTitle: service.title,
+      startsAt: booking.starts_at,
+      isFree: false,
+    }).catch((err: unknown) => {
+      console.warn('[bookingSweep] review request failed', { bookingId: booking.id, err });
+    });
+  }
+
+  return completed.length;
+}
+
+/** The row `completePastSessions` reads back in order to ask for a review. */
+interface CompletedRow {
+  id: string;
+  starts_at: string;
+  client_email: string;
+  client_name: string | null;
+  client_timezone: string | null;
+  price_centavos: number;
+  facilitators: { email: string; display_name: string; timezone: string } | null;
+  facilitator_services: { title: string } | null;
 }
 
 /** How far ahead of a session its reminder goes out. */

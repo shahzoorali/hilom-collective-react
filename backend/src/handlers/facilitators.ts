@@ -16,6 +16,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, serverError, text } from '../lib/http.js';
 import { renderCalendar, type IcsEvent } from '../lib/ical.js';
+import { ratingSummary } from '../lib/reviews.js';
 import {
   FACILITATOR_PUBLIC_COLUMNS,
   SERVICE_PUBLIC_COLUMNS,
@@ -99,7 +100,9 @@ async function list(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResul
     facilitators: facilitators.map((f) => {
       const id = (f as { id: string }).id;
       const pricing = priceByFacilitator.get(id) ?? { fromCentavos: null, hasFreeCall: false };
-      return { ...f, ...pricing };
+      // From the running totals on the row (0036), so the whole directory is
+      // still one query. An average of nothing is null, not zero stars.
+      return { ...f, ...pricing, rating: ratingSummary(f as Record<string, number>) };
     }),
   });
 }
@@ -127,10 +130,31 @@ async function detail(slug: string): Promise<APIGatewayProxyResultV2> {
 
   if (serviceError) throw serviceError;
 
+  // The most recent approved reviews, for the profile. Bounded: a profile is
+  // a page someone reads before deciding, not an archive — the aggregate
+  // carries the weight of the other two hundred.
+  //
+  // `booking_id` is deliberately absent, matching the RLS grant in 0013: it
+  // would let anyone walk an approved review back to a specific session.
+  const { data: reviews, error: reviewError } = await supabase
+    .from('facilitator_reviews')
+    .select('id, rating, comment, client_label, created_at')
+    .eq('facilitator_id', (facilitator as { id: string }).id)
+    .eq('status', 'approved')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (reviewError) throw reviewError;
+
   // meeting_url is deliberately absent from SERVICE_PUBLIC_COLUMNS: a standing
   // Zoom room published on a public profile is an open door into every session
   // that facilitator runs. It reaches the client on their booking, after payment.
-  return ok({ facilitator, services: services ?? [] });
+  return ok({
+    facilitator,
+    services: services ?? [],
+    rating: ratingSummary(facilitator as Record<string, number>),
+    reviews: reviews ?? [],
+  });
 }
 
 async function availability(slug: string, event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {

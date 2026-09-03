@@ -625,6 +625,49 @@ export async function sendPackagePurchased(
   ]);
 }
 
+/**
+ * Sent to the client after a session, asking how it went (0013).
+ *
+ * Sent once, from the completion sweep, and never chased. A review is a favour
+ * a client does the marketplace, and the difference between asking once and
+ * asking repeatedly is the difference between a request and a nuisance — the
+ * second email would cost more goodwill than the review is worth.
+ *
+ * Deliberately does not preview the facilitator's rating or mention the
+ * average. This is a question about one session, and framing it as a
+ * contribution to someone's score is how a rating becomes a popularity number
+ * rather than a report.
+ */
+export async function sendReviewRequest(ctx: BookingEmailContext): Promise<void> {
+  const first = ctx.facilitatorName.split(' ')[0] ?? ctx.facilitatorName;
+
+  const html = renderEmail({
+    preheader: `How was your session with ${ctx.facilitatorName}?`,
+    heading: 'How was your session?',
+    body:
+      p(
+        `You saw <strong>${escapeHtml(ctx.facilitatorName)}</strong> for ` +
+          `${escapeHtml(ctx.serviceTitle)}. If you have a minute, a few words about how it went ` +
+          `helps the next person decide whether ${escapeHtml(first)} is right for them.`,
+      ) +
+      button('Leave a review', ACCOUNT_BOOKINGS_URL) +
+      note(
+        'Reviews are read by us before they appear, and are shown with your first name and last ' +
+          'initial. You can change or remove yours at any time.',
+      ),
+  });
+
+  const text = renderText(`How was your session with ${ctx.facilitatorName}?`, [
+    `A few words about ${ctx.serviceTitle} helps the next person decide.`,
+    '',
+    `Leave a review: ${ACCOUNT_BOOKINGS_URL}`,
+    '',
+    'Reviews are read before they appear, and shown with your first name and last initial.',
+  ]);
+
+  await send(ctx.clientEmail, `How was your session with ${ctx.facilitatorName}?`, text, html);
+}
+
 /** Sent when an admin approves a facilitator application. */
 export async function sendFacilitatorApproved(to: string, displayName: string): Promise<void> {
   const dashboard = 'https://www.hilomcollective.com/facilitator';

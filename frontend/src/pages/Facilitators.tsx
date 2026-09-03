@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Stars } from '../components/Stars';
 import { money } from '../components/Layout';
 import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { SkeletonCardGrid } from '../components/Skeleton';
@@ -67,7 +68,7 @@ export default function Facilitators() {
 }
 
 function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) {
-  const { slug, display_name, headline, photo_url, specialties, location, hasFreeCall, fromCentavos } =
+  const { slug, display_name, headline, photo_url, specialties, location, hasFreeCall, fromCentavos, rating } =
     facilitator;
   const cardRef = useRef<HTMLAnchorElement>(null);
 
@@ -95,6 +96,18 @@ function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) 
       <div className="facilitator-card__body">
         <h3 style={{ margin: '0 0 0.25rem' }} data-flip-id={`facilitator-title-${slug}`}>{display_name}</h3>
         {headline && <p className="small muted" style={{ margin: '0 0 0.6rem' }}>{headline}</p>}
+
+        {/* Nothing at all when there are no reviews yet. "No rating" and a
+            zero-star row read very differently, and only one of them is true —
+            see RatingSummary. */}
+        {rating?.average !== null && rating?.average !== undefined && (
+          <p className="small" style={{ margin: '0 0 0.6rem' }}>
+            <Stars value={rating.average} />{' '}
+            <span className="muted">
+              {rating.average.toFixed(1)} ({rating.count})
+            </span>
+          </p>
+        )}
 
         {specialties.length > 0 && (
           <p className="small" style={{ margin: '0 0 0.6rem' }}>

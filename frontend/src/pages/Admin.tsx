@@ -5,6 +5,7 @@ import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
 import PayoutsTab from './admin/PayoutsTab';
+import ReviewsTab from './admin/ReviewsTab';
 import BookingsTab from './admin/BookingsTab';
 import PagesTab from './admin/PagesTab';
 import PageEditor from './admin/PageEditor';
@@ -38,6 +39,7 @@ const NAV_GROUPS = [
       { label: 'Bookings', path: 'bookings', icon: '🗓️' },
       { label: 'Registrations', path: 'registrations', icon: '🎟️' },
       { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
+      { label: 'Reviews', path: 'reviews', icon: '⭐' },
       // Last in the group because it is the read across the four above it,
       // not a fifth thing alongside them.
       { label: 'People', path: 'people', icon: '👥' },
@@ -297,6 +299,7 @@ export default function Admin() {
           <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
           <Route path="people" element={<PeopleTab adminKey={adminKey} />} />
           <Route path="accounts" element={<CognitoUsersTab adminKey={adminKey} />} />
+          <Route path="reviews" element={<ReviewsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="pages" replace />} />
         </Routes>

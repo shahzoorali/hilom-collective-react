@@ -22,6 +22,7 @@ import {
   type FacilitatorService,
 } from '../lib/booking';
 import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton';
+import { Stars } from '../components/Stars';
 import { playFlip } from '../lib/pageFlip';
 import { YEARS_EXPERIENCE, labelFor } from '../lib/facilitator-intake';
 
@@ -92,7 +93,7 @@ export default function FacilitatorProfile() {
     );
   }
 
-  const { facilitator: f, services } = data;
+  const { facilitator: f, services, rating, reviews } = data;
   const freeCall = services.find((s) => s.kind === 'exploratory');
   const paid = services.filter((s) => s.kind !== 'exploratory');
   const firstName = f.display_name.split(' ')[0];
@@ -278,6 +279,49 @@ export default function FacilitatorProfile() {
               ))}
             </div>
           </section>
+
+          {/* The section the whole feature exists for. A wellness marketplace
+              with no visible social proof asks a client to book a stranger for
+              an intimate 1:1 on the strength of a self-written bio. */}
+          {reviews.length > 0 && (
+            <section className="fac-section">
+              <h2>
+                What people say
+                {rating.average !== null && (
+                  <span className="small muted" style={{ marginLeft: '0.6rem', fontWeight: 400 }}>
+                    <Stars value={rating.average} /> {rating.average.toFixed(1)} from {rating.count}{' '}
+                    {rating.count === 1 ? 'review' : 'reviews'}
+                  </span>
+                )}
+              </h2>
+
+              {reviews.map((r) => (
+                <div key={r.id} className="card" style={{ marginBottom: '0.6rem' }}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <Stars value={r.rating} />
+                    <span className="small muted">
+                      {new Intl.DateTimeFormat('en-PH', {
+                        dateStyle: 'medium',
+                      }).format(new Date(r.created_at))}
+                    </span>
+                  </div>
+                  {r.comment && (
+                    <p className="small" style={{ margin: '0.4rem 0 0', whiteSpace: 'pre-wrap' }}>
+                      {r.comment}
+                    </p>
+                  )}
+                  <p className="small muted" style={{ margin: '0.35rem 0 0' }}>
+                    — {r.client_label ?? 'A client'}
+                  </p>
+                </div>
+              ))}
+
+              <p className="small muted">
+                Reviews come from people who booked and attended a session here, and are read
+                before they appear.
+              </p>
+            </section>
+          )}
         </div>
 
         {/* ---- sidebar ------------------------------------------------- */}
