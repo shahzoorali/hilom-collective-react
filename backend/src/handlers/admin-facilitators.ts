@@ -28,7 +28,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
-import { sendFacilitatorApproved, sendBookingCancelled } from '../lib/booking-email.js';
+import { sendFacilitatorApproved, sendBookingCancelled, sendPayoutPaid } from '../lib/booking-email.js';
 import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
@@ -684,12 +684,33 @@ async function updatePayout(
 
   if (Object.keys(patch).length === 0) return badRequest('Nothing to update');
 
+  // Read the pre-update status and the facilitator's contact once, so the
+  // "you've been paid" email fires only on the actual transition into `paid`
+  // — not every time an already-paid batch is re-saved (a reference edit, a
+  // note) — and has an address to send to.
+  const { data: before, error: beforeError } = await supabase
+    .from('facilitator_payouts')
+    .select('status, facilitators(email, display_name)')
+    .eq('id', payoutId)
+    .maybeSingle<{ status: string; facilitators: { email: string; display_name: string } | null }>();
+  if (beforeError) throw beforeError;
+  if (!before) return notFound('Payout not found');
+
   const { data, error } = await supabase
     .from('facilitator_payouts')
     .update(patch)
     .eq('id', payoutId)
     .select(PAYOUT_COLUMNS)
-    .maybeSingle();
+    .maybeSingle<{
+      period_start: string;
+      period_end: string;
+      gross_centavos: number;
+      platform_fee_centavos: number;
+      processing_fee_centavos: number;
+      net_centavos: number;
+      currency: string;
+      reference: string | null;
+    }>();
   if (error) throw error;
   if (!data) return notFound('Payout not found');
 
@@ -701,6 +722,26 @@ async function updatePayout(
       .update({ payout_id: null })
       .eq('payout_id', payoutId);
     if (releaseError) throw releaseError;
+  }
+
+  if (patch.status === 'paid' && before.status !== 'paid' && before.facilitators) {
+    // Best-effort, like every other notification here: the money has moved and
+    // the row records it, so a failed send is recoverable in a way that
+    // holding up the admin's "mark paid" action is not.
+    await sendPayoutPaid({
+      facilitatorEmail: before.facilitators.email,
+      facilitatorName: before.facilitators.display_name,
+      periodStart: data.period_start,
+      periodEnd: data.period_end,
+      grossCentavos: data.gross_centavos,
+      platformFeeCentavos: data.platform_fee_centavos,
+      processingFeeCentavos: data.processing_fee_centavos,
+      netCentavos: data.net_centavos,
+      currency: data.currency,
+      reference: data.reference,
+    }).catch((err: unknown) => {
+      console.error('[adminFacilitators.updatePayout] payout-paid email failed', { payoutId, err });
+    });
   }
 
   return ok({ payout: data });

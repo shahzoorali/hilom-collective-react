@@ -383,3 +383,102 @@ export async function sendMeetingLinkFailed(ctx: {
 
   await send(ctx.facilitatorEmail, `Action needed: meeting link for ${ctx.serviceTitle}`, text, html);
 }
+
+const FACILITATOR_EARNINGS_URL = 'https://www.hilomcollective.com/facilitator/earnings';
+
+const peso = (centavos: number, currency = 'PHP'): string =>
+  new Intl.NumberFormat('en-PH', { style: 'currency', currency, minimumFractionDigits: 2 }).format(
+    centavos / 100,
+  );
+
+/**
+ * A period like "1–15 September 2026", or "26 August – 3 September 2026".
+ *
+ * Exported for the test that pins the exclusive-end handling and the
+ * same-month collapse — both easy to get subtly wrong.
+ */
+export function formatPeriod(startIso: string, endIso: string): string {
+  const start = new Date(startIso);
+  // period_end is exclusive (see 0013), so the last covered day is the one before.
+  const end = new Date(new Date(endIso).getTime() - 86_400_000);
+  const day = (d: Date) => new Intl.DateTimeFormat('en-PH', { day: 'numeric', timeZone: 'Asia/Manila' }).format(d);
+  const monthYear = (d: Date) =>
+    new Intl.DateTimeFormat('en-PH', { month: 'long', year: 'numeric', timeZone: 'Asia/Manila' }).format(d);
+  return monthYear(start) === monthYear(end)
+    ? `${day(start)}–${day(end)} ${monthYear(end)}`
+    : `${day(start)} ${monthYear(start)} – ${day(end)} ${monthYear(end)}`;
+}
+
+/**
+ * Tells a facilitator a payout has been sent.
+ *
+ * Hilom transfers each facilitator's share by hand, so this is the "the money
+ * has left our account" moment — the one a marketplace most needs to feel
+ * reliable, and which was previously silent (a facilitator only found out by
+ * opening the Earnings tab).
+ *
+ * Shows the same arithmetic the Earnings tab and the admin Payouts screen show
+ * — gross, minus Hilom's fee, minus the payment-processing cost, equals the
+ * amount transferred — so the number is never a surprise and any question is
+ * answerable from the email itself.
+ */
+export async function sendPayoutPaid(ctx: {
+  facilitatorEmail: string;
+  facilitatorName: string;
+  periodStart: string;
+  periodEnd: string;
+  grossCentavos: number;
+  platformFeeCentavos: number;
+  processingFeeCentavos: number;
+  netCentavos: number;
+  currency: string;
+  reference: string | null;
+}): Promise<void> {
+  const period = formatPeriod(ctx.periodStart, ctx.periodEnd);
+  const amount = peso(ctx.netCentavos, ctx.currency);
+
+  const rows = [
+    { label: 'For sessions in', value: period },
+    { label: 'Gross', value: peso(ctx.grossCentavos, ctx.currency) },
+    { label: 'Hilom platform fee', value: `−${peso(ctx.platformFeeCentavos, ctx.currency)}` },
+    ...(ctx.processingFeeCentavos > 0
+      ? [{ label: 'Payment processing', value: `−${peso(ctx.processingFeeCentavos, ctx.currency)}` }]
+      : []),
+    { label: 'Transferred to you', value: amount },
+    ...(ctx.reference ? [{ label: 'Reference', value: escapeHtml(ctx.reference) }] : []),
+  ];
+
+  const html = renderEmail({
+    preheader: `${amount} for your sessions in ${period} is on its way.`,
+    heading: 'You’ve been paid',
+    body:
+      p(
+        `Hi ${escapeHtml(ctx.facilitatorName)}, we’ve transferred <strong>${amount}</strong> to your ` +
+          `registered bank account for your completed sessions in ${escapeHtml(period)}.`,
+      ) +
+      details(rows) +
+      button('See your earnings', FACILITATOR_EARNINGS_URL) +
+      note('Bank transfers usually arrive within one to three working days. If it hasn’t landed after that, reply to this email.'),
+  });
+
+  const text = renderText('You’ve been paid', [
+    `Hi ${ctx.facilitatorName},`,
+    '',
+    `We’ve transferred ${amount} to your registered bank account for your completed sessions in ${period}.`,
+    '',
+    `For sessions in: ${period}`,
+    `Gross: ${peso(ctx.grossCentavos, ctx.currency)}`,
+    `Hilom platform fee: -${peso(ctx.platformFeeCentavos, ctx.currency)}`,
+    ...(ctx.processingFeeCentavos > 0
+      ? [`Payment processing: -${peso(ctx.processingFeeCentavos, ctx.currency)}`]
+      : []),
+    `Transferred to you: ${amount}`,
+    ...(ctx.reference ? [`Reference: ${ctx.reference}`] : []),
+    '',
+    'Bank transfers usually arrive within one to three working days.',
+    '',
+    `See your earnings: ${FACILITATOR_EARNINGS_URL}`,
+  ]);
+
+  await send(ctx.facilitatorEmail, `You've been paid — ${amount}`, text, html);
+}
