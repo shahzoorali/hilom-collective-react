@@ -22,6 +22,7 @@ import { verifyWebhookSignature, parseWebhookEvent, SignatureVerificationError }
 import { getSupabase } from '../lib/supabase.js';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
+import { confirmPackage } from '../lib/packages.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import { enqueueRetry } from '../lib/retry-queue.js';
 import { ok, badRequest, serverError } from '../lib/http.js';
@@ -140,6 +141,10 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     return await handleBooking(paymentId, metadata.booking_id, eventType);
   }
 
+  if (metadata.kind === 'package') {
+    return await handlePackage(paymentId, metadata.package_id, eventType);
+  }
+
   if (metadata.kind === 'event_registration') {
     return await handleRegistrationCharge(paymentId, metadata.charge_id, eventType);
   }
@@ -241,6 +246,39 @@ async function handleBooking(
     const message = err instanceof Error ? err.message : String(err);
     console.error('[paymongo-webhook] booking confirmation failed, queuing retry', { bookingId, message });
     await enqueueRetry(bookingId, message, 'booking');
+    return ok({ received: true, handled: true, status: 'queued_for_retry' });
+  }
+}
+
+/**
+ * A paid multi-session package (0035).
+ *
+ * Simpler than a booking: there is no slot to confirm and no meeting to create,
+ * because a package is a right to schedule rather than a session. Same contract
+ * as its siblings, though — always 200 once the signature verifies, business
+ * failures to the retry queue rather than PayMongo's backoff — and idempotent,
+ * because a single hosted-checkout payment fires two fulfillable events.
+ */
+async function handlePackage(
+  paymentId: string | undefined,
+  packageId: string | undefined,
+  eventType: string,
+): Promise<APIGatewayProxyResultV2> {
+  if (!packageId) {
+    // Expected for the sibling `payment.paid` event: metadata lives on the
+    // checkout session. Missing metadata never becomes present on redelivery.
+    console.warn('[paymongo-webhook] package event without package_id, skipping', { eventType, paymentId });
+    return ok({ received: true, handled: false, error: 'missing_package_id' });
+  }
+
+  try {
+    const supabase = await getSupabase();
+    const result = await confirmPackage(supabase, packageId, paymentId);
+    return ok({ received: true, handled: true, status: result.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[paymongo-webhook] package activation failed, queuing retry', { packageId, message });
+    await enqueueRetry(packageId, message, 'package');
     return ok({ received: true, handled: true, status: 'queued_for_retry' });
   }
 }

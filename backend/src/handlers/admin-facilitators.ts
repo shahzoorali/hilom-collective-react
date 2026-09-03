@@ -370,7 +370,7 @@ async function adminCancelBooking(
   const { data: booking, error } = await supabase
     .from('bookings')
     .select(
-      'id, status, starts_at, price_centavos, client_email, client_name, client_timezone, meeting_url, ' +
+      'id, status, starts_at, price_centavos, client_email, client_name, client_timezone, meeting_url, package_id, ' +
         'facilitators(email, display_name, timezone), facilitator_services(title)',
     )
     .eq('id', bookingId)
@@ -388,6 +388,9 @@ async function adminCancelBooking(
     startsAt: new Date(booking.starts_at),
     now,
     cancelledBy: 'admin',
+    // A package session returns its credit rather than money — the client
+    // still has the sessions they bought. See 0035.
+    fromPackage: Boolean(booking.package_id),
   });
 
   const reason = typeof body.reason === 'string' && body.reason.trim()

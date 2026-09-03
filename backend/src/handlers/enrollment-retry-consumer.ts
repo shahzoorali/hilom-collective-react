@@ -12,12 +12,14 @@ import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
+import { confirmPackage } from '../lib/packages.js';
+import { getSupabase } from '../lib/supabase.js';
 import type { RetryKind } from '../lib/retry-queue.js';
 
 interface RetryMessage {
   /** Absent on messages enqueued before bookings existed — those are orders. */
   kind?: RetryKind;
-  /** The order id or the booking id, per `kind`. */
+  /** The order, booking, charge or package id, per `kind`. */
   orderId: string;
   reason: string;
 }
@@ -40,6 +42,11 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
       if (kind === 'booking') {
         const result = await confirmBooking(message.orderId);
         console.log(`[enrollment-retry-consumer] booking ${message.orderId} -> ${result.status}`);
+      } else if (kind === 'package') {
+        // `orderId` carries the package id — the field keeps its original name
+        // for in-flight compatibility, as retry-queue.ts explains.
+        const result = await confirmPackage(await getSupabase(), message.orderId);
+        console.log(`[enrollment-retry-consumer] package ${message.orderId} -> ${result.status}`);
       } else if (kind === 'registration_charge') {
         // `orderId` carries the charge id — the field keeps its original name
         // for in-flight compatibility, as retry-queue.ts explains. No payment

@@ -16,7 +16,7 @@ let client: SQSClient | undefined;
  * that matters about retrying — the same backoff, the same DLQ, the same alarm
  * — and a second queue would mean a second alarm nobody remembers to watch.
  */
-export type RetryKind = 'order' | 'booking' | 'registration_charge';
+export type RetryKind = 'order' | 'booking' | 'registration_charge' | 'package';
 
 /**
  * `kind` defaults to 'order' so that messages enqueued by the previous version

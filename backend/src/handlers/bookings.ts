@@ -6,6 +6,8 @@
  *   POST /bookings/{bookingId}/cancel
  *   POST /bookings/{bookingId}/reschedule
  *   GET  /me/bookings
+ *   POST /packages            — buy a block of sessions
+ *   GET  /me/packages         — what is left on each
  *
  * The request body for a new booking carries a facilitator slug, a service id
  * and a start time — and nothing else. Price, duration, fee split, the buyer's
@@ -42,6 +44,7 @@ import {
   type BookingStatus,
 } from '../lib/booking-domain.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
+import { PACKAGE_COLUMNS, packageState, type PackageRow } from '../lib/packages.js';
 import {
   parseIntakeQuestions,
   validateIntakeAnswers,
@@ -86,6 +89,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   // was caught turning a validation error into an opaque 500.
   try {
     if (path.endsWith('/me/bookings')) return await listMine(user.email);
+    if (path.endsWith('/me/packages')) return await listMyPackages(user.email);
+    if (path.endsWith('/packages')) {
+      if (method === 'POST') return await buyPackage(event, user);
+      return badRequest(`Unsupported method ${method}`);
+    }
     if (!bookingId) {
       if (method === 'POST') return await create(event, user);
       return badRequest(`Unsupported method ${method}`);
@@ -137,7 +145,7 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 }
 
 const BOOKING_COLUMNS =
-  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, proposed_starts_at, proposed_at, proposed_note, intake_answers, intake_completed_at, created_at';
+  'id, facilitator_id, service_id, service_kind, client_email, client_name, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, paymongo_session_id, hold_expires_at, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, refund_full_hours, refund_half_hours, package_id, proposed_starts_at, proposed_at, proposed_note, intake_answers, intake_completed_at, created_at';
 
 /**
  * The embedded relations a mutating booking path needs.
@@ -220,14 +228,49 @@ async function create(
   if (!facilitator) return notFound('Facilitator not found');
   if (!service) return notFound('Service not found');
 
-  // Belt and braces with the SELLABLE_SERVICE_KINDS gate in
-  // facilitator-input.ts, which stops a package being created in the first
-  // place. Repeated here because this is the path where money actually
-  // changes hands: booking a package charges the full price and delivers a
-  // single session, so it must not happen even if such a service somehow
-  // exists (a row predating that gate, or one written outside the app).
-  if (service.kind === 'package') {
-    return badRequest('Multi-session packages are not bookable yet.');
+  // Scheduling a session against a package bought earlier (0035). Everything
+  // about the money is already settled; what is being spent here is a credit.
+  const packageId = typeof body.packageId === 'string' ? body.packageId.trim() : '';
+  let pkg: PackageRow | null = null;
+  let packageShare: { priceCentavos: number; platformFeeCentavos: number; facilitatorNetCentavos: number } | null =
+    null;
+
+  if (packageId) {
+    const { data, error: packageError } = await supabase
+      .from('booking_packages')
+      .select(PACKAGE_COLUMNS)
+      .eq('id', packageId)
+      .maybeSingle<PackageRow>();
+    if (packageError) throw packageError;
+
+    // Ownership on the verified email, exactly as `loadOwned` does — a package
+    // id is not a capability.
+    if (!data || data.client_email.toLowerCase() !== user.email.toLowerCase()) {
+      return notFound('Package not found');
+    }
+    // And it has to be *this* facilitator's package for *this* service, or a
+    // six-session credit with a cheap facilitator would buy a session with an
+    // expensive one.
+    if (data.facilitator_id !== facilitator.id || data.service_id !== service.id) {
+      return badRequest('That package is not for this session');
+    }
+    if (data.status !== 'active') return badRequest('That package is not active');
+
+    const state = await packageState(supabase, data);
+    if (state.remaining <= 0 || !state.nextShare) {
+      return badRequest('You have used all the sessions in that package');
+    }
+
+    pkg = data;
+    packageShare = state.nextShare;
+  }
+
+  // A package is bought once and scheduled N times, so it is never booked
+  // directly — the session must arrive carrying the credit it is spending.
+  // Without this, booking a package charges the whole price and delivers a
+  // single session, which is what kept the kind unsellable until 0035.
+  if (service.kind === 'package' && !pkg) {
+    return badRequest('Buy this package first, then schedule each session from your bookings.');
   }
 
   // Clear lapsed holds first: the exclusion constraint cannot tell an expired
@@ -238,12 +281,18 @@ async function create(
   const slot = await verifySlot(supabase, facilitator, service, startsAt, now);
   if (!slot) return conflict('That time is no longer available');
 
-  const fee = splitFee(service.price_centavos, facilitator.platform_fee_bps);
-  const isFree = fee.priceCentavos === 0;
-  const refundPolicy = resolveRefundPolicy({
-    fullHours: service.refund_full_hours,
-    halfHours: service.refund_half_hours,
-  });
+  // A package session carries its own share of an already-collected payment —
+  // see splitPackageSessions for why the shares are allocated rather than
+  // divided, and 0035 for why the facilitator earns them on delivery.
+  const fee = packageShare ?? splitFee(service.price_centavos, facilitator.platform_fee_bps);
+  // Nothing to pay at this step either way: a package was paid for on purchase,
+  // and a free call was never charged. Both are confirmed immediately.
+  const isFree = fee.priceCentavos === 0 || Boolean(pkg);
+  const refundPolicy = resolveRefundPolicy(
+    pkg
+      ? { fullHours: pkg.refund_full_hours, halfHours: pkg.refund_half_hours }
+      : { fullHours: service.refund_full_hours, halfHours: service.refund_half_hours },
+  );
 
   // Validated against the service's *current* form, and required questions are
   // enforced here rather than only in the browser — an intake a facilitator
@@ -288,6 +337,7 @@ async function create(
       refund_half_hours: refundPolicy.halfHours,
       intake_answers: intakeAnswers,
       intake_completed_at: intakeCompletedAt,
+      package_id: pkg?.id ?? null,
       hold_expires_at: isFree ? null : holdExpiry(now),
     })
     .select('id')
@@ -307,7 +357,14 @@ async function create(
 
   if (isFree) {
     await confirmBooking(booking.id);
-    return ok({ bookingId: booking.id, free: true, status: 'confirmed' });
+    return ok({
+      bookingId: booking.id,
+      free: true,
+      status: 'confirmed',
+      // Told back so the screen can say "four sessions left" without a second
+      // request, and so a client who has just spent their last one knows it.
+      packageRemaining: pkg ? (await packageState(supabase, pkg)).remaining : undefined,
+    });
   }
 
   // From here the row exists and holds the slot. A failure creating the
@@ -352,6 +409,151 @@ async function create(
     serviceTitle: service.title,
     startsAt: slot.startsAt,
   });
+}
+
+/**
+ * Buy a multi-session package (0035).
+ *
+ * Unlike `create` above, this holds no slot and books no time. A package is a
+ * right to schedule; the sessions are chosen afterwards, one at a time, through
+ * the same `create` path with a `packageId` instead of a payment.
+ *
+ * That makes this the simple half of the flow: nothing races, nothing expires,
+ * and an abandoned checkout leaves a `pending_payment` row that grants no
+ * credits and blocks nothing. There is no hold to reclaim because there was
+ * never anything held.
+ */
+async function buyPackage(
+  event: APIGatewayProxyEventV2,
+  user: { email: string; sub: string; givenName?: string; familyName?: string },
+): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(event);
+  const slug = typeof body.facilitatorSlug === 'string' ? body.facilitatorSlug.trim() : '';
+  const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
+  if (!slug || !serviceId) return badRequest('facilitatorSlug and serviceId are required');
+
+  const supabase = await getSupabase();
+  const { facilitator, service } = await loadTarget(supabase, slug, serviceId);
+  if (!facilitator) return notFound('Facilitator not found');
+  if (!service) return notFound('Service not found');
+  if (service.kind !== 'package') return badRequest('That is not a package');
+  // The column allows 1 for every other kind; a one-session "package" is a
+  // standard session sold under a confusing name, and would give the buyer a
+  // credit flow for no reason.
+  if (!service.sessions_count || service.sessions_count < 2) {
+    return badRequest('That package is not set up correctly — ask the facilitator.');
+  }
+
+  const fee = splitFee(service.price_centavos, facilitator.platform_fee_bps);
+  const name =
+    [user.givenName, user.familyName].filter(Boolean).join(' ') ||
+    (typeof body.name === 'string' ? body.name.trim() : '') ||
+    null;
+
+  const { data: pkg, error: insertError } = await supabase
+    .from('booking_packages')
+    .insert({
+      facilitator_id: facilitator.id,
+      service_id: service.id,
+      client_email: user.email,
+      client_cognito_sub: user.sub,
+      client_name: name,
+      client_timezone: parseTimezone(body.timezone),
+      // Snapshotted: the credit count and the money must not move when the
+      // service is edited.
+      sessions_total: service.sessions_count,
+      price_centavos: fee.priceCentavos,
+      platform_fee_centavos: fee.platformFeeCentavos,
+      facilitator_net_centavos: fee.facilitatorNetCentavos,
+      currency: service.currency,
+      refund_full_hours: service.refund_full_hours ?? 24,
+      refund_half_hours: service.refund_half_hours ?? 12,
+      // A free package would be an unlimited supply of free sessions, so the
+      // service editor forbids a zero-priced package; this is the second layer.
+      status: 'pending_payment',
+    })
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (insertError) throw insertError;
+  if (!pkg) throw new Error('Package insert returned no row');
+
+  const origin = process.env.FRONTEND_URL ?? 'https://www.hilomcollective.com';
+
+  let session;
+  try {
+    session = await createHostedCheckout({
+      name: `${service.title} with ${facilitator.display_name}`,
+      description: `${service.sessions_count} sessions`,
+      amountCentavos: fee.priceCentavos,
+      currency: service.currency,
+      billing: { email: user.email, name },
+      metadata: {
+        // The webhook branches on this. A new value rather than reusing
+        // 'booking': a package activation creates no session, sends a different
+        // email, and must not be routed into confirmBooking.
+        kind: 'package',
+        package_id: pkg.id,
+        buyer_email: user.email,
+      },
+      successUrl: `${origin}/booking/processing?packageId=${encodeURIComponent(pkg.id)}`,
+      cancelUrl: `${origin}/facilitators/${facilitator.slug}`,
+    });
+  } catch (err) {
+    // Nothing was held, so this is a tidy-up rather than a release.
+    await supabase
+      .from('booking_packages')
+      .delete()
+      .eq('id', pkg.id)
+      .eq('status', 'pending_payment');
+    return serverError('bookings.buyPackage', err);
+  }
+
+  await supabase
+    .from('booking_packages')
+    .update({ paymongo_session_id: session.sessionId })
+    .eq('id', pkg.id);
+
+  return ok({
+    packageId: pkg.id,
+    checkoutUrl: session.checkoutUrl,
+    amountCentavos: fee.priceCentavos,
+    currency: service.currency,
+    sessionsTotal: service.sessions_count,
+    serviceTitle: service.title,
+  });
+}
+
+/**
+ * The client's packages, with what is left on each.
+ *
+ * Credits are counted rather than stored — see `packageState`. A stored counter
+ * would have to be decremented on booking and incremented on cancellation, and
+ * the two paths that must agree about someone's money are exactly the two paths
+ * that eventually do not.
+ */
+async function listMyPackages(email: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data, error } = await supabase
+    .from('booking_packages')
+    .select(`${PACKAGE_COLUMNS}, facilitators(slug, display_name, photo_url, timezone), facilitator_services(title, duration_minutes)`)
+    .eq('client_email', email.toLowerCase())
+    // An abandoned checkout is not a package anybody owns.
+    .neq('status', 'pending_payment')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) throw error;
+
+  const packages = await Promise.all(
+    ((data ?? []) as any[]).map(async (pkg) => {
+      const state = await packageState(supabase, pkg as PackageRow);
+      return { ...pkg, remaining: state.remaining, used: state.used };
+    }),
+  );
+
+  return ok({ packages });
 }
 
 /**
@@ -445,6 +647,8 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
     startsAt,
     now,
     cancelledBy: 'client',
+    // A package session returns its credit instead of any money — see 0035.
+    fromPackage: Boolean(booking.package_id),
     // The booking's own snapshot, not the service's current setting. Null on a
     // row written before 0027, which resolves to the ladder that was in force
     // when it was taken.

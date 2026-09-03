@@ -44,22 +44,34 @@ describe('validateService — what can be sold', () => {
   });
 
   /**
-   * Buying a package charged the full price and produced exactly one booking:
-   * the remaining sessions had no way to be scheduled. Until that is built,
-   * the kind must not be sellable.
+   * Re-opened in 0035. What is asserted now is the two rules that keep a
+   * package from being a way to give away sessions or to dress a single one up
+   * as a block.
    */
-  it('refuses a multi-session package, and says why rather than "invalid"', () => {
+  it('accepts a multi-session package', () => {
+    const s = validateService({ ...base, kind: 'package', sessions_count: 6 });
+    assert.equal(s.kind, 'package');
+    assert.equal(s.sessions_count, 6);
+    assert.equal(s.price_centavos, 150_000);
+  });
+
+  it('refuses a one-session package, which is a standard session in disguise', () => {
+    // It would put the buyer through a credit flow for nothing, and the
+    // database says the same (0035 checks `between 2 and 50`).
+    assert.throws(() => validateService({ ...base, kind: 'package', sessions_count: 1 }), FacilitatorInputError);
+  });
+
+  it('refuses a free package', () => {
+    // The free call is capped at one per client by an index on `bookings`. No
+    // such cap exists, or could exist, for a block of N — so a zero-priced
+    // package is an unlimited supply of free sessions.
     assert.throws(
-      () => validateService({ ...base, kind: 'package', sessions_count: 5 }),
-      (err: unknown) =>
-        err instanceof FacilitatorInputError && /packages are not available yet/i.test((err as Error).message),
+      () => validateService({ ...base, kind: 'package', sessions_count: 4, price_centavos: 0 }),
+      (err: unknown) => err instanceof FacilitatorInputError && /needs a price/i.test((err as Error).message),
     );
   });
 
-  it('refuses a package however it is dressed up', () => {
-    // A one-session "package" is harmless in principle, but allowing it would
-    // mean the gate depends on a field the caller controls.
-    assert.throws(() => validateService({ ...base, kind: 'package', sessions_count: 1 }), FacilitatorInputError);
-    assert.throws(() => validateService({ ...base, kind: 'package' }), FacilitatorInputError);
+  it('leaves sessions_count at one for every other kind', () => {
+    assert.equal(validateService({ ...base, kind: 'standard', sessions_count: 9 }).sessions_count, 1);
   });
 });

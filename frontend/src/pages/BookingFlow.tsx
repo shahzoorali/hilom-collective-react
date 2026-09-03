@@ -13,6 +13,7 @@ import SlotPicker, { type SlotPickerHandle } from '../components/SlotPicker';
 import IntakeForm from '../components/IntakeForm';
 import { currentUser, login } from '../lib/auth';
 import {
+  buyPackage,
   createBooking,
   describeRefundPolicy,
   formatDuration,
@@ -55,6 +56,30 @@ export default function BookingFlow() {
       live = false;
     };
   }, [slug, serviceId]);
+
+  /**
+   * Buy a block of sessions (0035).
+   *
+   * No slot is picked and none is held: a package is a right to schedule, and
+   * the times are chosen afterwards from the bookings page, one at a time. That
+   * is why this is a separate path rather than `confirm()` with a flag — there
+   * is no session being created here at all.
+   */
+  async function purchasePackage() {
+    if (!facilitator) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await buyPackage({ facilitatorSlug: facilitator.slug, serviceId });
+      // Same stash as a session checkout: PayMongo cannot template an id into
+      // success_url, so the return screen reads it back.
+      sessionStorage.setItem('hilom.pendingPackage', result.packageId);
+      window.location.href = result.checkoutUrl;
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Could not start checkout');
+      setSubmitting(false);
+    }
+  }
 
   async function confirm() {
     if (!selectedSlot || !facilitator) return;
@@ -110,6 +135,9 @@ export default function BookingFlow() {
   }
 
   const isFree = service.price_centavos === 0;
+  // A package is bought here and scheduled later, so this page shows a purchase
+  // rather than a slot picker. See 0035.
+  const isPackage = service.kind === 'package' && service.sessions_count > 1;
 
   const summary = (
     <div className="panel" style={{ marginBottom: '1.5rem' }}>
@@ -161,9 +189,48 @@ export default function BookingFlow() {
           ← {facilitator.display_name}'s profile
         </Link>
 
-        <h1 style={{ marginTop: '0.75rem' }}>Choose a time</h1>
+        <h1 style={{ marginTop: '0.75rem' }}>{isPackage ? 'Your package' : 'Choose a time'}</h1>
         {summary}
 
+        {/* A package skips the picker entirely — nothing is scheduled at
+            purchase. The copy has to be explicit about that, because someone
+            who expects a calendar invite and does not get one will wait. */}
+        {isPackage && (
+          <div className="panel" style={{ marginTop: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>
+              {service.sessions_count} sessions with {facilitator.display_name.split(' ')[0]}
+            </h2>
+            <p>
+              You are buying the whole block now and booking each session as you go — no times are
+              chosen yet. Your remaining sessions live on your bookings page, and cancelling one
+              returns it to the package rather than refunding it.
+            </p>
+            <p className="price">
+              {money(service.price_centavos, service.currency)}
+              <span className="small muted">
+                {' '}
+                · {money(Math.round(service.price_centavos / service.sessions_count), service.currency)} a
+                session
+              </span>
+            </p>
+
+            {submitError && <div className="alert alert-error">{submitError}</div>}
+
+            <button
+              type="button"
+              className="btn btn-accent btn-block"
+              disabled={submitting}
+              onClick={() => void purchasePackage()}
+            >
+              {submitting ? 'Opening checkout…' : `Pay ${money(service.price_centavos, service.currency)}`}
+            </button>
+            <p className="small muted" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+              {describeRefundPolicy(service)}
+            </p>
+          </div>
+        )}
+
+        {!isPackage && (
         <SlotPicker
           handleRef={pickerRef}
           facilitatorSlug={facilitator.slug}
@@ -173,6 +240,7 @@ export default function BookingFlow() {
           selected={selectedSlot}
           onSelect={setSelectedSlot}
         />
+        )}
 
         {selectedSlot && (
           <div className="panel" style={{ marginTop: '2rem' }}>

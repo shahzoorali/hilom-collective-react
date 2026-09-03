@@ -699,7 +699,7 @@ async function blackouts(
 }
 
 const FACILITATOR_BOOKING_COLUMNS =
-  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, intake_answers, intake_completed_at, session_notes, payout_id, created_at';
+  'id, service_id, service_kind, client_email, client_name, client_timezone, client_notes, starts_at, ends_at, status, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, meeting_url, cancelled_at, cancelled_by, cancellation_reason, refund_centavos, proposed_starts_at, proposed_at, proposed_note, booked_by, off_platform_centavos, facilitator_note, intake_answers, intake_completed_at, session_notes, package_id, payout_id, created_at';
 
 /**
  * A facilitator offers the client a different time, or withdraws the offer.
@@ -1448,6 +1448,9 @@ async function bookings(
       startsAt: new Date(booking.starts_at),
       now,
       cancelledBy: 'facilitator',
+      // Still a credit rather than a refund: the client has lost nothing they
+      // paid for, and their package is whole again.
+      fromPackage: Boolean(booking.package_id),
     });
 
     const reason =

@@ -46,6 +46,8 @@ export interface ServiceRow {
   min_notice_minutes: number;
   max_advance_days: number;
   max_per_day: number | null;
+  /** >1 only for `package` — the number of credits a purchase grants (0035). */
+  sessions_count?: number;
   meeting_url?: string | null;
   /** Null only on a row read with a column list predating 0027. */
   refund_full_hours?: number | null;

@@ -240,10 +240,34 @@ export default function FacilitatorProfile() {
                       dangerouslySetInnerHTML={{ __html: s.description }}
                     />
                   )}
-                  <p className="price">{money(s.price_centavos, s.currency)}</p>
-                  <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
-                    Choose a time
-                  </Link>
+                  <p className="price">
+                    {money(s.price_centavos, s.currency)}
+                    {s.kind === 'package' && s.sessions_count > 1 && (
+                      <span className="small muted">
+                        {' '}
+                        · {money(Math.round(s.price_centavos / s.sessions_count), s.currency)} a
+                        session
+                      </span>
+                    )}
+                  </p>
+
+                  {/* A package is bought once and scheduled afterwards, so
+                      "Choose a time" would be a lie — there are N times to
+                      choose, and none of them are chosen here (0035). */}
+                  {s.kind === 'package' && s.sessions_count > 1 ? (
+                    <>
+                      <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
+                        Buy {s.sessions_count} sessions
+                      </Link>
+                      <p className="small muted fac-book-card__policy">
+                        You book each session as you go, whenever suits you.
+                      </p>
+                    </>
+                  ) : (
+                    <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
+                      Choose a time
+                    </Link>
+                  )}
                   <p className="small muted fac-book-card__policy">
                     {describeRefundPolicy(s)}
                   </p>

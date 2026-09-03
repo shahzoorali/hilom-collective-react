@@ -19,6 +19,7 @@ import { money } from '../../components/Layout';
 import SlotPicker, { type SlotPickerHandle } from '../../components/SlotPicker';
 import IntakeForm from '../../components/IntakeForm';
 import MessageThread from '../../components/MessageThread';
+import PackagesPanel from './PackagesPanel';
 import { currentUser } from '../../lib/auth';
 import {
   cancelBooking,
@@ -207,8 +208,9 @@ export default function BookingsTab() {
     // facilitator who requires 48 hours' notice must not have this dialog
     // promise their client a full refund at 25.
     const { refund_full_hours: full, refund_half_hours: half } = bookingRefundPolicy(booking);
-    const consequence =
-      booking.price_centavos === 0
+    const consequence = booking.package_id
+      ? "This session goes back into your package — you'll be able to book it again."
+      : booking.price_centavos === 0
         ? 'No payment was taken for this session.'
         : hours >= full
           ? "You'll be refunded in full."
@@ -319,6 +321,11 @@ export default function BookingsTab() {
           </Link>
         </div>
       )}
+
+      {/* Above the list on purpose: a package is a right to schedule that
+          nobody has scheduled, and "four sessions left" has to be the first
+          thing on the page rather than a line inside a booking (0035). */}
+      <PackagesPanel onBooked={reload} />
 
       {upcoming.length > 0 && (
         <>

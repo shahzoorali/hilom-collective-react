@@ -173,9 +173,27 @@ export function refundForCancellation(input: {
   cancelledBy: 'client' | 'facilitator' | 'admin';
   /** Omitted for a pre-0027 booking, which is judged by the old fixed ladder. */
   policy?: RefundPolicy;
+  /**
+   * True when this session was scheduled against a package (0035). The money
+   * was collected for the block, not for this hour, so cancelling returns the
+   * credit rather than any of it.
+   */
+  fromPackage?: boolean;
 }): RefundDecision {
   const { priceCentavos, startsAt, now, cancelledBy } = input;
   const policy = input.policy ?? DEFAULT_REFUND_POLICY;
+
+  // Checked before everything else, including the free case, because it is a
+  // different *kind* of answer: nothing is owed and nothing is lost. Someone
+  // who bought six sessions and cancelled one still has six to use, and paying
+  // out a per-session share here would refund money against a package that has
+  // not been given up.
+  if (input.fromPackage) {
+    return {
+      refundCentavos: 0,
+      reason: 'This session has been returned to your package — book it again whenever you like.',
+    };
+  }
 
   if (priceCentavos === 0) {
     return { refundCentavos: 0, reason: 'No payment was taken for this session.' };
@@ -296,3 +314,90 @@ export function isLiveBooking(status: BookingStatus): boolean {
  */
 export const EXCLUSION_VIOLATION = '23P01';
 export const UNIQUE_VIOLATION = '23505';
+
+// ---------------------------------------------------------------------------
+// Packages
+// ---------------------------------------------------------------------------
+
+/** One session's share of a package: what it is worth, and to whom. */
+export interface PackageSessionShare extends FeeSplit {
+  /** 0-based position in the package. Only meaningful next to `sessionsTotal`. */
+  index: number;
+}
+
+/**
+ * Splits a package price across its sessions.
+ *
+ * The invariant this exists to guarantee, and the only one that matters: the
+ * shares sum back to the package totals *exactly* — every centavo of price,
+ * every centavo of fee, every centavo of the facilitator's net. Payouts are
+ * "sum the delivered bookings" (see 0035), so a rounding drift here is not a
+ * cosmetic discrepancy; it is a facilitator being paid a different amount than
+ * the client was charged, discovered at reconciliation.
+ *
+ * Computed by running total rather than by dividing and patching the remainder
+ * onto the last session. `floor(total * (i+1) / n) - floor(total * i / n)`
+ * telescopes: the shares up to any point sum to `floor(total * k / n)`, so the
+ * full set sums to `total` by construction, for every total and every n, with
+ * no special case to get wrong. Divide-and-patch gets the same answer but only
+ * because of a correction step, and the correction is where the bug lives — it
+ * has to be applied to the price, the fee *and* the net, consistently, or the
+ * three stop agreeing with each other.
+ *
+ * A consequence worth stating: shares can differ by one centavo. ₱1,000 over 3
+ * sessions is 33334/33333/33333, not three equal parts, because three equal
+ * parts of ₱1,000 do not exist. The facilitator is quoted the package total;
+ * the per-session figure is an internal allocation.
+ *
+ * The fee is split *once*, on the package as a whole, and then allocated —
+ * rather than charged per session — so that the total fee is exactly the rate
+ * on the price the client actually paid, rather than the sum of N independent
+ * roundings.
+ */
+export function splitPackageSessions(
+  priceCentavos: number,
+  platformFeeBps: number,
+  sessionsTotal: number,
+): PackageSessionShare[] {
+  const sessions = Math.max(1, Math.floor(sessionsTotal));
+  const total = splitFee(priceCentavos, platformFeeBps);
+
+  const allocate = (amount: number, index: number) =>
+    Math.floor((amount * (index + 1)) / sessions) - Math.floor((amount * index) / sessions);
+
+  return Array.from({ length: sessions }, (_, index) => {
+    const price = allocate(total.priceCentavos, index);
+    const fee = allocate(total.platformFeeCentavos, index);
+    return {
+      index,
+      priceCentavos: price,
+      platformFeeCentavos: fee,
+      // Derived rather than allocated separately, so a session's own three
+      // numbers always agree even though each is a share of a different total.
+      // Allocating the net independently would let price − fee ≠ net on an
+      // individual row while the columns still summed correctly overall, which
+      // is the worse kind of wrong: invisible in aggregate, obvious on a
+      // receipt.
+      facilitatorNetCentavos: price - fee,
+    };
+  });
+}
+
+/**
+ * How many sessions of a package are still schedulable.
+ *
+ * A cancelled session returns its credit — the client paid for six sessions and
+ * cancelling one is not a way to be owed five. Which is also why this counts
+ * *live and delivered* bookings rather than all of them: `pending_payment` has
+ * no meaning inside a package (nothing is being paid for), and cancelled rows
+ * hand the credit back.
+ */
+export function packageCreditsRemaining(
+  sessionsTotal: number,
+  bookingStatuses: BookingStatus[],
+): number {
+  const spent = bookingStatuses.filter(
+    (status) => status === 'confirmed' || status === 'completed' || status === 'no_show',
+  ).length;
+  return Math.max(0, sessionsTotal - spent);
+}

@@ -73,15 +73,15 @@ const SERVICE_KINDS = new Set(['exploratory', 'standard', 'package']);
  * holds a valid token and can POST to `/facilitator/services` directly; a
  * frontend-only gate would not actually close anything.
  *
- * To re-open it, the missing half is a purchase that grants N schedulable
- * credits rather than one booking. The decided shape (2026-08-23): the package
- * price is split across its N sessions and the facilitator earns each share as
- * that session is *delivered* — so payout logic keeps working unchanged, and an
- * abandoned package never pays out for sessions that did not happen. Nothing
- * needs migrating first: no package service or booking has ever existed in
- * production.
+ * **Re-opened in 0035**, along exactly the lines decided on 2026-08-23: a
+ * purchase grants N schedulable credits rather than one booking, the package
+ * price is split across its sessions, and the facilitator earns each share as
+ * that session is *delivered* — so the payout pipeline keeps working unchanged
+ * and an abandoned package never pays out for sessions that did not happen.
+ * `POST /packages` sells it; `POST /bookings` with a `packageId` spends a
+ * credit.
  */
-const SELLABLE_SERVICE_KINDS = new Set(['exploratory', 'standard']);
+const SELLABLE_SERVICE_KINDS = new Set(['exploratory', 'standard', 'package']);
 
 /**
  * A meeting URL is emailed to clients as a link, so the scheme is checked
@@ -406,13 +406,7 @@ export interface ServiceInput {
 export function validateService(body: Record<string, unknown>): ServiceInput {
   const kind = typeof body.kind === 'string' ? body.kind : 'standard';
   if (!SERVICE_KINDS.has(kind)) throw new FacilitatorInputError('Invalid service kind');
-  if (!SELLABLE_SERVICE_KINDS.has(kind)) {
-    // Said plainly rather than as "invalid": the kind is real and is coming
-    // back, and a facilitator who set one up should know why it stopped.
-    throw new FacilitatorInputError(
-      'Multi-session packages are not available yet — sell the sessions individually for now.',
-    );
-  }
+  if (!SELLABLE_SERVICE_KINDS.has(kind)) throw new FacilitatorInputError('Invalid service kind');
 
   const deliveryMode = typeof body.delivery_mode === 'string' ? body.delivery_mode : 'online';
   if (!DELIVERY_MODES.has(deliveryMode)) throw new FacilitatorInputError('Invalid delivery mode');
@@ -435,6 +429,13 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
   // limit would be attached to something chargeable, which is not what any of
   // the copy on the site promises.
   const price = kind === 'exploratory' ? 0 : int(body.price_centavos, 'Price', 0, 100_000_000, 0);
+
+  // A free package would be an unlimited supply of free sessions — the free
+  // call is capped at one per client by an index on `bookings`, and no such cap
+  // exists (or could exist) for a block of N.
+  if (kind === 'package' && price === 0) {
+    throw new FacilitatorInputError('A package needs a price. Use the free call for a complimentary session.');
+  }
 
   // The refund ladder the platform will actually apply (0027). Rejected rather
   // than silently re-ordered when the half threshold sits above the full one:
@@ -465,7 +466,10 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
     duration_minutes: int(body.duration_minutes, 'Duration', 5, 480),
     price_centavos: price,
     currency: str(body.currency, 'Currency', 3) ?? 'PHP',
-    sessions_count: kind === 'package' ? int(body.sessions_count, 'Sessions', 1, 50, 1) : 1,
+    // At least two: a one-session "package" is a standard session sold under
+    // a confusing name, and would put the buyer through a credit flow for
+    // nothing. The database agrees (0035 checks `between 2 and 50`).
+    sessions_count: kind === 'package' ? int(body.sessions_count, 'Sessions', 2, 50, 2) : 1,
     delivery_mode: deliveryMode,
     meeting_provider: meetingProvider,
     meeting_url: url(body.meeting_url, 'Meeting link'),

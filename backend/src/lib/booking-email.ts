@@ -549,6 +549,82 @@ export async function sendNewMessage(
   );
 }
 
+/**
+ * Sent to the buyer when a multi-session package is paid for (0035).
+ *
+ * The one thing this email has to convey is that nothing is booked yet. A
+ * package is a right to schedule, not a session, and someone who reads
+ * "confirmed" and waits for a calendar invite will still be waiting in three
+ * weeks — so the call to action is "book your first session", not "view your
+ * booking".
+ */
+export async function sendPackagePurchased(
+  ctx: BookingEmailContext,
+  detail: { sessionsTotal: number },
+): Promise<void> {
+  const sessions = `${detail.sessionsTotal} sessions`;
+
+  const html = renderEmail({
+    preheader: `${sessions} with ${ctx.facilitatorName} — book the first one whenever you're ready`,
+    heading: 'Your package is ready',
+    body:
+      p(
+        `You have <strong>${escapeHtml(sessions)}</strong> with ` +
+          `<strong>${escapeHtml(ctx.facilitatorName)}</strong>. Nothing is scheduled yet — pick your ` +
+          'times as you go, one session at a time.',
+      ) +
+      details([
+        { label: 'Package', value: escapeHtml(ctx.serviceTitle) },
+        { label: 'With', value: escapeHtml(ctx.facilitatorName) },
+        { label: 'Sessions', value: escapeHtml(sessions) },
+      ]) +
+      button('Book your first session', ACCOUNT_BOOKINGS_URL) +
+      note(
+        'Your remaining sessions are always shown on your bookings page. Cancelling a session ' +
+          'returns it to your package rather than refunding it.',
+      ),
+  });
+
+  const text = renderText(`Your package with ${ctx.facilitatorName} is ready`, [
+    `You have ${sessions}. Nothing is scheduled yet.`,
+    '',
+    `Package: ${ctx.serviceTitle}`,
+    '',
+    `Book your first session: ${ACCOUNT_BOOKINGS_URL}`,
+  ]);
+
+  await Promise.all([
+    send(ctx.clientEmail, `Your ${ctx.serviceTitle} package is ready`, text, html),
+    // The facilitator is told too: a package is committed work, and knowing it
+    // is sold before any session is scheduled is the point.
+    send(
+      ctx.facilitatorEmail,
+      `Package sold: ${ctx.serviceTitle}`,
+      renderText(`${ctx.clientName || ctx.clientEmail} bought your ${ctx.serviceTitle} package`, [
+        `${sessions}, none scheduled yet — they'll book them as they go.`,
+        '',
+        `Your calendar: ${FACILITATOR_BOOKINGS_URL}`,
+      ]),
+      renderEmail({
+        preheader: `${ctx.clientName || ctx.clientEmail} bought ${sessions}`,
+        heading: 'A package was bought',
+        body:
+          p(
+            `<strong>${escapeHtml(ctx.clientName || ctx.clientEmail)}</strong> bought your ` +
+              `${escapeHtml(ctx.serviceTitle)} package. Nothing is scheduled yet — they will book ` +
+              'each session as they go.',
+          ) +
+          details([
+            { label: 'Package', value: escapeHtml(ctx.serviceTitle) },
+            { label: 'Client', value: escapeHtml(ctx.clientName || ctx.clientEmail) },
+            { label: 'Sessions', value: escapeHtml(sessions) },
+          ]) +
+          button('Open your calendar', FACILITATOR_BOOKINGS_URL),
+      }),
+    ),
+  ]);
+}
+
 /** Sent when an admin approves a facilitator application. */
 export async function sendFacilitatorApproved(to: string, displayName: string): Promise<void> {
   const dashboard = 'https://www.hilomcollective.com/facilitator';

@@ -416,14 +416,20 @@ export default function ServicesTab() {
 
               <label className="field">
                 <span>Type</span>
-                {/* "Package of sessions" is deliberately absent: buying one
-                    charged the full price and produced a single session, so
-                    it is closed at the point of sale until multi-session
-                    scheduling exists. The backend rejects it too — see
-                    SELLABLE_SERVICE_KINDS in facilitator-input.ts. */}
-                <select value={draft.kind} onChange={(e) => set('kind', e.target.value as ServiceKind)}>
+                <select
+                  value={draft.kind}
+                  onChange={(e) => {
+                    const kind = e.target.value as ServiceKind;
+                    set('kind', kind);
+                    // A package needs at least two sessions (0035); switching
+                    // into it from a single session would otherwise leave a
+                    // count of 1 that the server rejects on save.
+                    if (kind === 'package' && draft.sessions_count < 2) set('sessions_count', 6);
+                  }}
+                >
                   <option value="standard">Single session</option>
                   <option value="exploratory">Complimentary intro call</option>
+                  <option value="package">Package of sessions</option>
                 </select>
               </label>
 
@@ -431,6 +437,14 @@ export default function ServicesTab() {
                 <p className="small muted">
                   Always free, and each client can book one per facilitator. You can only have one
                   active intro call.
+                </p>
+              )}
+
+              {draft.kind === 'package' && (
+                <p className="small muted">
+                  Sold as one payment. Your client books each session as they go, and you earn each
+                  session's share as you deliver it — not all at once on purchase. Cancelling a
+                  session returns it to their package rather than refunding it.
                 </p>
               )}
 
@@ -479,7 +493,7 @@ export default function ServicesTab() {
                   <span>Number of sessions</span>
                   <input
                     type="number"
-                    min={1}
+                    min={2}
                     max={50}
                     value={draft.sessions_count}
                     onChange={(e) => set('sessions_count', Number(e.target.value))}

@@ -147,6 +147,11 @@ export interface Booking {
   proposed_starts_at: string | null;
   proposed_at: string | null;
   proposed_note: string | null;
+  /**
+   * The package this session was scheduled against (0035), if any. Cancelling
+   * one of these returns the credit rather than refunding money.
+   */
+  package_id?: string | null;
   /** Intake answers, each carrying the question it answered (0032). */
   intake_answers?: IntakeAnswer[];
   intake_completed_at?: string | null;
@@ -229,6 +234,11 @@ export const createBooking = (input: {
   notes?: string;
   /** Answers to the service's intake form, keyed by question id. */
   intake?: Record<string, string>;
+  /**
+   * Spend a credit from a package bought earlier (0035) rather than paying.
+   * The session is confirmed immediately — the money was collected on purchase.
+   */
+  packageId?: string;
 }) =>
   apiFetch<CreateBookingResult>('/bookings', {
     method: 'POST',
@@ -1203,4 +1213,56 @@ export const sendBookingMessage = (bookingId: string, body: string, asFacilitato
 export const listMyMessageThreads = () =>
   apiFetch<{ threads: MessageThread[] }>('/facilitator/messages', { headers: authHeaders() }).then(
     (r) => r.threads,
+  );
+
+// ---------------------------------------------------------------------------
+// Packages (0035)
+// ---------------------------------------------------------------------------
+
+export type PackageStatus = 'pending_payment' | 'active' | 'cancelled' | 'refunded';
+
+/**
+ * A block of sessions bought up front.
+ *
+ * `remaining` is counted from live bookings server-side rather than stored —
+ * a counter would have to be decremented on booking and incremented on
+ * cancellation, and those are exactly the two paths that eventually disagree.
+ */
+export interface BookingPackage {
+  id: string;
+  facilitator_id: string;
+  service_id: string;
+  sessions_total: number;
+  price_centavos: number;
+  currency: string;
+  status: PackageStatus;
+  created_at: string;
+  remaining: number;
+  used: number;
+  facilitators?: {
+    slug: string;
+    display_name: string;
+    photo_url: string | null;
+    timezone: string;
+  } | null;
+  facilitator_services?: { title: string; duration_minutes: number } | null;
+}
+
+export const buyPackage = (input: { facilitatorSlug: string; serviceId: string }) =>
+  apiFetch<{
+    packageId: string;
+    checkoutUrl: string;
+    amountCentavos: number;
+    currency: string;
+    sessionsTotal: number;
+    serviceTitle: string;
+  }>('/packages', {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ ...input, timezone: viewerTimezone() }),
+  });
+
+export const listMyPackages = () =>
+  apiFetch<{ packages: BookingPackage[] }>('/me/packages', { headers: authHeaders() }).then(
+    (r) => r.packages,
   );

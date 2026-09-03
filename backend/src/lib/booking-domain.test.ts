@@ -17,6 +17,8 @@ import {
   describeRefundPolicy,
   DEFAULT_REFUND_POLICY,
   RESCHEDULE_MIN_NOTICE_HOURS,
+  splitPackageSessions,
+  packageCreditsRemaining,
 } from './booking-domain.js';
 
 const NOW = new Date('2026-03-10T00:00:00Z');
@@ -209,5 +211,104 @@ describe('per-service refund policies', () => {
     assert.doesNotMatch(describeRefundPolicy({ fullHours: 48, halfHours: 48 }), /half/i);
     assert.match(describeRefundPolicy({ fullHours: 24, halfHours: 12 }), /24 hours.*12 hours/s);
     assert.match(describeRefundPolicy({ fullHours: 1, halfHours: 1 }), /at least 1 hour /);
+  });
+});
+
+/**
+ * Package arithmetic (0035).
+ *
+ * The one thing that has to be true: the per-session shares sum back to the
+ * package exactly. Payouts are "sum the delivered bookings", so a centavo lost
+ * here is a facilitator paid a different amount than the client was charged —
+ * found at reconciliation, months later, by somebody counting by hand.
+ */
+describe('splitPackageSessions — dividing a package across its sessions', () => {
+  it('sums back to the package exactly, for every awkward combination', () => {
+    for (const price of [1, 7, 99, 100, 333, 150_000, 199_999, 1_000_000]) {
+      for (const bps of [0, 1, 750, 1500, 3333, 10_000]) {
+        for (const n of [2, 3, 4, 5, 6, 7, 11, 12, 50]) {
+          const shares = splitPackageSessions(price, bps, n);
+          const whole = splitFee(price, bps);
+
+          assert.equal(shares.length, n);
+          assert.equal(
+            shares.reduce((t, s) => t + s.priceCentavos, 0),
+            whole.priceCentavos,
+            `price drifted at ${price}/${bps}bps/${n}`,
+          );
+          assert.equal(
+            shares.reduce((t, s) => t + s.platformFeeCentavos, 0),
+            whole.platformFeeCentavos,
+            `fee drifted at ${price}/${bps}bps/${n}`,
+          );
+          assert.equal(
+            shares.reduce((t, s) => t + s.facilitatorNetCentavos, 0),
+            whole.facilitatorNetCentavos,
+            `net drifted at ${price}/${bps}bps/${n}`,
+          );
+        }
+      }
+    }
+  });
+
+  it('keeps each session internally consistent, not just the totals', () => {
+    // The worse kind of wrong is a row where price − fee ≠ net while the
+    // columns still sum correctly overall: invisible in aggregate, obvious on
+    // a receipt.
+    for (const share of splitPackageSessions(100_000, 1500, 7)) {
+      assert.equal(share.priceCentavos - share.platformFeeCentavos, share.facilitatorNetCentavos);
+    }
+  });
+
+  it('divides evenly when it can', () => {
+    const shares = splitPackageSessions(600_000, 1500, 6);
+    for (const share of shares) assert.equal(share.priceCentavos, 100_000);
+  });
+
+  it('distributes the indivisible centavos rather than dumping them on one session', () => {
+    // ₱1,000 over three sessions has no equal split. The difference between
+    // any two shares must be at most one centavo.
+    const shares = splitPackageSessions(100_000, 0, 3).map((s) => s.priceCentavos);
+    assert.equal(Math.max(...shares) - Math.min(...shares), 1);
+    assert.equal(shares.reduce((a, b) => a + b, 0), 100_000);
+  });
+
+  it('charges the fee on the package, not N times on a rounded share', () => {
+    // 15% of ₱333.33 is 49.9995 centavos of fee per session if charged
+    // separately, which rounds down seven times and quietly under-collects.
+    // Splitting once and allocating gives exactly the rate on what was paid.
+    const shares = splitPackageSessions(33_333, 1500, 7);
+    assert.equal(
+      shares.reduce((t, s) => t + s.platformFeeCentavos, 0),
+      splitFee(33_333, 1500).platformFeeCentavos,
+    );
+  });
+
+  it('handles a free package without inventing money', () => {
+    const shares = splitPackageSessions(0, 1500, 4);
+    assert.equal(shares.length, 4);
+    assert.equal(shares.reduce((t, s) => t + s.priceCentavos, 0), 0);
+  });
+});
+
+describe('packageCreditsRemaining', () => {
+  it('counts a booked session as spent', () => {
+    assert.equal(packageCreditsRemaining(6, ['confirmed', 'completed']), 4);
+  });
+
+  it('counts a no-show as spent — the hour was held', () => {
+    assert.equal(packageCreditsRemaining(6, ['no_show']), 5);
+  });
+
+  it('returns the credit when a session is cancelled', () => {
+    // Someone who paid for six sessions and cancelled one is not owed five.
+    assert.equal(
+      packageCreditsRemaining(6, ['confirmed', 'cancelled_by_client', 'cancelled_by_facilitator']),
+      5,
+    );
+  });
+
+  it('never goes negative, whatever the rows say', () => {
+    assert.equal(packageCreditsRemaining(2, ['confirmed', 'confirmed', 'confirmed']), 0);
   });
 });
