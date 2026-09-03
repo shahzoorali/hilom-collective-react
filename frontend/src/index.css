@@ -2274,3 +2274,200 @@ div[class*="_PuckCanvas-root_"],
     max-width: 100% !important;
   }
 }
+
+/* ==========================================================================
+   Facilitator profile — /facilitators/:slug
+   ========================================================================== */
+
+.fac-hero {
+  background: linear-gradient(160deg, var(--cream), #fff 78%);
+  border-bottom: 1px solid var(--line);
+  padding: 1.5rem 0 2.25rem;
+  margin-top: 0.75rem;
+}
+.fac-hero__inner {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
+}
+.fac-hero__photo {
+  width: 168px;
+  height: 168px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.fac-hero__monogram {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--forest);
+  color: var(--cream);
+  font-family: var(--serif);
+  font-size: 3.75rem;
+  line-height: 1;
+}
+.fac-hero__id h1 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.7rem, 4vw, 2.3rem);
+}
+.fac-hero__headline {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+  color: #4a5647;
+  max-width: 52ch;
+}
+.fac-hero__meta {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.fac-hero__links {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+.fac-hero__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+/* --- body layout ----------------------------------------------------- */
+.fac-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 2.5rem;
+  padding-top: 2.5rem;
+}
+.fac-section {
+  margin-bottom: 2.5rem;
+}
+.fac-section > h2 {
+  font-size: 1.2rem;
+  margin-bottom: 0.9rem;
+}
+.fac-prose {
+  color: #3f4a3d;
+  line-height: 1.7;
+  max-width: 62ch;
+}
+.fac-prose p {
+  margin: 0 0 0.9rem;
+}
+.fac-prose.small {
+  line-height: 1.6;
+}
+
+/* --- booking cards -------------------------------------------------- */
+.fac-book-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1.1rem;
+}
+.fac-book-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 1.4rem;
+}
+.fac-book-card h3 {
+  font-size: 1.1rem;
+  margin: 0.5rem 0 0.2rem;
+}
+.fac-book-card > p {
+  margin: 0.3rem 0 0.75rem;
+}
+.fac-book-card .price {
+  margin: 0.9rem 0 1rem;
+}
+.fac-book-card__policy {
+  margin: 0.7rem 0 0;
+}
+.fac-book-card--free {
+  background: linear-gradient(160deg, var(--cream), #fff 80%);
+  border-color: #e6d7ac;
+  margin-bottom: 1.5rem;
+  max-width: 30rem;
+}
+
+/* --- sidebar panels ----------------------------------------------- */
+.fac-body__aside {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+.fac-panel {
+  padding: 1.25rem 1.35rem;
+}
+.fac-panel h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+.fac-panel--scope {
+  background: var(--cream);
+  border-color: #e6d7ac;
+}
+.fac-panel--scope p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--forest-dark);
+}
+.fac-glance {
+  margin: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+.fac-glance dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.1rem;
+}
+.fac-glance dd {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+.fac-creds {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+.fac-creds li {
+  margin-bottom: 0.35rem;
+}
+
+@media (max-width: 860px) {
+  .fac-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+  /* Credentials and scope are decision inputs — they belong above the booking
+     buttons on a phone, not scrolled past. Source order already has the aside
+     second; on narrow screens pull it back up under the header. */
+  .fac-body__aside {
+    order: -1;
+  }
+}
+@media (max-width: 560px) {
+  .fac-hero__inner {
+    grid-template-columns: 108px minmax(0, 1fr);
+    gap: 1.15rem;
+  }
+  .fac-hero__photo {
+    width: 108px;
+    height: 108px;
+  }
+  .fac-hero__monogram {
+    font-size: 2.5rem;
+  }
+}
