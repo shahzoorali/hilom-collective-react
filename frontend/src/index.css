@@ -745,10 +745,115 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   min-height: 0;
   overflow-y: auto;
   padding: 1.75rem 2rem;
+  -webkit-overflow-scrolling: touch;
 }
 .admin-content > * {
   max-width: 1400px;
   margin: 0 auto;
+}
+
+/* Admin Mobile Topbar + Drawer — hidden on desktop, the sidebar becomes a
+   slide-in drawer under this bar on narrow / touch screens. Mirrors the
+   nav-drawer pattern of a native mobile app rather than shrinking the
+   desktop sidebar in place. */
+.admin-mobile-topbar {
+  display: none;
+}
+.admin-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .admin-shell--sidebar {
+    flex-direction: column;
+  }
+  .admin-shell {
+    height: 100dvh;
+  }
+
+  .admin-mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: none;
+    height: 52px;
+    padding: 0 0.5rem;
+    padding-top: env(safe-area-inset-top);
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    z-index: 30;
+  }
+  .admin-mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    font-size: 1.25rem;
+    line-height: 1;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--forest);
+    cursor: pointer;
+  }
+  .admin-mobile-menu-btn:active {
+    background: rgba(47, 94, 62, 0.08);
+  }
+  .admin-mobile-topbar-title {
+    flex: 1;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--forest);
+  }
+  .admin-mobile-topbar-logo {
+    height: 24px;
+    width: auto;
+  }
+
+  .admin-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 26, 20, 0.45);
+    z-index: 40;
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  .admin-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100dvh;
+    width: 82vw;
+    max-width: 300px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-out;
+    z-index: 50;
+    padding-top: env(safe-area-inset-top);
+  }
+  .admin-sidebar--open {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.2);
+  }
+
+  /* Bigger touch targets for nav items and content padding that fits a
+     phone viewport instead of the desktop 2rem gutters. */
+  .admin-sidebar-btn {
+    padding: 0.75rem 0.6rem;
+    font-size: 0.92rem;
+  }
+  .admin-content {
+    padding: 1rem;
+  }
+  .admin-content > * {
+    max-width: none;
+  }
+
+  .admin-auth-card {
+    padding: 1.75rem 1.25rem;
+  }
 }
 
 /* The page editor is flush: full width, no padding, so Puck's own canvas and

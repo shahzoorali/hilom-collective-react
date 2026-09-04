@@ -84,8 +84,16 @@ export default function Admin() {
   const [busy, setBusy] = useState(false);
   const [checkingSession, setCheckingSession] = useState(() => Boolean(sessionStorage.getItem(KEY_STORAGE)));
 
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Close the mobile drawer on every navigation so tapping a section link
+  // doesn't leave the menu covering the page it just opened.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
 
   async function signIn(key: string) {
     setBusy(true);
@@ -213,11 +221,31 @@ export default function Admin() {
   const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
   const editingPost = /^\/admin\/posts\/[^/]+/.test(location.pathname);
   const flushChrome = editingPage || editingPost;
+  const activeLabel = NAV_GROUPS.flatMap((g) => g.items).find((t) => t.path === activeTab)?.label ?? 'Admin';
 
   return (
     <div className="admin-shell admin-shell--sidebar">
-      {/* Left Sidebar Navigation */}
-      <aside className="admin-sidebar">
+      {/* Mobile-only top bar: hamburger + current section, sidebar becomes a slide-in drawer */}
+      <header className="admin-mobile-topbar">
+        <button
+          type="button"
+          className="admin-mobile-menu-btn"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Open menu"
+          aria-expanded={drawerOpen}
+        >
+          ☰
+        </button>
+        <span className="admin-mobile-topbar-title">{activeLabel}</span>
+        <img src={hilomLogo} alt="" className="admin-mobile-topbar-logo" />
+      </header>
+
+      {drawerOpen && (
+        <div className="admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
+
+      {/* Left Sidebar Navigation (slides in as a drawer on mobile) */}
+      <aside className={`admin-sidebar ${drawerOpen ? 'admin-sidebar--open' : ''}`}>
         <Link to="/admin/pages" className="admin-sidebar-brand">
           <img src={hilomLogo} alt="Hilom" className="brand-logo" />
           <div className="admin-brand-text">
