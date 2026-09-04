@@ -221,7 +221,8 @@ export default function Admin() {
   const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
   const editingPost = /^\/admin\/posts\/[^/]+/.test(location.pathname);
   const flushChrome = editingPage || editingPost;
-  const activeLabel = NAV_GROUPS.flatMap((g) => g.items).find((t) => t.path === activeTab)?.label ?? 'Admin';
+  const activeLabel =
+    NAV_GROUPS.map((g) => g.items.find((t) => t.path === activeTab)).find(Boolean)?.label ?? 'Admin';
 
   return (
     <div className="admin-shell admin-shell--sidebar">
