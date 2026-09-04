@@ -179,7 +179,7 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 - `db/` — Supabase SQL migrations, RLS policies, seed data (`0006_cms.sql` is the CMS schema)
 - `scripts/` — operational scripts (Moodle WS probes, PayMongo test-mode checkout harness,
   `seed-cms.ts` — uploads bundled page images and writes today's copy into the CMS as drafts)
-- `docs/` — build plan, SSO runbook, backend runbook, admin handoff docs
+- `docs/` — build plan, SSO/backend/frontend/refund runbooks, the admin runbook, and the facilitator marketplace guide
 
 ## Progress
 
@@ -210,3 +210,6 @@ Runbooks with exact deploy/test commands:
 [docs/frontend-runbook.md](docs/frontend-runbook.md),
 [docs/sso-runbook.md](docs/sso-runbook.md),
 [docs/refund-runbook.md](docs/refund-runbook.md).
+
+Operating the admin panel day to day — the queues, the money rules, and the
+order operations have to happen in: [docs/admin-runbook.md](docs/admin-runbook.md).
