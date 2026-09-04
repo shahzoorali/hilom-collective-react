@@ -568,12 +568,13 @@ async function status(bookingId: string, email: string): Promise<APIGatewayProxy
   const supabase = await getSupabase();
   const { data, error } = await supabase
     .from('bookings')
-    .select('id, status, starts_at, meeting_url, client_email, facilitators(display_name, timezone), facilitator_services(title)')
+    .select('id, status, starts_at, ends_at, meeting_url, client_email, facilitators(display_name, timezone), facilitator_services(title)')
     .eq('id', bookingId)
     .maybeSingle<{
       id: string;
       status: BookingStatus;
       starts_at: string;
+      ends_at: string;
       meeting_url: string | null;
       client_email: string;
       facilitators: { display_name: string; timezone: string } | null;
@@ -589,6 +590,7 @@ async function status(bookingId: string, email: string): Promise<APIGatewayProxy
     bookingId: data.id,
     status: data.status,
     startsAt: data.starts_at,
+    endsAt: data.ends_at,
     // Withheld until the booking is actually confirmed — a pending hold has
     // not been paid for.
     meetingUrl: data.status === 'confirmed' ? data.meeting_url : null,
@@ -715,6 +717,8 @@ async function cancel(bookingId: string, email: string): Promise<APIGatewayProxy
       clientTimezone: booking.client_timezone,
       serviceTitle: booking.facilitator_services.title,
       startsAt: booking.starts_at,
+      endsAt: booking.ends_at,
+      bookingId,
       meetingUrl: booking.meeting_url,
       isFree: booking.price_centavos === 0,
     },
@@ -984,6 +988,8 @@ async function respondToProposal(
     facilitatorTimezone: facilitator.timezone,
     serviceTitle: service.title,
     startsAt: booking.starts_at as string,
+    endsAt: booking.ends_at as string,
+    bookingId,
     meetingUrl: booking.meeting_url,
     isFree: booking.price_centavos === 0,
   };
@@ -1033,7 +1039,7 @@ async function respondToProposal(
   if (!moved) return conflict('That booking was cancelled — it can no longer be moved.');
 
   await syncBookingMeeting(supabase, bookingId, 'rescheduled');
-  await sendBookingRescheduled({ ...emailContext, startsAt: slot.startsAt }, previousStartsAt);
+  await sendBookingRescheduled({ ...emailContext, startsAt: slot.startsAt, endsAt: slot.endsAt }, previousStartsAt);
 
   return ok({ bookingId, accepted: true, startsAt: slot.startsAt });
 }
@@ -1139,6 +1145,8 @@ async function reschedule(
       clientTimezone: booking.client_timezone,
       serviceTitle: (booking.facilitator_services as { title: string }).title,
       startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+      bookingId,
       meetingUrl: booking.meeting_url,
       isFree: booking.price_centavos === 0,
     },

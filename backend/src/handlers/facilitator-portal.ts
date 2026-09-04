@@ -1497,6 +1497,8 @@ async function bookings(
         clientTimezone: booking.client_timezone,
         serviceTitle: booking.facilitator_services?.title ?? 'Session',
         startsAt: booking.starts_at,
+        endsAt: booking.ends_at,
+        bookingId,
         meetingUrl: booking.meeting_url,
         isFree: booking.price_centavos === 0,
       },

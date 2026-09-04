@@ -297,6 +297,7 @@ export interface BookingStatusResult {
   bookingId: string;
   status: BookingStatus;
   startsAt: string;
+  endsAt: string;
   meetingUrl: string | null;
   facilitatorName: string | null;
   timezone: string | null;

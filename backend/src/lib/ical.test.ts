@@ -12,7 +12,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { escapeText, foldLine, toIcsDate, renderCalendar } from './ical.js';
+import { escapeText, foldLine, toIcsDate, renderCalendar, renderInvite } from './ical.js';
 
 describe('escapeText — RFC 5545 §3.3.11', () => {
   it('escapes the three special characters', () => {
@@ -138,5 +138,68 @@ describe('renderCalendar', () => {
     const ics = renderCalendar({ name: 'Hilom', events: [] });
     assert.ok(ics.includes('BEGIN:VCALENDAR'));
     assert.ok(!ics.includes('BEGIN:VEVENT'));
+  });
+});
+
+describe('renderInvite — the file Gmail/Outlook render as a calendar invite', () => {
+  const base = {
+    uid: 'booking-abc@hilomcollective.com',
+    sequence: 0,
+    startsAt: '2026-03-12T07:00:00Z',
+    endsAt: '2026-03-12T08:00:00Z',
+    summary: 'Coaching session',
+    organizer: { email: 'maria@example.com', name: 'Maria Reyes' },
+    attendee: { email: 'ana@example.com', name: 'Ana Villanueva' },
+  };
+
+  it('sets METHOD on the calendar, not only inside the event', () => {
+    // Gmail and Outlook key off METHOD:REQUEST/CANCEL at the calendar level —
+    // the same value the Content-Type's method= parameter also has to carry.
+    const req = renderInvite({ ...base, method: 'REQUEST' });
+    assert.ok(req.includes('METHOD:REQUEST\r\n'));
+    const cancel = renderInvite({ ...base, method: 'CANCEL' });
+    assert.ok(cancel.includes('METHOD:CANCEL\r\n'));
+  });
+
+  it('marks a cancellation STATUS:CANCELLED and a request STATUS:CONFIRMED', () => {
+    assert.ok(renderInvite({ ...base, method: 'REQUEST' }).includes('STATUS:CONFIRMED'));
+    assert.ok(renderInvite({ ...base, method: 'CANCEL' }).includes('STATUS:CANCELLED'));
+  });
+
+  it('carries ORGANIZER and ATTENDEE with the RSVP flags a client needs to draw buttons', () => {
+    // Unfolded first — the ATTENDEE line is long enough to fold mid-parameter
+    // at 75 octets, and a substring check against the raw output would be
+    // testing line-folding rather than the content.
+    const ics = renderInvite({ ...base, method: 'REQUEST' }).replace(/\r\n /g, '');
+    assert.ok(ics.includes('ORGANIZER;CN=Maria Reyes:mailto:maria@example.com'));
+    assert.ok(ics.includes('mailto:ana@example.com'));
+    assert.ok(ics.includes('RSVP=TRUE'));
+    assert.ok(ics.includes('PARTSTAT=NEEDS-ACTION'));
+  });
+
+  it('keeps the same UID across REQUEST and CANCEL, so a client recognises them as one event', () => {
+    const req = renderInvite({ ...base, method: 'REQUEST' });
+    const cancel = renderInvite({ ...base, method: 'CANCEL' });
+    assert.ok(req.includes('UID:booking-abc@hilomcollective.com'));
+    assert.ok(cancel.includes('UID:booking-abc@hilomcollective.com'));
+  });
+
+  it('strips characters from a CN that would require iCalendar param quoting', () => {
+    const ics = renderInvite({
+      ...base,
+      method: 'REQUEST',
+      organizer: { email: 'maria@example.com', name: 'Reyes, Maria; MD' },
+    });
+    // A raw comma or semicolon in an unquoted CN would corrupt the property.
+    assert.doesNotMatch(ics.split('\r\n').find((l) => l.startsWith('ORGANIZER')) ?? '', /[,;]MD|,\s*Maria/);
+  });
+
+  it('falls back to the email as CN when no name is given', () => {
+    const ics = renderInvite({
+      ...base,
+      method: 'REQUEST',
+      attendee: { email: 'ana@example.com', name: null },
+    });
+    assert.ok(ics.includes('ATTENDEE;CN=ana@example.com'));
   });
 });

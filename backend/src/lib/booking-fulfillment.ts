@@ -39,6 +39,7 @@ interface BookingWithRelations {
   id: string;
   status: BookingStatus;
   starts_at: string;
+  ends_at: string;
   client_email: string;
   client_name: string | null;
   client_timezone: string | null;
@@ -53,7 +54,7 @@ interface BookingWithRelations {
 }
 
 const JOINED =
-  'id, status, starts_at, client_email, client_name, client_timezone, price_centavos, meeting_url, ' +
+  'id, status, starts_at, ends_at, client_email, client_name, client_timezone, price_centavos, meeting_url, ' +
   'facilitators(id, email, display_name, timezone), ' +
   'facilitator_services(title, duration_minutes, meeting_provider)';
 
@@ -194,6 +195,8 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
       clientTimezone: booking.client_timezone,
       serviceTitle: service.title,
       startsAt: booking.starts_at,
+      endsAt: booking.ends_at,
+      bookingId,
       meetingUrl,
       isFree: booking.price_centavos === 0,
     });

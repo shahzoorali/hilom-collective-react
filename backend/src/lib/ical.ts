@@ -163,3 +163,103 @@ export function renderCalendar(calendar: IcsCalendar): string {
 
   return lines.map(foldLine).join('\r\n') + '\r\n';
 }
+
+/**
+ * Sanitizes a value used inside an iCalendar parameter (`CN=...`, not a
+ * property value).
+ *
+ * Parameter values containing `:`, `;` or `,` are legal only quoted, and a
+ * quoted value cannot itself contain a `"`. Rather than implement RFC 5545's
+ * quoting rules for what is always a short display name, the handful of
+ * characters that would require quoting are stripped — a name with a comma in
+ * it loses the comma, not the whole invite.
+ */
+function sanitizeParam(value: string): string {
+  return value.replace(/[":;,]/g, '').trim();
+}
+
+export type InviteMethod = 'REQUEST' | 'CANCEL';
+
+export interface InviteParty {
+  email: string;
+  /** Falls back to the email if blank, so ORGANIZER/ATTENDEE always has a CN. */
+  name?: string | null;
+}
+
+export interface InviteInput {
+  /**
+   * `REQUEST` proposes or updates a meeting — sent on confirmation and on
+   * reschedule, with `sequence` bumped so the calendar app knows this
+   * supersedes what it already has. `CANCEL` withdraws it.
+   */
+  method: InviteMethod;
+  /**
+   * Stable across the booking's lifetime — the same value the subscribable
+   * feed uses (`booking-<id>@hilomcollective.com`) — so a calendar app that
+   * received the confirmation, the reschedule and the cancellation treats
+   * them as the same event moving through states rather than three different
+   * events.
+   */
+  uid: string;
+  /** Monotonically increasing across REQUEST/CANCEL for the same UID. */
+  sequence: number;
+  startsAt: string | Date;
+  endsAt: string | Date;
+  summary: string;
+  description?: string | null;
+  /** Joining link, surfaced as both URL and LOCATION. */
+  location?: string | null;
+  organizer: InviteParty;
+  attendee: InviteParty;
+}
+
+/**
+ * A single-event VCALENDAR with `METHOD:REQUEST` or `METHOD:CANCEL` — the
+ * two values Gmail and Outlook actually look for before they render an
+ * message as a calendar invite (with Yes/No/Maybe buttons) rather than as an
+ * email with an attachment. `METHOD:PUBLISH`, which the subscribable feed
+ * uses, is read-only by design and deliberately does not trigger this.
+ *
+ * ORGANIZER is always the facilitator and ATTENDEE the client — the same
+ * file is attached to both parties' copies of the email; a calendar app
+ * shows each recipient their own RSVP controls, and recipients who are not
+ * the ATTENDEE (the facilitator, on their own invite) still get an
+ * informational entry.
+ */
+export function renderInvite(input: InviteInput): string {
+  const stamp = toIcsDate(new Date());
+
+  const organizerName = sanitizeParam(input.organizer.name || input.organizer.email);
+  const attendeeName = sanitizeParam(input.attendee.name || input.attendee.email);
+
+  const lines: string[] = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Hilom Collective//Facilitator Sessions//EN',
+    'CALSCALE:GREGORIAN',
+    `METHOD:${input.method}`,
+    'BEGIN:VEVENT',
+    `UID:${escapeText(input.uid)}`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART:${toIcsDate(input.startsAt)}`,
+    `DTEND:${toIcsDate(input.endsAt)}`,
+    `SUMMARY:${escapeText(input.summary)}`,
+    `SEQUENCE:${Math.max(0, Math.floor(input.sequence))}`,
+    `STATUS:${input.method === 'CANCEL' ? 'CANCELLED' : 'CONFIRMED'}`,
+    `ORGANIZER;CN=${organizerName}:mailto:${input.organizer.email}`,
+    // RSVP=TRUE and PARTSTAT=NEEDS-ACTION are what make Gmail/Outlook draw the
+    // Yes/No/Maybe buttons for the attendee; without them some clients render
+    // the file as a plain attachment instead of an invite to respond to.
+    `ATTENDEE;CN=${attendeeName};ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${input.attendee.email}`,
+  ];
+
+  if (input.description) lines.push(`DESCRIPTION:${escapeText(input.description)}`);
+  if (input.location) {
+    lines.push(`URL:${escapeText(input.location)}`);
+    lines.push(`LOCATION:${escapeText(input.location)}`);
+  }
+
+  lines.push('END:VEVENT', 'END:VCALENDAR');
+
+  return lines.map(foldLine).join('\r\n') + '\r\n';
+}

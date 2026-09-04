@@ -21,6 +21,7 @@ import hilomLogo from '../assets/hilom-logo.png';
 import { currentUser, login, logout } from '../lib/auth';
 import { money } from '../components/Layout';
 import MessageThread from '../components/MessageThread';
+import AddToCalendar from '../components/AddToCalendar';
 import {
   getMyEarnings,
   getMyFacilitatorProfile,
@@ -872,6 +873,22 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
                 <a className="btn btn-ghost small" href={b.meeting_url} target="_blank" rel="noreferrer">
                   Join
                 </a>
+              )}
+              {/* Same event the confirmation email already carries as an
+                  invite attachment — offered directly for the dashboard case
+                  the email can't cover: looking at this hours or days later. */}
+              {isFuture && (
+                <AddToCalendar
+                  small
+                  event={{
+                    id: b.id,
+                    title: `${b.facilitator_services?.title ?? 'Session'} with ${b.client_name || b.client_email}`,
+                    startsAt: b.starts_at,
+                    endsAt: b.ends_at,
+                    location: b.meeting_url ?? undefined,
+                    description: b.meeting_url ? `Join: ${b.meeting_url}` : undefined,
+                  }}
+                />
               )}
               {/* Offered before Cancel, and deliberately: cancelling refunds
                   the client in full and loses the booking, and for "something

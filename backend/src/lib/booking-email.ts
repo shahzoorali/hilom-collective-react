@@ -17,6 +17,8 @@
  */
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { renderEmail, renderText, escapeHtml, p, note, details, button, link } from './email-layout.js';
+import { renderInvite, type InviteMethod } from './ical.js';
+import { sendWithInvite } from './email-mime.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
@@ -148,6 +150,15 @@ export interface BookingEmailContext {
    * the answers are often screening rather than paperwork.
    */
   intakePending?: boolean;
+  /**
+   * Needed only for the calendar-invite attachment (confirmed, rescheduled,
+   * cancelled) — the stable id an invite's UID is built from, and the
+   * session's real end. Optional so every other template that builds a
+   * context inline (the reminder, the proposal email) does not have to name
+   * fields it never uses.
+   */
+  bookingId?: string;
+  endsAt?: string;
 }
 
 /**
@@ -178,6 +189,40 @@ function joinDetail(meetingUrl?: string | null): { label: string; value: string 
     label: 'Join',
     value: meetingUrl ? link(meetingUrl, meetingUrl) : 'Your facilitator will send joining details.',
   };
+}
+
+/**
+ * The calendar-invite attachment for a confirmed, rescheduled or cancelled
+ * booking — the same file goes to both recipients, since a calendar app
+ * shows each their own RSVP controls off the same ORGANIZER/ATTENDEE pair.
+ *
+ * Null when the context has no `bookingId` — a caller that never populated
+ * it (there is none left, but the field is optional) gets an ordinary email
+ * rather than a broken one.
+ */
+function inviteIcs(ctx: BookingEmailContext, method: InviteMethod): string | null {
+  if (!ctx.bookingId) return null;
+
+  return renderInvite({
+    method,
+    // Matches the subscribable feed's UID convention (facilitators.ts), so a
+    // calendar app that already holds this event from the feed recognises
+    // the invite as the same one rather than adding a duplicate.
+    uid: `booking-${ctx.bookingId}@hilomcollective.com`,
+    // Epoch seconds: monotonic across confirm → reschedule → cancel without
+    // this module having to track a counter anywhere.
+    sequence: Math.floor(Date.now() / 1000),
+    startsAt: ctx.startsAt,
+    endsAt: ctx.endsAt ?? ctx.startsAt,
+    summary: ctx.serviceTitle,
+    description:
+      `With ${ctx.facilitatorName} — via Hilom Collective.` +
+      (ctx.meetingUrl ? `
+Join: ${ctx.meetingUrl}` : ''),
+    location: ctx.meetingUrl,
+    organizer: { email: ctx.facilitatorEmail, name: ctx.facilitatorName },
+    attendee: { email: ctx.clientEmail, name: ctx.clientName },
+  });
 }
 
 /** Sent to both parties the moment a booking becomes `confirmed`. */
@@ -237,9 +282,34 @@ export async function sendBookingConfirmed(ctx: BookingEmailContext): Promise<vo
     `See your calendar: ${FACILITATOR_BOOKINGS_URL}`,
   ]);
 
+  // The invite goes out with the notification rather than instead of it: a
+  // recipient whose client doesn't understand text/calendar still gets the
+  // ordinary confirmation with the "Add to calendar" links on the page.
+  const ics = inviteIcs(ctx, 'REQUEST');
+
   await Promise.all([
-    send(ctx.clientEmail, `Session confirmed: ${ctx.serviceTitle}`, clientText, clientHtml),
-    send(ctx.facilitatorEmail, `New booking: ${ctx.serviceTitle}`, facilitatorText, facilitatorHtml),
+    ics
+      ? sendWithInvite({
+          to: ctx.clientEmail,
+          from: SENDER,
+          subject: `Session confirmed: ${ctx.serviceTitle}`,
+          text: clientText,
+          html: clientHtml,
+          ics,
+          icsMethod: 'REQUEST',
+        })
+      : send(ctx.clientEmail, `Session confirmed: ${ctx.serviceTitle}`, clientText, clientHtml),
+    ics
+      ? sendWithInvite({
+          to: ctx.facilitatorEmail,
+          from: SENDER,
+          subject: `New booking: ${ctx.serviceTitle}`,
+          text: facilitatorText,
+          html: facilitatorHtml,
+          ics,
+          icsMethod: 'REQUEST',
+        })
+      : send(ctx.facilitatorEmail, `New booking: ${ctx.serviceTitle}`, facilitatorText, facilitatorHtml),
   ]);
 }
 
@@ -364,9 +434,35 @@ export async function sendBookingCancelled(
   const forClient = render(when.forClient);
   const forFacilitator = render(when.forFacilitator);
 
+  // CANCEL tells the recipient's calendar app to remove the event it already
+  // holds from the REQUEST sent at confirmation — this is what actually
+  // clears a cancelled session off someone's calendar rather than leaving it
+  // to linger there looking live.
+  const ics = inviteIcs(ctx, 'CANCEL');
+
   await Promise.all([
-    send(ctx.clientEmail, `Cancelled: ${ctx.serviceTitle}`, forClient.text, forClient.html),
-    send(ctx.facilitatorEmail, `Cancelled: ${ctx.serviceTitle}`, forFacilitator.text, forFacilitator.html),
+    ics
+      ? sendWithInvite({
+          to: ctx.clientEmail,
+          from: SENDER,
+          subject: `Cancelled: ${ctx.serviceTitle}`,
+          text: forClient.text,
+          html: forClient.html,
+          ics,
+          icsMethod: 'CANCEL',
+        })
+      : send(ctx.clientEmail, `Cancelled: ${ctx.serviceTitle}`, forClient.text, forClient.html),
+    ics
+      ? sendWithInvite({
+          to: ctx.facilitatorEmail,
+          from: SENDER,
+          subject: `Cancelled: ${ctx.serviceTitle}`,
+          text: forFacilitator.text,
+          html: forFacilitator.html,
+          ics,
+          icsMethod: 'CANCEL',
+        })
+      : send(ctx.facilitatorEmail, `Cancelled: ${ctx.serviceTitle}`, forFacilitator.text, forFacilitator.html),
   ]);
 }
 
@@ -406,9 +502,34 @@ export async function sendBookingRescheduled(
   const forClient = render(previous.forClient, next.forClient);
   const forFacilitator = render(previous.forFacilitator, next.forFacilitator);
 
+  // Same UID, a higher SEQUENCE, the new time: this is what makes a
+  // reschedule move the *existing* entry in someone's calendar app rather
+  // than leave the old time sitting there alongside a second one.
+  const ics = inviteIcs(ctx, 'REQUEST');
+
   await Promise.all([
-    send(ctx.clientEmail, `Moved: ${ctx.serviceTitle}`, forClient.text, forClient.html),
-    send(ctx.facilitatorEmail, `Moved: ${ctx.serviceTitle}`, forFacilitator.text, forFacilitator.html),
+    ics
+      ? sendWithInvite({
+          to: ctx.clientEmail,
+          from: SENDER,
+          subject: `Moved: ${ctx.serviceTitle}`,
+          text: forClient.text,
+          html: forClient.html,
+          ics,
+          icsMethod: 'REQUEST',
+        })
+      : send(ctx.clientEmail, `Moved: ${ctx.serviceTitle}`, forClient.text, forClient.html),
+    ics
+      ? sendWithInvite({
+          to: ctx.facilitatorEmail,
+          from: SENDER,
+          subject: `Moved: ${ctx.serviceTitle}`,
+          text: forFacilitator.text,
+          html: forFacilitator.html,
+          ics,
+          icsMethod: 'REQUEST',
+        })
+      : send(ctx.facilitatorEmail, `Moved: ${ctx.serviceTitle}`, forFacilitator.text, forFacilitator.html),
   ]);
 }
 

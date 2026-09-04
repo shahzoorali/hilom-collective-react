@@ -450,7 +450,7 @@ async function adminCancelBooking(
   const { data: booking, error } = await supabase
     .from('bookings')
     .select(
-      'id, status, starts_at, price_centavos, client_email, client_name, client_timezone, meeting_url, package_id, ' +
+      'id, status, starts_at, ends_at, price_centavos, client_email, client_name, client_timezone, meeting_url, package_id, ' +
         'facilitators(email, display_name, timezone), facilitator_services(title)',
     )
     .eq('id', bookingId)
@@ -520,6 +520,8 @@ async function adminCancelBooking(
         clientTimezone: booking.client_timezone,
         serviceTitle: service.title,
         startsAt: booking.starts_at,
+        endsAt: booking.ends_at,
+        bookingId,
         meetingUrl: booking.meeting_url,
         isFree: booking.price_centavos === 0,
       },

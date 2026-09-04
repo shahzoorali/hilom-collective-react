@@ -17,6 +17,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import AddToCalendar from '../components/AddToCalendar';
 import {
   getBookingStatus,
   listMyPackages,
@@ -195,7 +196,26 @@ export default function BookingProcessing() {
               <p className="small muted">Your facilitator will send joining details before the session.</p>
             )}
 
-            <p className="small muted" style={{ marginBottom: 0 }}>
+            {/* The email confirmation already carries a calendar invite Gmail
+                and Outlook auto-detect (see backend/src/lib/email-mime.ts) —
+                this is the same event offered directly, for anyone who wants
+                it now rather than from their inbox. */}
+            <div style={{ marginTop: '0.75rem' }}>
+              <AddToCalendar
+                event={{
+                  id: result.bookingId,
+                  title: result.facilitatorName
+                    ? `${result.serviceTitle} with ${result.facilitatorName}`
+                    : (result.serviceTitle ?? 'Hilom session'),
+                  startsAt: result.startsAt,
+                  endsAt: result.endsAt,
+                  location: result.meetingUrl ?? undefined,
+                  description: result.meetingUrl ? `Join: ${result.meetingUrl}` : undefined,
+                }}
+              />
+            </div>
+
+            <p className="small muted" style={{ marginBottom: 0, marginTop: '0.75rem' }}>
               We've emailed you a confirmation. You can reschedule or cancel from{' '}
               <Link to="/account/bookings">your bookings</Link>.
             </p>

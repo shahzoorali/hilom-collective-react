@@ -19,6 +19,7 @@ import { money } from '../../components/Layout';
 import SlotPicker, { type SlotPickerHandle } from '../../components/SlotPicker';
 import IntakeForm from '../../components/IntakeForm';
 import MessageThread from '../../components/MessageThread';
+import AddToCalendar from '../../components/AddToCalendar';
 import PackagesPanel from './PackagesPanel';
 import { StarInput } from '../../components/Stars';
 import { currentUser } from '../../lib/auth';
@@ -580,6 +581,21 @@ export default function BookingsTab() {
                     Join
                   </a>
                 )}
+                {/* Belt to the confirmation email's invite attachment — see
+                    AddToCalendar's own note for why both exist. */}
+                <AddToCalendar
+                  small
+                  event={{
+                    id: b.id,
+                    title: b.facilitators
+                      ? `${b.facilitator_services?.title ?? 'Session'} with ${b.facilitators.display_name}`
+                      : (b.facilitator_services?.title ?? 'Hilom session'),
+                    startsAt: b.starts_at,
+                    endsAt: b.ends_at,
+                    location: b.meeting_url ?? undefined,
+                    description: b.meeting_url ? `Join: ${b.meeting_url}` : undefined,
+                  }}
+                />
                 {b.facilitators && hoursUntil(b.starts_at) >= moveNoticeHours(b) && (
                   <button
                     type="button"
