@@ -4,6 +4,11 @@ How the facilitator marketplace works from both sides: the **admin journey**
 (vetting, publishing, money) and the **facilitator journey** (applying, setting
 up, running sessions, getting paid).
 
+This is the technical reference. The Hilom-branded, illustrated version a
+practitioner is actually handed is
+[practitioner-guide.html](practitioner-guide.html) — same facts, written for
+that audience and covering only their half.
+
 A facilitator is a coach / breathwork / wellness practitioner who sells 1:1
 sessions — singly or as multi-session packages — through Hilom. Hilom curates the
 roster, takes a per-facilitator platform fee, collects payment through PayMongo,

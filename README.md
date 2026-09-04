@@ -179,7 +179,9 @@ aws secretsmanager get-secret-value --region ap-southeast-1 --secret-id <name> -
 - `db/` — Supabase SQL migrations, RLS policies, seed data (`0006_cms.sql` is the CMS schema)
 - `scripts/` — operational scripts (Moodle WS probes, PayMongo test-mode checkout harness,
   `seed-cms.ts` — uploads bundled page images and writes today's copy into the CMS as drafts)
-- `docs/` — build plan, SSO/backend/frontend/refund runbooks, the admin runbook, and the facilitator marketplace guide
+- `docs/` — build plan, SSO/backend/frontend/refund runbooks, the admin runbook, the
+  facilitator marketplace guide, and the branded practitioner guide
+  (`practitioner-guide.html`, also published as an artifact)
 
 ## Progress
 
