@@ -40,5 +40,5 @@ applications:
               style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://rsms.me;
               font-src 'self' data: https://fonts.gstatic.com https://rsms.me;
               img-src 'self' data: blob: https:;
-              connect-src 'self' https://api.hilomcollective.com https://auth.hilomcollective.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://clarity.ms https://*.clarity.ms https://www.google.com;
+              connect-src 'self' https://api.hilomcollective.com https://auth.hilomcollective.com https://*.s3.ap-southeast-1.amazonaws.com https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://analytics.google.com https://*.analytics.google.com https://clarity.ms https://*.clarity.ms https://www.google.com;
               frame-src 'self' https://open.spotify.com https://www.google.com
