@@ -56,38 +56,6 @@ export default function About() {
         </div>
       </section>
 
-      <section className="cv-band cv-band--white">
-        <div className="container">
-          <div className="cv-head cv-head--center" style={{ marginBottom: '2.25rem' }}>
-            <h2>In 5 years, Hilom Collective will be:</h2>
-          </div>
-          <div className="grid">
-            <div className="card">
-              <p className="desc" style={{ margin: 0 }}>
-                A trusted digital and in-person space for Filipino-centered healing
-              </p>
-            </div>
-            <div className="card">
-              <p className="desc" style={{ margin: 0 }}>
-                A provider of Ginhawa (Relief) Kits, Hilom (Healing) Journals, and Pahinga (Rest)
-                Sessions in homes, schools, and barangays
-              </p>
-            </div>
-            <div className="card">
-              <p className="desc" style={{ margin: 0 }}>
-                The go-to platform for local wellness leaders to connect, share, and co-heal
-              </p>
-            </div>
-            <div className="card">
-              <p className="desc" style={{ margin: 0 }}>
-                A safe space for intergenerational conversations around rest, resilience, and
-                renewal
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section className="cv-band cv-band--forest">
         <div className="container">
           <h2>Why do we want to create this brand?</h2>
