@@ -54,7 +54,7 @@ export default function Blog() {
   }
 
   return (
-    <section className="section">
+    <section className="cv-band cv-band--white">
       <div className="container">
         <h1 className="blog-heading">
           {categorySlug

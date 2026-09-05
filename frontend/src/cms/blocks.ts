@@ -38,7 +38,15 @@ export interface Cta {
   variant?: string;
 }
 
-const BACKGROUNDS = ['none', 'cream'] as const;
+/**
+ * The bands a block can sit on. `none` is kept as the stored default so no
+ * published page needed re-saving — BlockRenderer resolves it, and anything
+ * else it does not recognise, to the white band.
+ *
+ * `forest` inverts the type colours inside the band, so a page is composed by
+ * alternating dark and light rather than by nudging spacing between sections.
+ */
+const BACKGROUNDS = ['none', 'white', 'cream', 'sand', 'forest'] as const;
 const BUTTON_VARIANTS = ['btn-primary', 'btn-accent', 'btn-ghost'] as const;
 
 const ctaField: FieldSpec = {

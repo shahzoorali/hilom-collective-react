@@ -16,10 +16,8 @@ function EventCard({ img, title, subtitle, desc, when, note }: EventCardProps) {
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <img src={img} alt="" style={{ width: '100%', aspectRatio: '4/5', objectFit: 'cover' }} />
       <div style={{ padding: '1.4rem' }}>
-        <h3>{title}</h3>
-        <p className="small muted" style={{ marginBottom: '0.5rem' }}>
-          {subtitle}
-        </p>
+        <h3 className="cv-person__name">{title}</h3>
+        <p className="cv-person__role">{subtitle}</p>
         <p className="desc">{desc}</p>
         <p className="small" style={{ fontWeight: 600, color: 'var(--forest)' }}>
           {when}
@@ -43,13 +41,18 @@ function EventCard({ img, title, subtitle, desc, when, note }: EventCardProps) {
 export default function Events() {
   return (
     <>
-      <section className="hero">
+      <section className="cv-hero">
         <div className="container">
-          <h1>Upcoming Events</h1>
+          <div className="cv-hero__inner">
+            <h1>Upcoming events</h1>
+            <p className="cv-hero__sub">
+              Workshops, circles, and gatherings — online and in person.
+            </p>
+          </div>
         </div>
       </section>
 
-      <section className="section" style={{ paddingTop: 0 }}>
+      <section className="cv-band cv-band--white">
         <div className="container grid">
           <EventCard
             img={event1}
@@ -69,12 +72,10 @@ export default function Events() {
         </div>
       </section>
 
-      <section className="section" style={{ textAlign: 'center', paddingTop: 0 }}>
-        <div className="container">
+      <section className="cv-band cv-band--sand cv-band--tight">
+        <div className="container cv-center">
           <div className="card" style={{ padding: '2rem', maxWidth: '640px', margin: '0 auto' }}>
-            <p className="badge" style={{ background: 'var(--ochre)' }}>
-              2027 Retreat
-            </p>
+            <p className="cv-eyebrow">2027 Retreat</p>
             <h2>Join the Retreat Waitlist</h2>
             <p className="desc" style={{ margin: '0 auto 1.25rem', maxWidth: '48ch' }}>
               Be the first to know when registration opens for our 2027 retreat.
@@ -91,17 +92,21 @@ export default function Events() {
         </div>
       </section>
 
-      <section className="section" style={{ textAlign: 'center', background: 'var(--cream)' }}>
-        <div className="container">
-          <p className="badge">Join The Movement</p>
-          <h2>There's a place for you here.</h2>
-          <p className="lede" style={{ margin: '0 auto 1.5rem' }}>
-            Whether you're seeking support, want to bring Hilom to your community, or believe in
-            this work, we'd love to hear from you.
+      <section className="cv-band cv-band--forest">
+        <div className="container cv-center">
+          <div className="cv-head cv-head--center">
+            <p className="cv-eyebrow">Join the movement</p>
+            <h2>There's a place for you here.</h2>
+            <p>
+              Whether you're seeking support, want to bring Hilom to your community, or believe in
+              this work, we'd love to hear from you.
+            </p>
+          </div>
+          <p style={{ marginTop: '2rem' }}>
+            <Link className="btn btn-accent" to="/community">
+              Join our community
+            </Link>
           </p>
-          <Link className="btn btn-accent" to="/community">
-            Join Our Community
-          </Link>
         </div>
       </section>
     </>

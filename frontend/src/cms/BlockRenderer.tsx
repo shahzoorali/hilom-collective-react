@@ -1,15 +1,17 @@
 /**
- * Renders CMS blocks using the site's existing markup and CSS classes.
+ * Renders CMS blocks in the site's marketing system (see the `cv-` layer at
+ * the end of index.css, and docs/curve-design-reference.md for the layout
+ * grammar it follows).
  *
- * Every component here was lifted from the hardcoded page it replaces
- * (Home.tsx, About.tsx, Services.tsx, Events.tsx), so a migrated page renders
- * identically to the JSX version — that equivalence is what makes the cutover
- * in CmsOrFallback safe to flip and unflip.
+ * Every block is a full-bleed band whose `background` prop names its colour,
+ * so a page is composed by stacking bands rather than by nudging margins. The
+ * JSX pages in src/pages that CmsOrFallback falls back to use the same classes,
+ * which is what keeps a published page and its fallback looking alike.
  *
  * The admin preview renders through this same component, so "what you see" in
  * the editor cannot drift from what ships.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
 import { getEvents, type CmsEvent } from '../lib/cms';
@@ -29,8 +31,33 @@ const media = (v: unknown): MediaRef | undefined =>
   v && typeof v === 'object' && 'url' in (v as object) ? (v as MediaRef) : undefined;
 const cta = (v: unknown): Cta | undefined => (v && typeof v === 'object' ? (v as Cta) : undefined);
 
-function sectionStyle(props: Props, extra?: CSSProperties): CSSProperties {
-  return props.background === 'cream' ? { background: 'var(--cream)', ...extra } : { ...extra };
+/**
+ * Every block is a full-bleed band. The `background` prop names which one;
+ * anything unrecognised (including the old "cream"-or-nothing values already
+ * stored on published pages) still resolves to a real band, so no content
+ * needed migrating when the marketing system landed.
+ *
+ * `cv-band--forest` inverts the type colours for everything inside it, which
+ * is why this is a class rather than the inline background it used to be.
+ */
+const BANDS = new Set(['white', 'cream', 'sand', 'forest']);
+
+function bandClass(props: Props, extra?: string): string {
+  const name = str(props.background);
+  const band = BANDS.has(name) ? name : 'white';
+  return `cv-band cv-band--${band}${extra ? ` ${extra}` : ''}`;
+}
+
+/** Heading + optional subheading, shared by every grid block. */
+function BandHead({ props, center }: { props: Props; center?: boolean }) {
+  if (!props.heading && !props.subheading && !props.badge) return null;
+  return (
+    <div className={center ? 'cv-head cv-head--center' : 'cv-head'} style={{ marginBottom: '2.25rem' }}>
+      {props.badge ? <p className="cv-eyebrow">{str(props.badge)}</p> : null}
+      {props.heading ? <h2>{str(props.heading)}</h2> : null}
+      {props.subheading ? <p>{str(props.subheading)}</p> : null}
+    </div>
+  );
 }
 
 /** Internal paths route through react-router; anything else is a real link. */
@@ -55,55 +82,47 @@ function RichText({ html }: { html: string }) {
   return <div dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function Badge({ props }: { props: Props }) {
-  if (!props.badge) return null;
-  return (
-    <p className="badge" style={props.badgeColor === 'ochre' ? { background: 'var(--ochre)' } : undefined}>
-      {str(props.badge)}
-    </p>
-  );
-}
-
 function Hero({ props }: { props: Props }) {
   const lede = Array.isArray(props.lede) ? props.lede : [];
   return (
-    <section className="hero">
+    <section className="cv-hero">
       <div className="container">
-        <Badge props={props} />
-        <h1>{str(props.heading)}</h1>
-        {lede.map((line, i) => (
-          <p
-            className="lede"
-            key={i}
-            // The homepage's first lede line is bold and forest-coloured.
-            style={i === 0 && props.emphasizeFirstLede ? { fontWeight: 600, color: 'var(--forest)' } : undefined}
-          >
-            {String(line)}
-          </p>
-        ))}
-        <CtaLink value={cta(props.cta)} />
+        <div className="cv-hero__inner">
+          {props.badge ? <p className="cv-eyebrow">{str(props.badge)}</p> : null}
+          <h1>{str(props.heading)}</h1>
+          {lede.map((line, i) => (
+            <p className="cv-hero__sub" key={i}>
+              {String(line)}
+            </p>
+          ))}
+          <CtaLink value={cta(props.cta)} />
+        </div>
       </div>
     </section>
   );
 }
 
+/**
+ * The image that follows a hero. It is pulled up so its top half overlaps the
+ * forest band above it — the reference's "photo breaking out of the hero" —
+ * which is why the hero carries extra bottom padding it never uses itself.
+ * Used alone on a page it simply sits in the flow.
+ */
 function FullWidthImage({ props }: { props: Props }) {
   const image = media(props.image);
   if (!image) return null;
   return (
-    <div className="container">
-      <img
-        src={image.url}
-        alt={image.alt}
-        style={{ width: '100%', borderRadius: 'var(--radius)', margin: '2rem 0', display: 'block' }}
-      />
+    <div className="cv-breakout">
+      <div className="container">
+        <img src={image.url} alt={image.alt} />
+      </div>
     </div>
   );
 }
 
 function RichTextSection({ props }: { props: Props }) {
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container">
         <RichText html={str(props.html)} />
       </div>
@@ -116,36 +135,30 @@ function Split({ props }: { props: Props }) {
   const heading = str(props.heading);
   const copy = (
     <div>
-      <Badge props={props} />
+      {props.badge ? <p className="cv-eyebrow">{str(props.badge)}</p> : null}
       {heading ? props.headingLevel === 'h1' ? <h1>{heading}</h1> : <h2>{heading}</h2> : null}
       <RichText html={str(props.html)} />
-      <CtaLink value={cta(props.cta)} />
+      <CtaLink value={cta(props.cta)} extraClass="cv-split-cta" />
     </div>
   );
   const picture = image ? (
-    <img src={image.url} alt={image.alt} style={{ width: '100%', borderRadius: 'var(--radius)' }} />
+    <div className="cv-feature__media">
+      <img src={image.url} alt={image.alt} />
+    </div>
   ) : null;
 
-  const classes = ['container', 'split'];
-  if (props.reverse) classes.push('split-reverse');
-  if (props.narrow) classes.push('split-narrow');
+  // Copy always leads in the DOM, so the stacked order reads before it
+  // illustrates; `reverse` only moves the photo to the left on desktop.
+  const classes = ['cv-feature'];
+  if (props.reverse) classes.push('cv-feature--media-left');
 
   return (
-    <section className="section" style={sectionStyle(props)}>
-      <div className={classes.join(' ')}>
-        {/* split-reverse puts the image first in the DOM, matching the
-            hardcoded Home.tsx markup it replaces. */}
-        {props.reverse ? (
-          <>
-            {picture}
-            {copy}
-          </>
-        ) : (
-          <>
-            {copy}
-            {picture}
-          </>
-        )}
+    <section className={bandClass(props)}>
+      <div className="container">
+        <div className={classes.join(' ')}>
+          {copy}
+          {picture}
+        </div>
       </div>
     </section>
   );
@@ -199,24 +212,21 @@ function StatCounter({ value, caption }: { value: string; caption: string }) {
   }, [value, hasAnimated]);
 
   return (
-    <div ref={ref} className="panel" style={{ textAlign: 'left' }}>
-      <p style={{ fontFamily: 'var(--serif)', fontSize: '2.4rem', fontWeight: 700, color: 'var(--ochre)', margin: '0 0 0.4rem' }}>
-        {displayValue}
-      </p>
-      <p className="small" style={{ margin: 0 }}>
-        {caption}
-      </p>
+    <div ref={ref} className="cv-stat">
+      <p className="cv-stat__value">{displayValue}</p>
+      <p className="cv-stat__label">{caption}</p>
     </div>
   );
 }
 
 function StatGrid({ props }: { props: Props }) {
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container">
-        <Badge props={props} />
-        {props.heading ? <h2>{str(props.heading)}</h2> : null}
-        <div className="grid" style={{ marginTop: '1.5rem' }}>
+        <BandHead props={props} />
+        {/* A rule-separated strip rather than a grid of boxed panels: the
+            numbers are one row of evidence, not three cards. */}
+        <div className="cv-stats" style={{ marginTop: 0 }}>
           {list(props.items).map((item, i) => (
             <StatCounter key={i} value={str(item.value)} caption={str(item.caption)} />
           ))}
@@ -228,11 +238,10 @@ function StatGrid({ props }: { props: Props }) {
 
 function CardGrid({ props }: { props: Props }) {
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container">
-        {props.heading ? <h2>{str(props.heading)}</h2> : null}
-        {props.subheading ? <p className="muted">{str(props.subheading)}</p> : null}
-        <div className="grid" style={{ marginTop: '1.5rem' }}>
+        <BandHead props={props} center />
+        <div className="grid">
           {list(props.items).map((item, i) => (
             <div className="card" key={i}>
               {item.title ? <h3>{str(item.title)}</h3> : null}
@@ -249,11 +258,11 @@ function CardGrid({ props }: { props: Props }) {
 
 function PanelGrid({ props }: { props: Props }) {
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container grid two-col">
         {list(props.items).map((item, i) => (
           <div className="panel" key={i}>
-            {item.badge ? <p className="badge">{str(item.badge)}</p> : null}
+            {item.badge ? <p className="cv-eyebrow">{str(item.badge)}</p> : null}
             <p style={{ marginBottom: 0 }}>{str(item.body)}</p>
           </div>
         ))}
@@ -269,8 +278,10 @@ function ImageCardGrid({ props }: { props: Props }) {
   const aspectRatio = isEvent ? '4/5' : '4/3';
 
   return (
-    <section className="section" style={sectionStyle(props, { paddingTop: 0 })}>
-      <div className="container grid">
+    <section className={bandClass(props, 'cv-band--tight')}>
+      <div className="container">
+        <BandHead props={props} center />
+        <div className="grid">
         {list(props.items).map((item, i) => {
           const image = media(item.image);
           return (
@@ -304,6 +315,7 @@ function ImageCardGrid({ props }: { props: Props }) {
             </div>
           );
         })}
+        </div>
       </div>
     </section>
   );
@@ -321,14 +333,13 @@ function ProductGrid({ props }: { props: Props }) {
   }, []);
 
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container">
-        {props.heading ? <h2>{str(props.heading)}</h2> : null}
-        {props.subheading ? <p className="muted">{str(props.subheading)}</p> : null}
+        <BandHead props={props} center />
         {error && <div className="alert alert-error">Couldn't load courses: {error}</div>}
         {!products && !error && <SkeletonCardGrid count={3} media={false} />}
         {products && (
-          <div className="grid" style={{ marginTop: '1.5rem' }}>
+          <div className="grid">
             {products.map((p) => (
               <article className="card" key={p.id}>
                 {p.slug.includes('bundle') && <span className="badge">Bundle</span>}
@@ -443,16 +454,16 @@ function EventGrid({ props }: { props: Props }) {
   }, []);
 
   return (
-    <section className="section" style={sectionStyle(props, { paddingTop: 0 })}>
+    <section className={bandClass(props, 'cv-band--tight')}>
       <div className="container">
-        {props.heading ? <h2>{str(props.heading)}</h2> : null}
+        <BandHead props={props} center />
         {error && <div className="alert alert-error">Couldn't load events: {error}</div>}
         {!data && !error && <SkeletonCardGrid count={3} />}
         {data && data.upcoming.length === 0 && data.past.length === 0 && (
           <p className="muted">No events scheduled right now — check back soon.</p>
         )}
         {data && data.upcoming.length > 0 && (
-          <div className="grid" style={{ marginTop: '1.5rem' }}>
+          <div className="grid">
             {data.upcoming.map((event) => (
               <EventCard event={event} past={false} key={event.id} />
             ))}
@@ -475,15 +486,13 @@ function EventGrid({ props }: { props: Props }) {
 
 function CtaBanner({ props }: { props: Props }) {
   return (
-    <section className="section" style={sectionStyle(props, { textAlign: 'center' })}>
-      <div className="container">
-        <Badge props={props} />
-        <h2>{str(props.heading)}</h2>
-        {props.lede ? (
-          <p className="lede" style={{ margin: '0 auto 1.5rem' }}>
-            {str(props.lede)}
-          </p>
-        ) : null}
+    <section className={bandClass(props)}>
+      <div className="container cv-center">
+        <div className="cv-head cv-head--center" style={{ marginBottom: '2rem' }}>
+          {props.badge ? <p className="cv-eyebrow">{str(props.badge)}</p> : null}
+          <h2>{str(props.heading)}</h2>
+          {props.lede ? <p>{str(props.lede)}</p> : null}
+        </div>
         <CtaLink value={cta(props.cta)} />
       </div>
     </section>
@@ -506,7 +515,7 @@ function SpotifyEmbed({ props }: { props: Props }) {
   if (!showId) return null;
 
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container" style={{ maxWidth: 640 }}>
         {props.heading ? <h2>{str(props.heading)}</h2> : null}
         <iframe
@@ -525,7 +534,7 @@ function SpotifyEmbed({ props }: { props: Props }) {
 
 function CommunityFormBlock() {
   return (
-    <section className="section" style={{ paddingTop: 0 }}>
+    <section className="cv-band cv-band--white cv-band--tight">
       <div className="container" style={{ maxWidth: 640 }}>
         <CommunityForm />
       </div>
@@ -535,7 +544,7 @@ function CommunityFormBlock() {
 
 function FacilitatorApplyFormBlock() {
   return (
-    <section className="section" style={{ paddingTop: 0 }}>
+    <section className="cv-band cv-band--white cv-band--tight">
       <div className="container" style={{ maxWidth: 640 }}>
         <FacilitatorApplyForm />
       </div>
@@ -573,10 +582,9 @@ function FacilitatorGrid({ props }: { props: Props }) {
   }, [specialty]);
 
   return (
-    <section className="section" style={sectionStyle(props)}>
+    <section className={bandClass(props)}>
       <div className="container">
-        {props.heading ? <h2>{str(props.heading)}</h2> : null}
-        {props.subheading ? <p className="muted">{str(props.subheading)}</p> : null}
+        <BandHead props={props} center />
         {error && <div className="alert alert-error">Couldn't load facilitators: {error}</div>}
         {!facilitators && !error && <SkeletonCardGrid count={3} />}
         {facilitators && facilitators.length === 0 && (
@@ -584,31 +592,34 @@ function FacilitatorGrid({ props }: { props: Props }) {
         )}
         {facilitators && facilitators.length > 0 && (
           <>
-            <div className="grid" style={{ marginTop: '1.5rem' }}>
+            <div className="cv-people">
               {facilitators.slice(0, 6).map((f) => (
-                <Link key={f.id} to={`/facilitators/${f.slug}`} className="card facilitator-card">
-                  {f.photo_url ? (
-                    <img src={f.photo_url} alt="" className="facilitator-card__photo" loading="lazy" />
-                  ) : (
-                    <div className="facilitator-card__photo facilitator-card__monogram" aria-hidden="true">
-                      {f.display_name.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="facilitator-card__body">
-                    <h3 style={{ margin: '0 0 0.25rem' }}>{f.display_name}</h3>
-                    {f.headline && (
-                      <p className="small muted" style={{ margin: 0 }}>{f.headline}</p>
-                    )}
-                    {f.hasFreeCall && (
-                      <p style={{ margin: '0.6rem 0 0' }}>
-                        <span className="pill pill-ok">Free intro call</span>
-                      </p>
+                <article key={f.id} className="cv-person">
+                  <div className="cv-person__photo">
+                    {f.photo_url ? (
+                      <img src={f.photo_url} alt="" loading="lazy" />
+                    ) : (
+                      <div className="cv-person__monogram" aria-hidden="true">
+                        {f.display_name.slice(0, 1).toUpperCase()}
+                      </div>
                     )}
                   </div>
-                </Link>
+                  <div className="cv-person__body">
+                    <h3 className="cv-person__name">{f.display_name}</h3>
+                    {f.headline && <p className="cv-person__role">{f.headline}</p>}
+                    {f.hasFreeCall && (
+                      <ul className="cv-chips">
+                        <li className="cv-chip">Free intro call</li>
+                      </ul>
+                    )}
+                    <Link className="cv-person__link" to={`/facilitators/${f.slug}`}>
+                      View profile &rarr;
+                    </Link>
+                  </div>
+                </article>
               ))}
             </div>
-            <p style={{ marginTop: '1.5rem' }}>
+            <p className="cv-center" style={{ marginTop: '2.5rem' }}>
               <Link className="btn btn-ghost" to="/facilitators">See all facilitators</Link>
             </p>
           </>

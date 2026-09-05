@@ -32,7 +32,7 @@ export default function ProductDetail() {
 
   if (error) {
     return (
-      <section className="section">
+      <section className="cv-band cv-band--white">
         <div className="container">
           <div className="alert alert-error">{error}</div>
           <Link className="btn btn-ghost" to="/courses">
@@ -45,7 +45,7 @@ export default function ProductDetail() {
 
   if (!product) {
     return (
-      <section className="section">
+      <section className="cv-band cv-band--white">
         <SkeletonBoundary label="Loading course" className="container split split-narrow" style={{ alignItems: 'start' }}>
           <div style={{ display: 'grid', gap: '1rem' }}>
             <Skeleton height="2.2em" width="80%" />
@@ -70,7 +70,7 @@ export default function ProductDetail() {
   const owned = ownedIds.length > 0;
 
   return (
-    <section className="section" ref={root}>
+    <section className="cv-band cv-band--white" ref={root}>
       <div className="container split split-narrow" style={{ alignItems: 'start' }}>
         <div>
           {isBundle && <span className="badge">Bundle · {product.moodle_course_ids.length} courses</span>}

@@ -21,10 +21,8 @@ function ServiceCard({ img, title, subtitle, desc, cta, to, externalCta, externa
     <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
       <img src={img} alt="" style={{ width: '100%', aspectRatio: '4/3', objectFit: 'cover' }} />
       <div style={{ padding: '1.4rem' }}>
-        <h3>{title}</h3>
-        <p className="small" style={{ fontWeight: 600, color: 'var(--forest)' }}>
-          {subtitle}
-        </p>
+        <h3 className="cv-person__name">{title}</h3>
+        <p className="cv-person__role">{subtitle}</p>
         <p className="desc">{desc}</p>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <Link className="btn btn-primary" to={to}>
@@ -45,29 +43,26 @@ function ServiceCard({ img, title, subtitle, desc, cta, to, externalCta, externa
 export default function Services() {
   return (
     <>
-      <section className="hero">
+      <section className="cv-hero">
         <div className="container">
-          <p className="badge" style={{ background: 'var(--ochre)' }}>
-            Our Services
-          </p>
-          <h1>Healing That Meets You Where You Are</h1>
-          <p className="lede">
-            At Hilom Collective, we believe wellness should be accessible, culturally rooted, and
-            woven into everyday life. Our services are designed to create meaningful impact at
-            every stage of the journey, from individual reflection to community healing.
-          </p>
+          <div className="cv-hero__inner">
+            <p className="cv-eyebrow">Our services</p>
+            <h1>Healing that meets you where you are</h1>
+            <p className="cv-hero__sub">
+              Wellness should be accessible, culturally rooted, and woven into everyday life — from
+              individual reflection to community healing.
+            </p>
+          </div>
         </div>
       </section>
 
-      <div className="container">
-        <img
-          src={heroImg}
-          alt=""
-          style={{ width: '100%', borderRadius: 'var(--radius)', margin: '0 0 2rem', display: 'block' }}
-        />
+      <div className="cv-breakout">
+        <div className="container">
+          <img src={heroImg} alt="" />
+        </div>
       </div>
 
-      <section className="section" style={{ paddingTop: 0 }}>
+      <section className="cv-band cv-band--white">
         <div className="container grid">
           <ServiceCard
             img={learningImg}
@@ -106,17 +101,21 @@ export default function Services() {
         </div>
       </section>
 
-      <section className="section" style={{ textAlign: 'center', background: 'var(--cream)' }}>
-        <div className="container">
-          <p className="badge">Join The Movement</p>
-          <h2>There's a place for you here.</h2>
-          <p className="lede" style={{ margin: '0 auto 1.5rem' }}>
-            Whether you're seeking support, want to bring Hilom to your community, or believe in
-            this work, we'd love to hear from you.
+      <section className="cv-band cv-band--forest">
+        <div className="container cv-center">
+          <div className="cv-head cv-head--center">
+            <p className="cv-eyebrow">Join the movement</p>
+            <h2>There's a place for you here.</h2>
+            <p>
+              Whether you're seeking support, want to bring Hilom to your community, or believe in
+              this work, we'd love to hear from you.
+            </p>
+          </div>
+          <p style={{ marginTop: '2rem' }}>
+            <Link className="btn btn-accent" to="/community">
+              Join our community
+            </Link>
           </p>
-          <Link className="btn btn-accent" to="/community">
-            Join Our Community
-          </Link>
         </div>
       </section>
     </>

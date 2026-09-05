@@ -2579,3 +2579,499 @@ div[class*="_PuckCanvas-root_"],
     font-size: 2.5rem;
   }
 }
+
+/* ===========================================================================
+   Marketing system — "Curve" layout language on Hilom's palette
+   ===========================================================================
+   Structural grammar borrowed from the Curve reference (see
+   docs/curve-design-reference.md): full-bleed colour bands that alternate
+   dark/light with no rounding, soft-cornered cards and media inside them, one
+   accent reserved for action, and a single CTA phrase repeated at every scroll
+   depth. Colour and type are Hilom's own — Forest Green, Leaf, Warm Ochre,
+   Warm Cream; Libre Baskerville over Montserrat.
+
+   Role mapping from the reference:
+     Curve forest  -> --forest / --forest-deep   (bands, footer, headings)
+     Curve cream   -> --cream                    (text + buttons on forest)
+     Curve sand    -> --sand                     (soft panels on white)
+     Curve lime    -> --ochre                    (the action colour, rationed)
+     Curve sage    -> --leaf                     (portrait grounds, illustration)
+
+   Everything here is namespaced `cv-` so it composes with the existing
+   `.card` / `.btn` / `.panel` primitives instead of fighting them.
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* One step darker than --forest, for the deep bands the reference uses at
+     full bleed. --forest alone is light enough that a full-viewport block of
+     it reads muddy against the cream page. */
+  --forest-deep: #1f4229;
+  /* The warm off-white that carries soft panels on white. Cream at full card
+     size is too saturated to sit behind body copy. */
+  --sand: #faf4e6;
+  /* Cream is a background token; on forest it needs to be lighter still to
+     hold small type at 4.5:1. */
+  --on-forest: #f7efdb;
+  --on-forest-dim: #cfdcc6;
+}
+
+/* --- Bands ---------------------------------------------------------------
+   Full-bleed, never rounded. Radii belong to cards, not sections. */
+.cv-band { padding: clamp(3.5rem, 8vw, 7rem) 0; }
+.cv-band--forest { background: var(--forest-deep); color: var(--on-forest); }
+.cv-band--cream { background: var(--cream); }
+.cv-band--sand { background: var(--sand); }
+.cv-band--white { background: var(--surface); }
+.cv-band--tight { padding: clamp(2.5rem, 5vw, 4rem) 0; }
+.cv-band--forest h1,
+.cv-band--forest h2,
+.cv-band--forest h3 { color: var(--on-forest); }
+/* Buttons excluded: this rule is more specific than .btn-accent's own colour,
+   so without the :not() an ochre button on a forest band lost its dark label
+   and turned cream-on-ochre. */
+.cv-band--forest a:not(.btn) { color: var(--on-forest); }
+.cv-band--forest .muted,
+.cv-band--forest .small { color: var(--on-forest-dim); }
+
+/* Section heads. Centred when the band is a full-width statement, left when
+   it introduces a grid the eye then scans. */
+.cv-head { max-width: 46rem; }
+.cv-head--center { margin-inline: auto; text-align: center; }
+.cv-head h2 { font-size: clamp(1.75rem, 3.6vw, 2.6rem); margin-bottom: 0.6rem; }
+.cv-head p { color: var(--muted); font-size: 1.05rem; margin: 0; }
+.cv-band--forest .cv-head p { color: var(--on-forest-dim); }
+
+/* Small-caps eyebrow with a dot — the rail label the reference uses to name
+   the section without competing with its heading. */
+.cv-eyebrow {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  font-size: 0.74rem; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 0.75rem;
+}
+.cv-eyebrow::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ochre); flex: none;
+}
+.cv-band--forest .cv-eyebrow { color: var(--on-forest-dim); }
+
+/* --- Hero ----------------------------------------------------------------
+   Deep forest, faint dot texture, centred display type, then a photo that
+   breaks out of the band and overlaps the section below it. */
+.cv-hero {
+  position: relative;
+  background: var(--forest-deep);
+  background-image: radial-gradient(rgba(247, 239, 219, 0.09) 1.5px, transparent 1.5px);
+  background-size: 26px 26px;
+  padding: clamp(3.5rem, 8vw, 6.5rem) 0;
+  color: var(--on-forest);
+}
+.cv-hero__inner { text-align: center; max-width: 54rem; margin-inline: auto; }
+.cv-hero h1 {
+  color: var(--on-forest);
+  font-size: clamp(2.3rem, 6vw, 4.1rem);
+  line-height: 1.08;
+  margin: 0 0 1rem;
+}
+.cv-hero__sub {
+  color: var(--on-forest-dim); font-size: clamp(1rem, 1.5vw, 1.18rem);
+  max-width: 38rem; margin: 0 auto 1.75rem;
+}
+/* The hero image, pulled up so its top half sits on the forest band above it.
+   The overlap is negotiated in CSS rather than in the renderer: a hero only
+   pays for the extra bottom padding when a breakout actually follows it, and a
+   breakout only pulls up when a hero actually precedes it. So either block
+   used alone still lays out sensibly, and the CMS can order them freely. */
+.cv-hero:has(+ .cv-breakout) { padding-bottom: clamp(6rem, 11vw, 10rem); }
+.cv-hero + .cv-breakout { margin-top: clamp(-9rem, -9vw, -4.5rem); }
+.cv-breakout { position: relative; z-index: 1; }
+.cv-breakout > .container { position: relative; }
+.cv-breakout img {
+  width: 100%; display: block; border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(31, 66, 41, 0.18);
+}
+
+/* A CTA closing a split's copy column needs air above it; the rich-text body
+   ends on a paragraph whose bottom margin alone is too tight. */
+.cv-split-cta { margin-top: 1.25rem; }
+
+/* The floating white card inset over the hero photo: one full-width action
+   plus a line of reassurance. On a phone it drops below the photo rather than
+   covering the subject. */
+.cv-inset {
+  position: absolute; left: 50%; bottom: clamp(1rem, 3vw, 2.5rem);
+  transform: translateX(-50%);
+  width: min(30rem, 86%);
+  background: var(--surface); border-radius: 14px;
+  padding: 1rem; box-shadow: 0 18px 44px rgba(31, 66, 41, 0.22);
+}
+.cv-inset__note {
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+  margin: 0.75rem 0 0.15rem; font-size: 0.86rem; font-style: italic;
+  color: var(--muted); text-align: center;
+}
+.cv-inset__note::before {
+  content: ''; width: 16px; height: 16px; border-radius: 50%; flex: none;
+  background: var(--ochre);
+}
+
+@media (max-width: 720px) {
+  .cv-inset {
+    position: static; transform: none; width: auto; margin: 0.9rem 0 0;
+    box-shadow: var(--shadow);
+  }
+  .cv-hero + .cv-breakout { margin-top: -2.5rem; }
+  .cv-breakout img { border-radius: 14px; }
+}
+
+/* --- Statement + stats ---------------------------------------------------
+   A narrow label rail beside a large paragraph, then a rule-separated stat
+   strip. The rail collapses above the copy on small screens. */
+.cv-statement {
+  display: grid; gap: 1.5rem 3rem;
+  grid-template-columns: minmax(0, 10rem) minmax(0, 1fr);
+  align-items: start;
+}
+.cv-statement__body {
+  font-family: var(--serif); color: var(--forest);
+  font-size: clamp(1.25rem, 2.4vw, 1.85rem); line-height: 1.45; margin: 0;
+}
+.cv-band--forest .cv-statement__body { color: var(--on-forest); }
+.cv-stats {
+  display: grid; gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  margin-top: clamp(2rem, 4vw, 3.25rem);
+}
+.cv-stat { padding: 0 1.5rem; border-left: 1px solid var(--line); }
+.cv-stat:first-child { padding-left: 0; border-left: 0; }
+.cv-stat__value {
+  font-family: var(--serif); font-weight: 700; color: var(--forest);
+  font-size: clamp(1.9rem, 3.4vw, 2.6rem); line-height: 1.1; margin: 0 0 0.3rem;
+}
+.cv-stat__label { margin: 0; font-size: 0.9rem; color: var(--muted); }
+.cv-band--forest .cv-stat { border-left-color: rgba(247, 239, 219, 0.22); }
+.cv-band--forest .cv-stat__value { color: var(--ochre); }
+.cv-band--forest .cv-stat__label { color: var(--on-forest-dim); }
+
+/* --- Feature split -------------------------------------------------------
+   Media one side, copy the other, with a tick list and an optional
+   disclosure row underneath. */
+.cv-feature {
+  display: grid; gap: clamp(1.75rem, 4vw, 4rem);
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  align-items: center;
+}
+.cv-feature__media {
+  border-radius: 14px; overflow: hidden; background: var(--sand); line-height: 0;
+}
+.cv-feature__media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Copy first in source, media first on desktop — stacked, the reading order
+   still puts the copy before the photo it illustrates. */
+.cv-feature--media-left .cv-feature__media { order: -1; }
+
+.cv-checks { list-style: none; margin: 1.5rem 0 0; padding: 0; }
+.cv-checks li {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.75rem;
+  align-items: start; margin-bottom: 0.85rem; font-size: 1rem;
+}
+.cv-checks li::before {
+  content: '\2713';
+  width: 1.4rem; height: 1.4rem; border-radius: 50%; flex: none;
+  display: grid; place-items: center; margin-top: 0.15rem;
+  background: var(--forest); color: var(--cream);
+  font-size: 0.72rem; font-weight: 700;
+}
+.cv-band--forest .cv-checks li::before { background: var(--ochre); color: var(--forest-deep); }
+
+/* Disclosure row — a bordered strip that opens in place. */
+.cv-disclose {
+  margin-top: 1.75rem; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface);
+}
+.cv-disclose > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.95rem 1.1rem; cursor: pointer; font-weight: 600; color: var(--forest);
+  list-style: none;
+}
+.cv-disclose > summary::-webkit-details-marker { display: none; }
+.cv-disclose > summary::after {
+  content: '\2304'; font-size: 1.1rem; line-height: 1; color: var(--muted);
+  transition: transform 0.18s ease;
+}
+.cv-disclose[open] > summary::after { transform: rotate(180deg); }
+.cv-disclose__body { padding: 0 1.1rem 1.1rem; margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+/* --- Quote panels --------------------------------------------------------
+   Photo one half, sand panel the other, sharing a single rounded silhouette
+   and alternating sides down the page. */
+.cv-quote {
+  display: grid; gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  border-radius: 14px; overflow: hidden;
+  margin-bottom: 1.5rem; background: var(--sand);
+}
+.cv-quote__media { position: relative; line-height: 0; min-height: 15rem; background: var(--leaf); }
+.cv-quote__media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cv-quote--reverse .cv-quote__media { order: -1; }
+.cv-quote__body { padding: clamp(1.5rem, 3vw, 2.75rem); align-self: center; }
+.cv-quote__name {
+  margin: 0 0 1rem; font-size: 0.9rem; font-weight: 600; color: var(--muted);
+}
+.cv-quote__text {
+  margin: 0; font-family: var(--serif); color: var(--forest);
+  font-size: clamp(1.05rem, 1.9vw, 1.35rem); line-height: 1.5;
+}
+/* The circular play affordance the reference centres on every clip. */
+.cv-quote__play {
+  position: absolute; inset: 0; margin: auto;
+  width: 3.5rem; height: 3.5rem; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  background: rgba(31, 66, 41, 0.35); color: #fff;
+  display: grid; place-items: center; cursor: pointer;
+  font-size: 1rem; padding-left: 0.2rem;
+}
+.cv-quote__play:hover { background: rgba(31, 66, 41, 0.55); }
+
+/* --- Directory: filter rail + card grid ----------------------------------- */
+.cv-directory {
+  display: grid; gap: clamp(1.5rem, 4vw, 3rem);
+  grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
+  align-items: start;
+}
+.cv-filters { font-size: 0.95rem; }
+.cv-filters h3 { font-size: 0.95rem; margin: 1.5rem 0 0.6rem; color: var(--forest); }
+.cv-filters h3:first-child { margin-top: 0; }
+.cv-filters label {
+  display: flex; align-items: center; gap: 0.55rem;
+  font-weight: 400; font-size: 0.92rem; margin-bottom: 0.45rem; cursor: pointer;
+}
+.cv-filters input[type='checkbox'] { width: auto; margin: 0; }
+.cv-filters__reset {
+  background: none; border: 0; padding: 0; margin-top: 1rem; cursor: pointer;
+  font: inherit; font-size: 0.85rem; color: var(--forest); text-decoration: underline;
+}
+
+.cv-people {
+  display: grid; gap: 1.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+.cv-person {
+  display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden;
+}
+.cv-person__photo { aspect-ratio: 1 / 1; background: var(--leaf); line-height: 0; }
+.cv-person__photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Initials stand in when there is no portrait, on the same leaf ground so the
+   grid still reads as one system. */
+.cv-person__monogram {
+  width: 100%; height: 100%; display: grid; place-items: center;
+  font-family: var(--serif); font-size: 2.4rem; color: #fff;
+}
+.cv-person__body { padding: 1.1rem 1.2rem 1.3rem; display: flex; flex-direction: column; flex: 1; }
+.cv-person__name {
+  margin: 0 0 0.7rem; padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 1.15rem; color: var(--forest);
+}
+.cv-person__role { margin: 0 0 0.9rem; font-style: italic; color: var(--muted); font-size: 0.92rem; }
+.cv-person__link {
+  margin-top: auto; padding-top: 0.9rem; font-weight: 700; font-size: 0.95rem;
+  color: var(--forest); text-decoration: none;
+}
+.cv-person__link:hover { text-decoration: underline; }
+
+/* Taxonomy chips. Ochre-tinted, never solid ochre: solid is reserved for the
+   thing you click. */
+.cv-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.4rem; padding: 0; list-style: none; }
+.cv-chip {
+  display: inline-block; padding: 0.3rem 0.75rem; border-radius: 999px;
+  background: #fdf1dc; color: #7a4e08; font-size: 0.8rem; font-weight: 600;
+}
+
+/* --- Centred closers ----------------------------------------------------- */
+.cv-center { text-align: center; }
+.cv-more {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  background: none; border: 0; cursor: pointer; font: inherit;
+  font-weight: 600; color: var(--forest); padding: 0.6rem 0.2rem;
+}
+
+/* On forest, the cream button is the primary action; the ghost gets a cream
+   outline rather than the default line colour, which disappears on dark. */
+.cv-band--forest .btn-primary,
+.cv-hero .btn-primary { background: var(--cream); color: var(--forest-deep); }
+.cv-band--forest .btn-primary:hover,
+.cv-hero .btn-primary:hover { background: #fff; }
+.cv-band--forest .btn-ghost,
+.cv-hero .btn-ghost { color: var(--on-forest); border-color: rgba(247, 239, 219, 0.5); }
+.cv-band--forest .btn-ghost:hover,
+.cv-hero .btn-ghost:hover { border-color: var(--cream); color: #fff; }
+
+@media (max-width: 860px) {
+  .cv-statement, .cv-directory { grid-template-columns: minmax(0, 1fr); }
+  .cv-stat { padding: 0 0 1rem; border-left: 0; }
+  .cv-stat + .cv-stat { padding-top: 1rem; border-top: 1px solid var(--line); }
+  .cv-band--forest .cv-stat + .cv-stat { border-top-color: rgba(247, 239, 219, 0.22); }
+  /* Stacked, alternating sides is just noise — put every photo on top. */
+  .cv-quote--reverse .cv-quote__media,
+  .cv-feature--media-left .cv-feature__media { order: 0; }
+}
+
+
+
+/* --- Cards inside a band ---------------------------------------------------
+   Flatter than the standalone `.card`: a band already separates this content
+   from what surrounds it, so the drop shadow was a second, redundant edge and
+   made a grid of cards read as floating debris rather than one row. */
+.cv-band .card,
+.cv-band .panel { box-shadow: none; }
+.cv-band--sand .card,
+.cv-band--cream .card,
+.cv-band--sand .panel,
+.cv-band--cream .panel { border-color: rgba(47, 94, 62, 0.14); }
+.cv-band--forest .card,
+.cv-band--forest .panel { border-color: rgba(247, 239, 219, 0.18); }
+
+/* The catalog's "Bundle" flag, restyled as a chip so it matches the taxonomy
+   pills used everywhere else in the system. Scoped to bands: the same class
+   still reads as a solid leaf badge inside the admin. */
+.cv-band .badge {
+  background: #fdf1dc; color: #7a4e08;
+  text-transform: none; letter-spacing: 0; font-size: 0.8rem;
+  padding: 0.3rem 0.75rem;
+}
+
+/* A feature's media should be the larger half — a square-ish photo beside a
+   short paragraph looked like a thumbnail that had lost its caption. */
+.cv-feature { grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr)); }
+.cv-feature__media img { min-height: 18rem; }
+@media (max-width: 720px) {
+  .cv-feature__media img { min-height: 0; }
+}
+
+/* The white card that sits on a forest band — the reference's calculator slot.
+   Padded harder than a default .panel because it is the only light surface in
+   the band and needs to hold its own against it. */
+.cv-start {
+  margin-top: 1.75rem;
+  padding: clamp(1.4rem, 3vw, 2rem);
+  border: 0;
+  border-radius: 14px;
+}
+.cv-start h3 { margin-top: 0; }
+.cv-start label { color: var(--ink); }
+
+/* The banded strip under it. Three equal segments that fill as a choice is
+   made — the reference's meter shape, without its measurement. */
+.cv-meter {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px;
+  border-radius: 999px; overflow: hidden; height: 0.6rem;
+}
+.cv-meter__seg { background: var(--line); transition: background 0.25s ease; }
+.cv-meter__seg--on { background: var(--ochre); }
+@media (prefers-reduced-motion: reduce) {
+  .cv-meter__seg { transition: none; }
+}
+
+/* ===========================================================================
+   Site chrome — dark header, four-zone footer
+   ===========================================================================
+   Overrides the plain white bar and single-line footer defined earlier in this
+   file. Kept here, after them, so the marketing chrome and the marketing
+   sections stay one readable block rather than two edits in two places. */
+
+.site-header {
+  background: var(--forest-deep);
+  border-bottom: 0;
+  color: var(--on-forest);
+}
+.site-header .inner { padding: 1rem 0; gap: 1.5rem; }
+/* No wrapping on desktop: the actions dropping to a second row turned the bar
+   into two stacked strips. The link list shrinks instead, and below 780px the
+   whole nav collapses behind the toggle anyway. */
+.nav { gap: 1.15rem; flex-wrap: nowrap; }
+.nav a { color: var(--on-forest); font-size: 0.9rem; white-space: nowrap; }
+.nav a:hover { color: #fff; }
+.nav .who { color: var(--on-forest-dim); }
+.nav-toggle { border-color: rgba(247, 239, 219, 0.45); color: var(--on-forest); }
+/* The logo is dark-on-light artwork; on the forest bar it needs to read as
+   cream. Inverting the luminance keeps the mark's shape without shipping a
+   second asset. */
+.site-header .brand-logo { filter: brightness(0) invert(1); opacity: 0.95; }
+
+/* The nav's two right-hand actions: a cream-outlined ghost and a solid cream
+   pill, the pairing the reference uses. */
+.nav-actions { display: flex; align-items: center; gap: 0.6rem; margin-left: 0.4rem; }
+.nav-actions .btn { padding: 0.6rem 1.15rem; border-radius: 8px; font-size: 0.9rem; white-space: nowrap; }
+.nav-actions .btn-primary { background: var(--cream); color: var(--forest-deep); }
+.nav-actions .btn-primary:hover { background: #fff; }
+.nav-actions .btn-ghost {
+  background: transparent; color: var(--on-forest);
+  border: 1px solid rgba(247, 239, 219, 0.55);
+}
+.nav-actions .btn-ghost:hover { border-color: var(--cream); color: #fff; }
+.site-header .user-menu-trigger {
+  border-color: rgba(247, 239, 219, 0.45); color: var(--on-forest);
+}
+
+@media (max-width: 780px) {
+  .nav { flex-wrap: wrap; }
+  .nav a { border-bottom-color: rgba(247, 239, 219, 0.2); white-space: normal; }
+  .nav-actions { flex-direction: column; align-items: stretch; width: 100%; margin: 0.6rem 0 0; }
+  .nav-actions .btn { width: 100%; }
+}
+
+.site-footer {
+  background: var(--forest-deep); border-top: 0; margin-top: 0;
+  color: var(--on-forest-dim); padding: clamp(3rem, 6vw, 5rem) 0 2rem;
+  font-size: 0.92rem;
+}
+.site-footer .brand-logo { filter: brightness(0) invert(1); opacity: 0.95; }
+.cv-foot {
+  display: grid; gap: 2.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+}
+.cv-foot__cta { max-width: 20rem; }
+.cv-foot__headline {
+  font-family: var(--serif); color: var(--on-forest); font-weight: 700;
+  font-size: clamp(1.4rem, 2.4vw, 1.9rem); line-height: 1.2; margin: 1.2rem 0 1.4rem;
+}
+.cv-foot h3 {
+  font-family: var(--sans); font-size: 0.76rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--on-forest-dim); margin: 0 0 1rem;
+}
+.cv-foot__list { list-style: none; margin: 0; padding: 0; }
+.cv-foot__list li { margin-bottom: 0.65rem; }
+/* Chevron-suffixed links, as in the reference's two link columns. */
+.cv-foot__list a {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  color: var(--on-forest-dim); text-decoration: none;
+}
+.cv-foot__list a::after { content: '\203A'; opacity: 0.55; }
+.cv-foot__list a:hover { color: #fff; }
+.cv-foot__contact { list-style: none; margin: 0; padding: 0; }
+.cv-foot__contact li {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.6rem;
+  align-items: start; margin-bottom: 0.75rem;
+}
+.cv-foot__contact li::before {
+  content: ''; width: 1.1rem; height: 1.1rem; border-radius: 5px;
+  background: var(--ochre); opacity: 0.85; margin-top: 0.15rem;
+}
+.cv-foot__contact a { color: var(--on-forest-dim); }
+.cv-social { display: flex; gap: 0.6rem; margin-top: 1.25rem; }
+.cv-social a {
+  width: 2.2rem; height: 2.2rem; border-radius: 50%;
+  border: 1px solid rgba(247, 239, 219, 0.5);
+  display: grid; place-items: center; color: var(--on-forest);
+  text-decoration: none; font-size: 0.8rem; font-weight: 700;
+}
+.cv-social a:hover { background: rgba(247, 239, 219, 0.12); }
+.cv-foot__legal {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 2rem;
+  margin-top: clamp(2rem, 4vw, 3.5rem); padding-top: 1.5rem;
+  border-top: 1px solid rgba(247, 239, 219, 0.22);
+  font-size: 0.85rem; color: var(--on-forest-dim);
+}
+.cv-foot__legal p { margin: 0; }

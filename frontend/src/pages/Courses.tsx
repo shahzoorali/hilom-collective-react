@@ -24,16 +24,18 @@ export default function Courses() {
   }, []);
 
   return (
-    <section className="section">
+    <section className="cv-band cv-band--white">
       <div className="container">
-        <h1>Courses</h1>
-        <p className="muted">Buy once, keep access for good — no subscription, no expiry.</p>
+        <div className="cv-head cv-head--center" style={{ marginBottom: '2.5rem' }}>
+          <h1>Courses</h1>
+          <p>Buy once, keep access for good — no subscription, no expiry.</p>
+        </div>
 
         {error && <div className="alert alert-error">Couldn’t load courses: {error}</div>}
         {!products && !error && <SkeletonCardGrid count={6} />}
 
         {products && (
-          <div className="grid" style={{ marginTop: '1.5rem' }}>
+          <div className="grid">
             {products.map((p) => {
               const ownedIds = p.moodle_course_ids.filter((id) => ownedCourseIds.has(id));
               const owned = ownedIds.length > 0;

@@ -35,7 +35,7 @@ export default function PrivacyPolicy() {
         </div>
       </section>
 
-      <section className="section">
+      <section className="cv-band cv-band--white">
         <div className="container">
           <div style={prose}>
             <p className="muted">

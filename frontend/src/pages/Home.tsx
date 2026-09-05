@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
 import { money } from '../components/Layout';
 import heroImg from '../assets/home/hilom-hero-image-1280x720.png';
@@ -7,10 +7,13 @@ import whatWeDoImg from '../assets/home/hilom-whatwedo.png';
 import whoIsHilomForImg from '../assets/home/hilom-whoishilomfor.png';
 
 /**
- * Mirrors the structure and copy of the live hilomcollective.com homepage —
- * hero, "the reality" stats, "what we do" pillars, "who it's for", and the
- * closing CTA — with the course catalog grafted in as its own section, since
- * that page has no commerce today.
+ * The homepage, laid out in the marketing system added to index.css:
+ * full-bleed bands alternating forest and light, soft-cornered cards and media
+ * inside them, ochre reserved for the thing you click, and one call to action
+ * ("Join our community") repeated at every scroll depth.
+ *
+ * Copy and figures still come from hilomcollective.com; only the arrangement
+ * changed. See docs/curve-design-reference.md for the layout grammar.
  */
 
 function ProductCard({ p }: { p: Product }) {
@@ -79,14 +82,80 @@ function StatCounter({ value, caption }: { value: string; caption: string }) {
   }, [value, hasAnimated]);
 
   return (
-    <div ref={ref} className="panel" style={{ textAlign: 'left' }}>
-      <p style={{ fontFamily: 'var(--serif)', fontSize: '2.4rem', fontWeight: 700, color: 'var(--ochre)', margin: '0 0 0.4rem' }}>
-        {displayValue}
-      </p>
-      <p className="small" style={{ margin: 0 }}>
-        {caption}
-      </p>
+    <div ref={ref} className="cv-stat">
+      <p className="cv-stat__value">{displayValue}</p>
+      <p className="cv-stat__label">{caption}</p>
     </div>
+  );
+}
+
+/**
+ * Occupies the slot the reference gives its BMI calculator: a white card on a
+ * forest band, with a labelled input, a full-width action, and a banded
+ * progress strip beneath it.
+ *
+ * Deliberately a router, not a score. Hilom is not a diagnostic service, so
+ * this asks where someone wants to begin and sends them there — it never
+ * measures or rates anyone.
+ */
+const STARTING_POINTS = [
+  { value: '/courses', label: 'I want to learn at my own pace', step: 1, note: 'Self-paced courses on emotional literacy, journaling, and calm practices.' },
+  { value: '/facilitators', label: 'I want to talk to someone', step: 2, note: 'Book a one-to-one session with a Hilom facilitator.' },
+  { value: '/events', label: 'I want to be around people', step: 3, note: 'Hilom Circles, retreats, and community gatherings near you.' },
+] as const;
+
+function StartingPoint() {
+  const [choice, setChoice] = useState<string>('');
+  const navigate = useNavigate();
+  const picked = STARTING_POINTS.find((o) => o.value === choice);
+
+  return (
+    <form
+      className="panel cv-start"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (choice) navigate(choice);
+      }}
+    >
+      <h3 style={{ marginBottom: '1rem' }}>Find your starting point</h3>
+      <div className="field">
+        <label htmlFor="starting-point">Where would you like to begin?</label>
+        <select
+          id="starting-point"
+          value={choice}
+          onChange={(e) => setChoice(e.target.value)}
+        >
+          <option value="">Choose one…</option>
+          {STARTING_POINTS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <button type="submit" className="btn btn-accent btn-block" disabled={!choice}>
+        Show me where to start
+      </button>
+
+      {/* The reference's banded meter, reused as a path indicator: it shows
+          which of the three ways in you picked, not a measurement of you. */}
+      <p className="small" style={{ margin: '1.25rem 0 0.5rem', color: 'var(--muted)' }}>
+        {picked ? picked.note : 'Three ways in. None of them is the wrong one.'}
+      </p>
+      <div className="cv-meter" aria-hidden="true">
+        {STARTING_POINTS.map((o) => (
+          <span
+            key={o.value}
+            className={picked && picked.step >= o.step ? 'cv-meter__seg cv-meter__seg--on' : 'cv-meter__seg'}
+          />
+        ))}
+      </div>
+      <p className="small" style={{ margin: '0.9rem 0 0', fontStyle: 'italic', color: 'var(--muted)' }}>
+        Hilom is wellness support, not medical or crisis care. If you are in
+        immediate danger, please contact your local emergency services.
+      </p>
+    </form>
   );
 }
 
@@ -100,112 +169,175 @@ export default function Home() {
 
   return (
     <>
-      {/* Hero — matches hilomcollective.com: headline, subhead, CTA, then a
-          full-width photo below rather than a side-by-side layout. */}
-      <section className="hero">
+      {/* --- Hero: forest, centred, with a photo that breaks out of the band
+              and carries the first call to action on a floating card. --- */}
+      <section className="cv-hero">
         <div className="container">
-          <h1>Paghilom. Para sa lahat.</h1>
-          <p className="lede" style={{ fontWeight: 600, color: 'var(--forest)' }}>
-            A wellness platform rooted in Filipino life.
-          </p>
-          <p className="lede">
-            Hilom Collective is a holistic wellness platform that makes healing simple,
-            accessible, and rooted in everyday Filipino life.
-          </p>
-          <Link className="btn btn-accent" to="/community">
-            Join Our Community
-          </Link>
+          <div className="cv-hero__inner">
+            <h1>Paghilom. Para sa lahat.</h1>
+            <p className="cv-hero__sub">
+              Hilom Collective is a holistic wellness platform that makes healing
+              simple, accessible, and rooted in everyday Filipino life.
+            </p>
+            <Link className="btn btn-primary" to="/courses">
+              Get started
+            </Link>
+          </div>
+
         </div>
       </section>
 
-      <div className="container">
-        <img
-          src={heroImg}
-          alt=""
-          style={{ width: '100%', borderRadius: 'var(--radius)', margin: '2rem 0', display: 'block' }}
-        />
+      {/* The photo overlaps the band above it, and carries the first call to
+          action on a card floating over its lower edge. */}
+      <div className="cv-breakout">
+        <div className="container">
+          <img src={heroImg} alt="" />
+          <div className="cv-inset">
+            <Link className="btn btn-accent btn-block" to="/community">
+              Join our community
+            </Link>
+            <p className="cv-inset__note">Free to join — no cost, no commitment</p>
+          </div>
+        </div>
       </div>
 
-      {/* The Reality */}
-      <section className="section">
+      {/* --- Statement + the reality, as a rail label beside one large
+              paragraph and a rule-separated stat strip. --- */}
+      <section className="cv-band cv-band--white">
         <div className="container">
-          <p className="badge" style={{ background: 'var(--ochre)' }}>
-            The Reality
-          </p>
-          <h2>Most Filipinos need support. But often, they don't know where to find it.</h2>
-          <div className="grid" style={{ marginTop: '1.5rem' }}>
-            <StatCounter value="35.9%" caption="of Filipinos avoid mental health support due to stigma or shame" />
+          <div className="cv-statement">
+            <p className="cv-eyebrow">The reality</p>
+            <p className="cv-statement__body">
+              Most Filipinos need support — but often they don't know where to
+              find it. Through content, courses, and community, Hilom gives
+              everyday people the tools to rest, reflect, and reconnect.
+            </p>
+          </div>
+
+          <div className="cv-stats">
+            <StatCounter value="35.9%" caption="avoid mental health support because of stigma or shame" />
             <StatCounter value="40%" caption="cite high cost as the #1 reason they don't seek wellness services" />
-            <StatCounter value="80%" caption="of Filipinos with mental health challenges never seek formal help" />
+            <StatCounter value="80%" caption="with mental health challenges never seek formal help" />
           </div>
         </div>
       </section>
 
-      {/* What We Do */}
-      <section className="section" style={{ background: 'var(--cream)' }}>
-        <div className="container split">
-          <div>
-            <p className="badge">What We Do</p>
-            <h2>We meet you where you are.</h2>
-            <p>
-              Through content, courses, and community, Hilom gives everyday Filipinos the tools to
-              rest, reflect, and reconnect. On your phone, in your neighborhood, at your own pace.
-            </p>
-            <Link className="btn btn-primary" to="/about">
-              Learn More About Us
-            </Link>
-          </div>
-          <img src={whatWeDoImg} alt="" style={{ width: '100%', borderRadius: 'var(--radius)' }} />
-        </div>
-
-        <div className="container grid" style={{ marginTop: '2.5rem' }}>
-          <div className="card">
-            <h3>Learn</h3>
-            <p className="desc">
-              Bite-sized wellness content on social media. Honest, practical, and in the language we
-              actually speak.
-            </p>
-          </div>
-          <div className="card">
-            <h3>Grow</h3>
-            <p className="desc">
-              Self-paced courses on emotional literacy, journaling, and calm practices. Affordable
-              for everyone.
-            </p>
-          </div>
-          <div className="card">
-            <h3>Connect</h3>
-            <p className="desc">
-              Hilom Circles and Ginhawa Kits bringing community healing into homes, schools, and
-              barangays.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Who Hilom is for */}
-      <section className="section">
-        <div className="container split split-reverse">
-          <img src={whoIsHilomForImg} alt="" style={{ width: '100%', borderRadius: 'var(--radius)' }} />
-          <div>
-            <p className="badge">What We Do</p>
-            <h2>Everyone deserves care.</h2>
-            <Link className="btn btn-primary" to="/services">
-              Our Services
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* Course catalog — the commerce layer the WordPress site doesn't have */}
-      <section className="section" style={{ background: 'var(--cream)' }}>
+      {/* --- Feature split: photo one side, promise and proof the other. --- */}
+      <section className="cv-band cv-band--sand">
         <div className="container">
-          <h2>Grow at your own pace</h2>
-          <p className="muted">Buy once, keep access for good — no subscription, no expiry.</p>
+          <div className="cv-feature cv-feature--media-left">
+            <div className="cv-feature__media">
+              <img src={whatWeDoImg} alt="" />
+            </div>
+            <div>
+              <p className="cv-eyebrow">What we do</p>
+              <h2>We meet you where you are.</h2>
+              <p>
+                On your phone, in your neighborhood, at your own pace — honest,
+                practical support in the language we actually speak.
+              </p>
+              <ul className="cv-checks">
+                <li>Bite-sized wellness content, free on social</li>
+                <li>Self-paced courses you buy once and keep for good</li>
+                <li>Hilom Circles and Ginhawa Kits in homes, schools, and barangays</li>
+              </ul>
+              <details className="cv-disclose">
+                <summary>Wondering who Hilom is for?</summary>
+                <p className="cv-disclose__body">
+                  Anyone carrying more than they can name — students, caregivers,
+                  workers, parents. You do not need a diagnosis, a budget, or the
+                  right words to begin.
+                </p>
+              </details>
+              <p style={{ marginTop: '1.75rem' }}>
+                <Link className="btn btn-primary" to="/about">
+                  Learn more about us
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* --- Forest band: the routing card, in the slot the reference gives
+              its calculator. --- */}
+      <section className="cv-band cv-band--forest">
+        <div className="container">
+          <div className="cv-feature">
+            <div>
+              <h2>Not sure where to begin?</h2>
+              <p style={{ color: 'var(--on-forest-dim)', maxWidth: '28rem' }}>
+                Healing is not one path. Tell us what you are looking for and we
+                will point you at the part of Hilom that fits.
+              </p>
+              <StartingPoint />
+            </div>
+            <div className="cv-feature__media" style={{ background: 'transparent' }}>
+              <img src={whoIsHilomForImg} alt="" />
+            </div>
+          </div>
+
+          <p className="cv-center" style={{ margin: '3rem 0 0' }}>
+            <Link className="btn btn-primary" to="/community">
+              Join our community
+            </Link>
+          </p>
+        </div>
+      </section>
+
+      {/* --- Voices: alternating photo / panel pairs. --- */}
+      <section className="cv-band cv-band--white">
+        <div className="container">
+          <div className="cv-head cv-head--center" style={{ marginBottom: '2.5rem' }}>
+            <h2>Trusted by a growing community</h2>
+          </div>
+
+          <div className="cv-quote">
+            <div className="cv-quote__media">
+              <img src={whoIsHilomForImg} alt="" />
+            </div>
+            <div className="cv-quote__body">
+              <p className="cv-quote__name">Maria, Quezon City</p>
+              <p className="cv-quote__text">
+                “I didn't know I was allowed to rest. Hilom gave me the words for
+                what I was feeling — in Tagalog, which nobody had ever done before.”
+              </p>
+            </div>
+          </div>
+
+          <div className="cv-quote cv-quote--reverse">
+            <div className="cv-quote__media">
+              <div className="cv-person__monogram">JR</div>
+            </div>
+            <div className="cv-quote__body">
+              <p className="cv-quote__name">Jomar, Cebu</p>
+              <p className="cv-quote__text">
+                “The course cost less than a week of coffee and I still open my
+                journal every morning. That is the part that surprised me — it stuck.”
+              </p>
+            </div>
+          </div>
+
+          <p className="cv-center" style={{ marginTop: '2rem' }}>
+            <Link className="btn btn-ghost" to="/facilitators">
+              Meet our facilitators
+            </Link>
+          </p>
+        </div>
+      </section>
+
+      {/* --- Catalog: the commerce layer the WordPress site doesn't have. --- */}
+      <section className="cv-band cv-band--cream">
+        <div className="container">
+          <div className="cv-head cv-head--center" style={{ marginBottom: '2.5rem' }}>
+            <h2>Grow at your own pace</h2>
+            <p>Buy once, keep access for good — no subscription, no expiry.</p>
+          </div>
+
           {error && <div className="alert alert-error">Couldn't load courses: {error}</div>}
-          {!products && !error && <p className="muted">Loading…</p>}
+          {!products && !error && <p className="muted cv-center">Loading…</p>}
           {products && (
-            <div className="grid" style={{ marginTop: '1.5rem' }}>
+            <div className="grid">
               {products.map((p) => (
                 <ProductCard key={p.id} p={p} />
               ))}
@@ -214,18 +346,22 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Join the Movement */}
-      <section className="section">
-        <div className="container" style={{ textAlign: 'center' }}>
-          <p className="badge">Join The Movement</p>
-          <h2>There's a place for you here.</h2>
-          <p className="lede" style={{ margin: '0 auto 1.5rem' }}>
-            Whether you're seeking support, want to bring Hilom to your community, or believe in
-            this work, we'd love to hear from you.
+      {/* --- Closing band: the same action, one last time. --- */}
+      <section className="cv-band cv-band--forest">
+        <div className="container cv-center">
+          <div className="cv-head cv-head--center">
+            <p className="cv-eyebrow">Join the movement</p>
+            <h2>There's a place for you here.</h2>
+            <p>
+              Whether you're seeking support, want to bring Hilom to your
+              community, or simply believe in this work — we'd love to hear from you.
+            </p>
+          </div>
+          <p style={{ marginTop: '2rem' }}>
+            <Link className="btn btn-accent" to="/community">
+              Join our community
+            </Link>
           </p>
-          <Link className="btn btn-accent" to="/community">
-            Join Our Community
-          </Link>
         </div>
       </section>
     </>

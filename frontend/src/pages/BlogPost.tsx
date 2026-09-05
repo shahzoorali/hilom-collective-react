@@ -43,7 +43,7 @@ export default function BlogPost() {
 
   if (loading) {
     return (
-      <section className="section">
+      <section className="cv-band cv-band--white">
         <SkeletonBoundary label="Loading post" className="container" style={{ maxWidth: 760, display: 'grid', gap: '1.1rem' }}>
           <SkeletonMedia />
           <Skeleton height="1em" width="30%" />
@@ -55,8 +55,8 @@ export default function BlogPost() {
       </section>
     );
   }
-  if (error) return <section className="section"><div className="container"><div className="alert alert-error">{error}</div></div></section>;
-  if (!post) return <section className="section"><div className="container"><p className="muted">Post not found.</p></div></section>;
+  if (error) return <section className="cv-band cv-band--white"><div className="container"><div className="alert alert-error">{error}</div></div></section>;
+  if (!post) return <section className="cv-band cv-band--white"><div className="container"><p className="muted">Post not found.</p></div></section>;
 
   return (
     <>

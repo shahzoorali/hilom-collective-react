@@ -14,33 +14,39 @@ import CommunityForm from '../cms/CommunityForm';
 export default function Community() {
   return (
     <>
-      <section className="hero">
+      <section className="cv-hero">
         <div className="container">
-          <h1>Join Our Community</h1>
-          <p className="lede">
-            Be the first to hear about upcoming courses, workshops, wellness gatherings, and new
-            offerings from Hilom Collective.
-          </p>
+          <div className="cv-hero__inner">
+            <h1>Join our community</h1>
+            <p className="cv-hero__sub">
+              Be the first to hear about upcoming courses, workshops, wellness gatherings, and new
+              offerings from Hilom Collective.
+            </p>
+          </div>
         </div>
       </section>
 
-      <section className="section" style={{ paddingTop: 0 }}>
+      <section className="cv-band cv-band--white">
         <div className="container" style={{ maxWidth: 640 }}>
           <CommunityForm />
         </div>
       </section>
 
-      <section className="section" style={{ textAlign: 'center', background: 'var(--cream)' }}>
-        <div className="container">
-          <p className="badge">Join The Movement</p>
-          <h2>There's a place for you here.</h2>
-          <p className="lede" style={{ margin: '0 auto 1.5rem' }}>
-            Whether you're seeking support, want to bring Hilom to your community, or believe in
-            this work, we'd love to hear from you.
+      <section className="cv-band cv-band--cream">
+        <div className="container cv-center">
+          <div className="cv-head cv-head--center">
+            <p className="cv-eyebrow">Join the movement</p>
+            <h2>There's a place for you here.</h2>
+            <p>
+              Whether you're seeking support, want to bring Hilom to your community, or believe in
+              this work, we'd love to hear from you.
+            </p>
+          </div>
+          <p style={{ marginTop: '2rem' }}>
+            <Link className="btn btn-accent" to="/courses">
+              Browse courses
+            </Link>
           </p>
-          <Link className="btn btn-primary" to="/courses">
-            Browse Courses
-          </Link>
         </div>
       </section>
     </>
