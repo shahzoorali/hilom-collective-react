@@ -11,7 +11,7 @@
  * The admin preview renders through this same component, so "what you see" in
  * the editor cannot drift from what ships.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
 import { getEvents, type CmsEvent } from '../lib/cms';
@@ -30,6 +30,25 @@ const list = (v: unknown): Props[] => (Array.isArray(v) ? (v as Props[]) : []);
 const media = (v: unknown): MediaRef | undefined =>
   v && typeof v === 'object' && 'url' in (v as object) ? (v as MediaRef) : undefined;
 const cta = (v: unknown): Cta | undefined => (v && typeof v === 'object' ? (v as Cta) : undefined);
+
+/**
+ * Turns a `multiline` text field's real newlines into `<br/>`s.
+ *
+ * A plain text node preserves "\n" in the DOM, but default CSS still renders
+ * it as a space — the newline only becomes a visible break with an explicit
+ * `<br/>` (or `white-space: pre-line`, which risks changing how the rest of
+ * the block wraps). Used on the hero headline so an editor can type "Line
+ * one⏎Line two" in the admin's multiline field and get an actual line break.
+ */
+function withLineBreaks(text: string): ReactNode {
+  const lines = text.split('\n');
+  return lines.map((line, i) => (
+    <Fragment key={i}>
+      {line}
+      {i < lines.length - 1 && <br />}
+    </Fragment>
+  ));
+}
 
 /**
  * Every block is a full-bleed band. The `background` prop names which one;
@@ -89,7 +108,7 @@ function Hero({ props }: { props: Props }) {
       <div className="container">
         <div className="cv-hero__inner">
           {props.badge ? <p className="cv-eyebrow">{str(props.badge)}</p> : null}
-          <h1>{str(props.heading)}</h1>
+          <h1>{withLineBreaks(str(props.heading))}</h1>
           {lede.map((line, i) => (
             <p className="cv-hero__sub" key={i}>
               {String(line)}

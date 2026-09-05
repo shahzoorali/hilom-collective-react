@@ -73,7 +73,11 @@ export const BLOCK_CATALOG: Record<string, BlockSpec> = {
     fields: {
       badge: { kind: 'text', label: 'Badge' },
       badgeColor: { kind: 'select', label: 'Badge colour', options: ['forest', 'ochre'], default: 'forest' },
-      heading: { kind: 'text', label: 'Headline', required: true },
+      // multiline so an editor can press Enter for a line break — a hero
+      // headline is often two short lines ("Paghilom.\nPara sa lahat.")
+      // rather than one long one, and a single-line input gives no way to
+      // place the break. BlockRenderer turns each line into its own <br/>.
+      heading: { kind: 'text', label: 'Headline', required: true, multiline: true },
       lede: { kind: 'textList', label: 'Lead paragraphs', itemLabel: 'Paragraph' },
       emphasizeFirstLede: { kind: 'boolean', label: 'Emphasise the first paragraph' },
       cta: ctaField,

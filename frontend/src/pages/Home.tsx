@@ -174,7 +174,11 @@ export default function Home() {
       <section className="cv-hero">
         <div className="container">
           <div className="cv-hero__inner">
-            <h1>Paghilom. Para sa lahat.</h1>
+            <h1>
+              Paghilom.
+              <br />
+              Para sa lahat.
+            </h1>
             <p className="cv-hero__sub">
               Hilom Collective is a holistic wellness platform that makes healing
               simple, accessible, and rooted in everyday Filipino life.
