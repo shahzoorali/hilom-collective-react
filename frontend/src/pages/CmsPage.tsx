@@ -7,6 +7,7 @@ import { Link, useParams } from 'react-router-dom';
 import { getPage, type CmsPage as Page } from '../lib/cms';
 import BlockRenderer from '../cms/BlockRenderer';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
+import { useDocumentHead } from '../lib/useDocumentHead';
 
 export default function CmsPage() {
   const { slug = '' } = useParams();
@@ -28,9 +29,11 @@ export default function CmsPage() {
     };
   }, [slug]);
 
-  useEffect(() => {
-    if (page) document.title = page.seo_title || `${page.title} · Hilom Collective`;
-  }, [page]);
+  useDocumentHead({
+    title: page ? page.seo_title || `${page.title} · Hilom Collective` : 'Hilom Collective',
+    description: page?.seo_description,
+    path: page ? `/${slug}` : undefined,
+  });
 
   if (state === 'loading') {
     return (

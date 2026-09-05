@@ -45,6 +45,25 @@ interface CmsPageSummary {
   title: string;
 }
 
+interface ProductSummary {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  price_centavos: number;
+  currency: string;
+  thumbnail_url: string | null;
+  image_url: string | null;
+}
+
+interface FacilitatorSummary {
+  slug: string;
+  display_name: string;
+  headline: string | null;
+  bio: string | null;
+  photo_url: string | null;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -133,12 +152,14 @@ async function main() {
   const indexPath = path.join(DIST_DIR, 'index.html');
   const template = await fs.readFile(indexPath, 'utf8');
 
-  // Fetch published blog posts, categories, and CMS pages
+  // Fetch published blog posts, categories, CMS pages, products, and facilitators
   console.log(`[prerender] Fetching content from ${API_BASE}...`);
-  const [categoriesData, postsData, pagesData] = await Promise.all([
+  const [categoriesData, postsData, pagesData, productsData, facilitatorsData] = await Promise.all([
     fetchJson<{ categories: Category[] }>(`${API_BASE}/categories`),
     fetchJson<{ posts: Post[]; total: number }>(`${API_BASE}/posts?page=1`),
     fetchJson<{ pages: CmsPageSummary[] }>(`${API_BASE}/pages`),
+    fetchJson<{ products: ProductSummary[] }>(`${API_BASE}/products`),
+    fetchJson<{ facilitators: FacilitatorSummary[] }>(`${API_BASE}/facilitators`),
   ]);
 
   const categories = categoriesData?.categories ?? [];
@@ -158,7 +179,12 @@ async function main() {
   }
 
   const pages = pagesData?.pages ?? [];
-  console.log(`[prerender] Found ${categories.length} categories, ${allPosts.length} posts, ${pages.length} pages.`);
+  const products = productsData?.products ?? [];
+  const facilitators = facilitatorsData?.facilitators ?? [];
+  console.log(
+    `[prerender] Found ${categories.length} categories, ${allPosts.length} posts, ${pages.length} pages, ` +
+      `${products.length} products, ${facilitators.length} facilitators.`,
+  );
 
   // 1. /blog
   console.log('[prerender] Prerendering /blog...');
@@ -226,7 +252,97 @@ async function main() {
     await writeRouteHtml(path.join('blog', post.slug), template, postHead);
   }
 
-  // 4. Generate sitemap.xml
+  // 4. /courses (list)
+  console.log('[prerender] Prerendering /courses...');
+  const coursesHead = createMetaTags({
+    title: 'Courses — Hilom Collective',
+    description: 'Self-paced online courses on emotional intelligence, resilience, and personal growth.',
+    url: `${SITE_URL}/courses`,
+    type: 'website',
+  });
+  await writeRouteHtml('courses', template, coursesHead);
+
+  // 5. /courses/{slug}
+  for (const product of products) {
+    console.log(`[prerender] Prerendering /courses/${product.slug}...`);
+    const title = `${product.name} — Hilom Collective`;
+    const description =
+      product.description || 'A self-paced online course from Hilom Collective, hosted on our learning platform.';
+    const url = `${SITE_URL}/courses/${product.slug}`;
+    const imageUrl = product.image_url || product.thumbnail_url;
+
+    const jsonLd = {
+      '@context': 'https://schema.org',
+      '@type': 'Course',
+      name: product.name,
+      description,
+      image: imageUrl || undefined,
+      provider: {
+        '@type': 'Organization',
+        name: 'Hilom Collective',
+        url: SITE_URL,
+      },
+      offers: {
+        '@type': 'Offer',
+        price: (product.price_centavos / 100).toFixed(2),
+        priceCurrency: product.currency,
+        url,
+        availability: 'https://schema.org/InStock',
+      },
+    };
+
+    const productHead = createMetaTags({
+      title,
+      description,
+      url,
+      type: 'website',
+      imageUrl,
+      jsonLd,
+    });
+
+    await writeRouteHtml(path.join('courses', product.slug), template, productHead);
+  }
+
+  // 6. /facilitators (list)
+  console.log('[prerender] Prerendering /facilitators...');
+  const facilitatorsHead = createMetaTags({
+    title: 'Facilitators — Hilom Collective',
+    description: 'Meet the facilitators offering 1:1 sessions and guided programs through Hilom Collective.',
+    url: `${SITE_URL}/facilitators`,
+    type: 'website',
+  });
+  await writeRouteHtml('facilitators', template, facilitatorsHead);
+
+  // 7. /facilitators/{slug}
+  for (const facilitator of facilitators) {
+    console.log(`[prerender] Prerendering /facilitators/${facilitator.slug}...`);
+    const title = `${facilitator.display_name} — Hilom Collective`;
+    const description =
+      facilitator.headline || facilitator.bio || `Book a session with ${facilitator.display_name} on Hilom Collective.`;
+    const url = `${SITE_URL}/facilitators/${facilitator.slug}`;
+
+    const jsonLd = {
+      '@context': 'https://schema.org',
+      '@type': 'Person',
+      name: facilitator.display_name,
+      description,
+      image: facilitator.photo_url || undefined,
+      url,
+    };
+
+    const facilitatorHead = createMetaTags({
+      title,
+      description,
+      url,
+      type: 'website',
+      imageUrl: facilitator.photo_url,
+      jsonLd,
+    });
+
+    await writeRouteHtml(path.join('facilitators', facilitator.slug), template, facilitatorHead);
+  }
+
+  // 8. Generate sitemap.xml
   console.log('[prerender] Generating sitemap.xml...');
   const sitemapUrls: { loc: string; lastmod?: string; changefreq: string; priority: string }[] = [
     { loc: `${SITE_URL}/`, changefreq: 'weekly', priority: '1.0' },
@@ -235,6 +351,7 @@ async function main() {
     { loc: `${SITE_URL}/events`, changefreq: 'weekly', priority: '0.9' },
     { loc: `${SITE_URL}/community`, changefreq: 'monthly', priority: '0.7' },
     { loc: `${SITE_URL}/courses`, changefreq: 'weekly', priority: '0.9' },
+    { loc: `${SITE_URL}/facilitators`, changefreq: 'weekly', priority: '0.8' },
     { loc: `${SITE_URL}/blog`, changefreq: 'daily', priority: '0.9' },
   ];
 
@@ -265,6 +382,24 @@ async function main() {
       lastmod: post.published_at ? post.published_at.split('T')[0] : undefined,
       changefreq: 'monthly',
       priority: '0.8',
+    });
+  }
+
+  // Add products (courses)
+  for (const product of products) {
+    sitemapUrls.push({
+      loc: `${SITE_URL}/courses/${product.slug}`,
+      changefreq: 'monthly',
+      priority: '0.9',
+    });
+  }
+
+  // Add facilitators
+  for (const facilitator of facilitators) {
+    sitemapUrls.push({
+      loc: `${SITE_URL}/facilitators/${facilitator.slug}`,
+      changefreq: 'monthly',
+      priority: '0.7',
     });
   }
 

@@ -10,6 +10,7 @@ import { Link, useParams } from 'react-router-dom';
 import { getPost, type BlogPostDetail, type BlogPost } from '../lib/cms';
 import BlockRenderer from '../cms/BlockRenderer';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
+import { useDocumentHead } from '../lib/useDocumentHead';
 
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>();
@@ -31,15 +32,12 @@ export default function BlogPost() {
       .finally(() => setLoading(false));
   }, [slug]);
 
-  // Update document title + meta description for in-app navigation.
-  useEffect(() => {
-    if (!post) return;
-    document.title = `${post.seo_title ?? post.title} — Hilom Collective`;
-    const metaDesc = document.querySelector('meta[name="description"]');
-    if (metaDesc && (post.seo_description ?? post.excerpt)) {
-      metaDesc.setAttribute('content', post.seo_description ?? post.excerpt ?? '');
-    }
-  }, [post]);
+  useDocumentHead({
+    title: post ? `${post.seo_title ?? post.title} — Hilom Collective` : 'Blog — Hilom Collective',
+    description: post?.seo_description ?? post?.excerpt,
+    path: slug ? `/blog/${slug}` : undefined,
+    imageUrl: post?.image_url,
+  });
 
   if (loading) {
     return (
