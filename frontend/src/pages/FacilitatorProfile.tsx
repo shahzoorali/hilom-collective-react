@@ -24,6 +24,7 @@ import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton
 import { Stars } from '../components/Stars';
 import { playFlip } from '../lib/pageFlip';
 import { YEARS_EXPERIENCE, labelFor } from '../lib/facilitator-intake';
+import { useDocumentHead } from '../lib/useDocumentHead';
 
 const deliveryLabel = (mode: Facilitator['delivery_mode']): string =>
   mode === 'both' ? 'Online or in person' : mode === 'in_person' ? 'In person' : 'Online';
@@ -54,6 +55,17 @@ export default function FacilitatorProfile() {
   useLayoutEffect(() => {
     if (data) playFlip(root.current);
   }, [data]);
+
+  const facilitator = data?.facilitator;
+  useDocumentHead({
+    title: facilitator ? `${facilitator.display_name} — Hilom Collective` : 'Facilitators — Hilom Collective',
+    description:
+      facilitator?.headline ||
+      facilitator?.bio ||
+      (facilitator ? `Book a session with ${facilitator.display_name} on Hilom Collective.` : null),
+    path: `/facilitators/${slug}`,
+    imageUrl: facilitator?.photo_url,
+  });
 
   if (error) {
     return (

@@ -6,6 +6,7 @@ import { currentUser } from '../lib/auth';
 import { moodleAccessUrl } from '../config';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 import { playFlip } from '../lib/pageFlip';
+import { useDocumentHead } from '../lib/useDocumentHead';
 
 export default function ProductDetail() {
   const { slug = '' } = useParams();
@@ -29,6 +30,14 @@ export default function ProductDetail() {
   useLayoutEffect(() => {
     if (product) playFlip(root.current);
   }, [product]);
+
+  useDocumentHead({
+    title: product ? `${product.name} — Hilom Collective` : 'Courses — Hilom Collective',
+    description:
+      product?.description || 'A self-paced online course from Hilom Collective, hosted on our learning platform.',
+    path: `/courses/${slug}`,
+    imageUrl: product?.image_url,
+  });
 
   if (error) {
     return (
