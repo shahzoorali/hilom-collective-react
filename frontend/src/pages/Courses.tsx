@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listProducts, getMyOwnedCourses, type Product } from '../lib/api';
-import { money } from '../components/Layout';
+import { displayPrice } from '../components/Layout';
 import { currentUser } from '../lib/auth';
 import { moodleAccessUrl } from '../config';
 import { SkeletonCardGrid } from '../components/Skeleton';
@@ -74,7 +74,7 @@ export default function Courses() {
                   {p.slug.includes('bundle') && <span className="badge">Bundle</span>}
                   <h3 data-flip-id={`course-title-${p.slug}`}>{p.name}</h3>
                   {p.description && <p className="desc">{p.description}</p>}
-                  <div className="price">{money(p.price_centavos, p.currency)}</div>
+                  <div className="price">{displayPrice(p.price_centavos, p.currency)}</div>
                   {owned ? (
                     <a className="btn btn-accent" href={moodleAccessUrl(ownedIds)}>
                       Continue learning

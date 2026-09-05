@@ -16,7 +16,7 @@ import { Link } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
 import { getEvents, type CmsEvent } from '../lib/cms';
 import { listFacilitators, type FacilitatorCard } from '../lib/booking';
-import { money } from '../components/Layout';
+import { displayPrice } from '../components/Layout';
 import { SkeletonCardGrid } from '../components/Skeleton';
 import type { Block, Cta, MediaRef } from './blocks';
 import CommunityForm from './CommunityForm';
@@ -345,7 +345,7 @@ function ProductGrid({ props }: { props: Props }) {
                 {p.slug.includes('bundle') && <span className="badge">Bundle</span>}
                 <h3>{p.name}</h3>
                 <p className="desc">{p.description}</p>
-                <div className="price">{money(p.price_centavos, p.currency)}</div>
+                <div className="price">{displayPrice(p.price_centavos, p.currency)}</div>
                 <Link className="btn btn-primary" to={`/courses/${p.slug}`}>
                   View details
                 </Link>

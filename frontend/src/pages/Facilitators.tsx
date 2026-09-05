@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Stars } from '../components/Stars';
-import { money } from '../components/Layout';
+import { displayPrice } from '../components/Layout';
 import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { SkeletonCardGrid } from '../components/Skeleton';
 import { captureFlip } from '../lib/pageFlip';
@@ -227,7 +227,7 @@ function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) 
 
         <p className="small muted" style={{ margin: '0.6rem 0 0' }}>
           {location ?? 'Online'}
-          {hasFreeCall ? ' · Free intro call' : fromCentavos !== null ? ` · from ${money(fromCentavos)}` : ''}
+          {hasFreeCall ? ' · Free intro call' : fromCentavos !== null ? ` · from ${displayPrice(fromCentavos)}` : ''}
         </p>
 
         <Link

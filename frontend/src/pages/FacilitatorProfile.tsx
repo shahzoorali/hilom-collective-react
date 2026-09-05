@@ -13,7 +13,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { money } from '../components/Layout';
+import { displayPrice } from '../components/Layout';
 import {
   describeRefundPolicy,
   getFacilitator,
@@ -28,6 +28,51 @@ import { useDocumentHead } from '../lib/useDocumentHead';
 
 const deliveryLabel = (mode: Facilitator['delivery_mode']): string =>
   mode === 'both' ? 'Online or in person' : mode === 'in_person' ? 'In person' : 'Online';
+
+const BULLET = /^[•·*\-–]\s+/;
+
+type ParsedOffer = { eyebrow: string | null; lede: string[]; points: string[] };
+
+/**
+ * Service descriptions are stored as plain text with real newlines —
+ * facilitators type a label line, a sentence about who it is for, then a list
+ * of bullet lines:
+ *
+ *     MINIMUM 3 MONTHS
+ *     For those who want to understand themselves more deeply.
+ *
+ *     • One 60-minute 1:1 coaching session per month
+ *     • Personal growth goal-setting
+ *
+ * That text was going straight into `dangerouslySetInnerHTML`, where HTML
+ * collapses every newline — so a carefully structured offer rendered as one
+ * run-on blob and every tier card became a wall of text. This recovers the
+ * structure the facilitator already wrote.
+ *
+ * Returns null when there is nothing to recover — either the value contains
+ * real markup (it came from the rich-text editor and is already structured) or
+ * it has no bullet lines to lift out. Both fall back to rendering as HTML.
+ */
+function parseOffer(text: string): ParsedOffer | null {
+  if (/<[a-z][^>]*>/i.test(text)) return null;
+
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const points: string[] = [];
+  const prose: string[] = [];
+  for (const line of lines) {
+    if (BULLET.test(line)) points.push(line.replace(BULLET, ''));
+    else prose.push(line);
+  }
+  if (points.length === 0) return null;
+
+  // A short all-caps opener is a label ("MINIMUM 3 MONTHS"), not a sentence,
+  // so it becomes the card's eyebrow rather than its first paragraph.
+  const opener = prose[0];
+  const isLabel =
+    opener !== undefined && opener.length <= 40 && /[A-Z]/.test(opener) && opener === opener.toUpperCase();
+
+  return { eyebrow: isLabel ? prose.shift()! : null, lede: prose, points };
+}
 
 export default function FacilitatorProfile() {
   const { slug = '' } = useParams();
@@ -107,7 +152,11 @@ export default function FacilitatorProfile() {
 
   const { facilitator: f, services, rating, reviews } = data;
   const freeCall = services.find((s) => s.kind === 'exploratory');
-  const paid = services.filter((s) => s.kind !== 'exploratory');
+  // Cheapest first, so the tiers read as the ladder they are rather than in
+  // whatever order they happened to be created in.
+  const paid = services
+    .filter((s) => s.kind !== 'exploratory')
+    .sort((a, b) => a.price_centavos - b.price_centavos);
   const firstName = f.display_name.split(' ')[0];
 
   // The application form accepts a bare "@handle" as well as a URL, so a value
@@ -193,17 +242,22 @@ export default function FacilitatorProfile() {
             )}
 
             {f.specialties.length > 0 && (
-              <div className="fac-hero__tags">
+              <ul className="cv-chips fac-hero__tags">
                 {f.specialties.map((s) => (
-                  <span key={s} className="tag-chip">{s}</span>
+                  <li key={s} className="cv-chip">{s}</li>
                 ))}
-              </div>
+              </ul>
             )}
           </div>
         </div>
       </header>
 
-      {/* ---- body ------------------------------------------------------- */}
+      {/* ---- who this is -------------------------------------------------
+          The bio runs full width above a row of decision panels, rather than
+          in a column beside them. As a sidebar they were far taller than a
+          typical bio, which left several hundred pixels of dead space next to
+          a seven-line paragraph. */}
+      <div className="fac-body-band">
       <div className="container fac-body">
         <div className="fac-body__main">
           {f.bio && (
@@ -214,83 +268,6 @@ export default function FacilitatorProfile() {
               <div className="fac-prose" dangerouslySetInnerHTML={{ __html: f.bio }} />
             </section>
           )}
-
-          <section className="fac-section">
-            <h2>Book a session</h2>
-
-            {freeCall && (
-              <div className="fac-book-card fac-book-card--free">
-                <span className="pill pill-ok">Complimentary</span>
-                <h3>{freeCall.title}</h3>
-                <p className="small muted">{formatDuration(freeCall.duration_minutes)} · free</p>
-                <p>
-                  A short conversation to understand what you're looking for and see whether{' '}
-                  {firstName} is the right fit. One per person.
-                </p>
-                <Link className="btn btn-accent btn-block" to={`/book/${f.slug}/${freeCall.id}`}>
-                  Book an intro call
-                </Link>
-              </div>
-            )}
-
-            {paid.length === 0 && !freeCall && (
-              <p className="muted">This facilitator hasn't opened any sessions for booking yet.</p>
-            )}
-
-            <div className="fac-book-grid">
-              {paid.map((s) => (
-                <div key={s.id} className="fac-book-card">
-                  <h3>{s.title}</h3>
-                  <p className="small muted">
-                    {formatDuration(s.duration_minutes)}
-                    {s.kind === 'package' && s.sessions_count > 1
-                      ? ` · ${s.sessions_count} sessions`
-                      : ''}
-                  </p>
-                  {s.description && (
-                    <div
-                      className="fac-prose small"
-                      dangerouslySetInnerHTML={{ __html: s.description }}
-                    />
-                  )}
-                  <p className="price">
-                    {money(s.price_centavos, s.currency)}
-                    {s.kind === 'package' && s.sessions_count > 1 && (
-                      <span className="small muted">
-                        {' '}
-                        · {money(Math.round(s.price_centavos / s.sessions_count), s.currency)} a
-                        session
-                      </span>
-                    )}
-                  </p>
-
-                  {/* A package is bought once and scheduled afterwards, so
-                      "Choose a time" would be a lie — there are N times to
-                      choose, and none of them are chosen here (0035). */}
-                  {s.kind === 'package' && s.sessions_count > 1 ? (
-                    <>
-                      <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
-                        Buy {s.sessions_count} sessions
-                      </Link>
-                      <p className="small muted fac-book-card__policy">
-                        You book each session as you go, whenever suits you.
-                      </p>
-                    </>
-                  ) : (
-                    <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
-                      Choose a time
-                    </Link>
-                  )}
-                  <p className="small muted fac-book-card__policy">
-                    {describeRefundPolicy(s)}
-                  </p>
-                  {s.cancellation_policy && (
-                    <p className="small muted fac-book-card__policy">{s.cancellation_policy}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
 
           {/* The section the whole feature exists for. A wellness marketplace
               with no visible social proof asks a client to book a stranger for
@@ -374,6 +351,125 @@ export default function FacilitatorProfile() {
           )}
         </aside>
       </div>
+      </div>
+
+      {/* ---- booking ----------------------------------------------------
+          Its own full-bleed band rather than a block inside the main column.
+          A facilitator can list four or five tiers, and squeezed beside the
+          300px sidebar each one got about 240px — too narrow to compare, which
+          is the only thing this section is for. */}
+      {(freeCall || paid.length > 0) && (
+        <section className="cv-band cv-band--sand fac-booking">
+          <div className="container">
+            <div className="cv-head cv-head--center" style={{ marginBottom: '2.25rem' }}>
+              <h2>Book a session with {firstName}</h2>
+              {paid.length > 1 && (
+                <p>Start with a single session or commit to a longer arc — the choice is yours.</p>
+              )}
+            </div>
+
+            {/* The free call is a different kind of thing from the tiers, so it
+                gets a full-width banner above them rather than competing as the
+                cheapest column in a price ladder. */}
+            {freeCall && (
+              <div className="fac-intro">
+                <div>
+                  <span className="cv-chip">Complimentary</span>
+                  <h3>{freeCall.title}</h3>
+                  <p>
+                    A short conversation to understand what you're looking for and see whether{' '}
+                    {firstName} is the right fit. {formatDuration(freeCall.duration_minutes)}, one
+                    per person.
+                  </p>
+                </div>
+                <Link className="btn btn-accent" to={`/book/${f.slug}/${freeCall.id}`}>
+                  Book an intro call
+                </Link>
+              </div>
+            )}
+
+            {paid.length === 0 && !freeCall && (
+              <p className="muted cv-center">
+                This facilitator hasn't opened any sessions for booking yet.
+              </p>
+            )}
+
+            <div className="fac-tiers">
+              {paid.map((s) => {
+                const isPackage = s.kind === 'package' && s.sessions_count > 1;
+                const offer = s.description ? parseOffer(s.description) : null;
+                return (
+                  <article key={s.id} className="fac-tier">
+                    {offer?.eyebrow && <p className="cv-eyebrow">{offer.eyebrow}</p>}
+                    <h3 className="fac-tier__name">{s.title}</h3>
+                    <p className="fac-tier__meta">
+                      {formatDuration(s.duration_minutes)}
+                      {isPackage ? ` · ${s.sessions_count} sessions` : ''}
+                    </p>
+
+                    {offer ? (
+                      <>
+                        {offer.lede.map((line, i) => (
+                          <p className="fac-tier__lede" key={i}>
+                            {line}
+                          </p>
+                        ))}
+                        <ul className="cv-checks fac-tier__points">
+                          {offer.points.map((point, i) => (
+                            <li key={i}>{point}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      s.description && (
+                        <div
+                          className="fac-prose small"
+                          dangerouslySetInnerHTML={{ __html: s.description }}
+                        />
+                      )
+                    )}
+
+                    {/* Everything below is pinned to the bottom of the card, so
+                        price and button line up across tiers of unequal length
+                        instead of stepping down the row. */}
+                    <div className="fac-tier__foot">
+                      {/* Both branches emit the second line, so the price rows
+                          sit on one baseline across the ladder — a single
+                          session has no per-session figure to show, but it
+                          still needs the space the packages take. */}
+                      <p className="fac-tier__price">
+                        {displayPrice(s.price_centavos, s.currency)}
+                        <span className="fac-tier__unit">
+                          {isPackage
+                            ? `${displayPrice(Math.round(s.price_centavos / s.sessions_count), s.currency)} a session`
+                            : 'a single session'}
+                        </span>
+                      </p>
+
+                      {/* A package is bought once and scheduled afterwards, so
+                          "Choose a time" would be a lie — there are N times to
+                          choose, and none of them are chosen here (0035). */}
+                      <Link className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`}>
+                        {isPackage ? `Buy ${s.sessions_count} sessions` : 'Choose a time'}
+                      </Link>
+
+                      {/* Folded away by default. Four tiers each showing three
+                          lines of refund terms put more visual weight on the
+                          cancellation rules than on the price. */}
+                      <details className="fac-tier__terms">
+                        <summary>Booking &amp; refund terms</summary>
+                        {isPackage && <p>You book each session as you go, whenever suits you.</p>}
+                        <p>{describeRefundPolicy(s)}</p>
+                        {s.cancellation_policy && <p>{s.cancellation_policy}</p>}
+                      </details>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
     </article>
   );
 }

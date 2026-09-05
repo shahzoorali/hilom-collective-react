@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getProduct, getMyOwnedCourses, type ProductDetail as Detail } from '../lib/api';
-import { money } from '../components/Layout';
+import { displayPrice } from '../components/Layout';
 import { currentUser } from '../lib/auth';
 import { moodleAccessUrl } from '../config';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
@@ -146,7 +146,7 @@ export default function ProductDetail() {
             ) : (
               <>
                 <div className="price" style={{ marginTop: 0 }}>
-                  {money(product.price_centavos, product.currency)}
+                  {displayPrice(product.price_centavos, product.currency)}
                 </div>
                 <p className="small muted">Permanent access. One payment.</p>
                 <Link className="btn btn-accent btn-block" to={`/checkout/${product.slug}`}>

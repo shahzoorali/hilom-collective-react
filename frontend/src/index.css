@@ -2385,13 +2385,21 @@ div[class*="_PuckCanvas-root_"],
 
 /* ==========================================================================
    Facilitator profile — /facilitators/:slug
-   ========================================================================== */
+   ==========================================================================
+   Restyled onto the marketing system: a forest identity band (matching
+   .cv-hero) up top, then a white band holding the two-column body. Booking
+   cards and sidebar panels borrow the flat, softly-radiused card look used in
+   .cv-person and the band panels elsewhere, so a facilitator's own page reads
+   as part of the same site as the directory that links to it. */
 
 .fac-hero {
-  background: linear-gradient(160deg, var(--cream), #fff 78%);
-  border-bottom: 1px solid var(--line);
-  padding: 1.5rem 0 2.25rem;
-  margin-top: 0.75rem;
+  position: relative;
+  background: var(--forest-deep);
+  background-image: radial-gradient(rgba(247, 239, 219, 0.09) 1.5px, transparent 1.5px);
+  background-size: 26px 26px;
+  padding: clamp(2.25rem, 5vw, 3.5rem) 0;
+  margin-top: 0;
+  color: var(--on-forest);
 }
 .fac-hero__inner {
   display: grid;
@@ -2403,39 +2411,41 @@ div[class*="_PuckCanvas-root_"],
   width: 168px;
   height: 168px;
   object-fit: cover;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
+  border-radius: 14px;
+  border: 3px solid rgba(247, 239, 219, 0.25);
   background: var(--surface);
 }
 .fac-hero__monogram {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--forest);
-  color: var(--cream);
+  background: var(--leaf);
+  color: #fff;
   font-family: var(--serif);
   font-size: 3.75rem;
   line-height: 1;
 }
 .fac-hero__id h1 {
   margin: 0 0 0.35rem;
-  font-size: clamp(1.7rem, 4vw, 2.3rem);
+  color: var(--on-forest);
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
 }
 .fac-hero__headline {
   margin: 0 0 0.75rem;
   font-size: 1.05rem;
-  color: #4a5647;
+  color: var(--on-forest-dim);
   max-width: 52ch;
 }
 .fac-hero__meta {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.6rem;
   font-size: 0.9rem;
-  color: var(--muted);
+  color: var(--on-forest-dim);
 }
 .fac-hero__links {
   margin: 0 0 1rem;
   font-size: 0.9rem;
 }
+.fac-hero__links a { color: var(--on-forest); }
 .fac-hero__tags {
   display: flex;
   flex-wrap: wrap;
@@ -2443,12 +2453,19 @@ div[class*="_PuckCanvas-root_"],
   margin-top: 0.25rem;
 }
 
+/* Back-link sits on the page background above the forest band, not inside it —
+   restated here because .fac-hero no longer carries a light gradient for it
+   to sit on. */
+.fac > .container:first-child { padding: 0.85rem 0; }
+
 /* --- body layout ----------------------------------------------------- */
+.fac-body-band { background: var(--surface); }
+/* Bio above, panels below — not a two-column split. The panels are far taller
+   than a typical bio, so as a sidebar they left a tall empty gutter beside a
+   short paragraph. Stacked, both halves get the full width and the band ends
+   level. */
 .fac-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 2.5rem;
-  padding-top: 2.5rem;
+  padding: clamp(2rem, 4vw, 3rem) 0 0;
 }
 .fac-section {
   margin-bottom: 2.5rem;
@@ -2469,63 +2486,184 @@ div[class*="_PuckCanvas-root_"],
   line-height: 1.6;
 }
 
-/* --- booking cards -------------------------------------------------- */
-.fac-book-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 1.1rem;
-}
-.fac-book-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+/* --- booking band ---------------------------------------------------- */
+
+/* The free intro call: a wide banner, not a column in the price ladder. It is
+   the lowest-friction way into the whole marketplace and a different kind of
+   offer from the paid tiers, so it does not compete with them for width. */
+.fac-intro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem 2rem;
+  margin-bottom: 2rem;
+  padding: clamp(1.25rem, 3vw, 1.75rem);
   background: var(--surface);
-  padding: 1.4rem;
+  border: 1px solid rgba(47, 94, 62, 0.14);
+  border-radius: 14px;
 }
-.fac-book-card h3 {
-  font-size: 1.1rem;
-  margin: 0.5rem 0 0.2rem;
+.fac-intro h3 {
+  margin: 0.6rem 0 0.3rem;
+  font-size: 1.25rem;
 }
-.fac-book-card > p {
-  margin: 0.3rem 0 0.75rem;
+.fac-intro p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  max-width: 52ch;
 }
-.fac-book-card .price {
-  margin: 0.9rem 0 1rem;
-}
-.fac-book-card__policy {
-  margin: 0.7rem 0 0;
-}
-.fac-book-card--free {
-  background: linear-gradient(160deg, var(--cream), #fff 80%);
-  border-color: #e6d7ac;
-  margin-bottom: 1.5rem;
-  max-width: 30rem;
+.fac-intro .btn {
+  flex: none;
 }
 
-/* --- sidebar panels ----------------------------------------------- */
+/* The tier ladder. auto-fit rather than a fixed column count: a facilitator
+   with two offers gets two wide cards, one with five gets five narrow ones,
+   and neither needs a breakpoint. */
+.fac-tiers {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(15.5rem, 100%), 1fr));
+  align-items: stretch;
+}
+.fac-tier {
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 1.4rem;
+  background: var(--surface);
+  border: 1px solid rgba(47, 94, 62, 0.14);
+  border-radius: 12px;
+}
+.fac-tier .cv-eyebrow {
+  margin-bottom: 0.5rem;
+  font-size: 0.66rem;
+}
+.fac-tier__name {
+  margin: 0 0 0.2rem;
+  font-size: 1.3rem;
+  color: var(--forest);
+}
+.fac-tier__meta {
+  margin: 0 0 0.9rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.fac-tier__lede {
+  margin: 0 0 0.9rem;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  color: #3f4a3d;
+}
+/* Tighter and smaller than the marketing tick list this borrows from: these
+   are scannable line items inside a card, not a hero's selling points. */
+.fac-tier__points {
+  margin: 0 0 1.25rem;
+}
+.fac-tier__points li {
+  margin-bottom: 0.55rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  gap: 0.6rem;
+}
+.fac-tier__points li::before {
+  width: 1.05rem;
+  height: 1.05rem;
+  font-size: 0.6rem;
+  margin-top: 0.2rem;
+}
+
+/* margin-top:auto is what aligns the prices and buttons across the row — the
+   descriptions above are different lengths, and without this the CTAs stepped
+   down the row like a staircase. */
+.fac-tier__foot {
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+.fac-tier__price {
+  margin: 0 0 0.9rem;
+  font-family: var(--serif);
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: var(--forest);
+  line-height: 1.2;
+}
+/* The per-session figure is the number that makes a package comparable to a
+   single session, so it gets its own line rather than trailing the total. */
+.fac-tier__unit {
+  display: block;
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+.fac-tier__terms {
+  margin-top: 0.85rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.fac-tier__terms > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--forest);
+  font-weight: 600;
+}
+.fac-tier__terms > summary::-webkit-details-marker {
+  display: none;
+}
+.fac-tier__terms > summary::after {
+  content: ' \2304';
+}
+.fac-tier__terms[open] > summary::after {
+  content: ' \2303';
+}
+.fac-tier__terms p {
+  margin: 0.6rem 0 0;
+  line-height: 1.55;
+}
+
+@media (max-width: 560px) {
+  .fac-intro .btn {
+    width: 100%;
+  }
+}
+
+/* --- decision panels ---------------------------------------------- */
+/* align-items:start so each panel is only as tall as its own content — the
+   scope note is long and would otherwise stretch "At a glance" into a mostly
+   empty box beside it. */
 .fac-body__aside {
   display: grid;
-  gap: 1rem;
-  align-content: start;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  align-items: start;
+  margin-top: 0.5rem;
 }
 .fac-panel {
   padding: 1.25rem 1.35rem;
+  background: var(--sand);
+  border-color: rgba(47, 94, 62, 0.14);
+  box-shadow: none;
 }
 .fac-panel h3 {
-  font-size: 0.78rem;
+  font-size: 0.74rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.1em;
   color: var(--muted);
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.85rem;
 }
 .fac-panel--scope {
-  background: var(--cream);
-  border-color: #e6d7ac;
+  background: var(--forest-deep);
+  border-color: transparent;
+  color: var(--on-forest);
 }
+.fac-panel--scope h3 { color: var(--on-forest-dim); }
 .fac-panel--scope p {
   margin: 0;
   font-size: 0.9rem;
   line-height: 1.6;
-  color: var(--forest-dark);
+  color: var(--on-forest);
 }
 .fac-glance {
   margin: 0;
@@ -2549,23 +2687,12 @@ div[class*="_PuckCanvas-root_"],
   padding-left: 1.1rem;
   font-size: 0.9rem;
   line-height: 1.55;
+  color: var(--ink);
 }
 .fac-creds li {
   margin-bottom: 0.35rem;
 }
 
-@media (max-width: 860px) {
-  .fac-body {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2rem;
-  }
-  /* Credentials and scope are decision inputs — they belong above the booking
-     buttons on a phone, not scrolled past. Source order already has the aside
-     second; on narrow screens pull it back up under the header. */
-  .fac-body__aside {
-    order: -1;
-  }
-}
 @media (max-width: 560px) {
   .fac-hero__inner {
     grid-template-columns: 108px minmax(0, 1fr);

@@ -11,6 +11,23 @@ export function money(centavos: number, currency = 'PHP'): string {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(centavos / 100);
 }
 
+/**
+ * `money()`, with a trailing ".00" dropped — ₱2,500 rather than ₱2,500.00.
+ *
+ * For marketing surfaces only (course cards, facilitator pricing): a whole
+ * peso amount reads cleaner without it, and there's nothing here a customer
+ * needs to reconcile against a bank statement. Receipts, checkout, and admin
+ * money tables keep calling `money()` directly — those are financial records,
+ * where a franc figure is exactly as precise as it should be and quietly
+ * changing its format would be the wrong kind of surprise.
+ *
+ * A non-zero cents amount (e.g. ₱1,999.50) is left alone; only an exact ".00"
+ * is trimmed.
+ */
+export function displayPrice(centavos: number, currency = 'PHP'): string {
+  return money(centavos, currency).replace(/\.00$/, '');
+}
+
 /** Internal paths stay client-side; external ones open in a new tab. */
 function MenuLinkView({ item }: { item: MenuLink }) {
   if (item.target === 'blank' || !item.href.startsWith('/')) {
@@ -177,7 +194,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <h3>Get in touch</h3>
               <ul className="cv-foot__contact">
                 <li>
-                  <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>
+                  <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a>
                 </li>
                 <li>
                   <span>Metro Manila, Philippines</span>

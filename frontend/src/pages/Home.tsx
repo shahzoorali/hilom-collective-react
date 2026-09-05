@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { listProducts, type Product } from '../lib/api';
-import { money } from '../components/Layout';
+import { displayPrice } from '../components/Layout';
 import heroImg from '../assets/home/hilom-hero-image-1280x720.png';
 import whatWeDoImg from '../assets/home/hilom-whatwedo.png';
 import whoIsHilomForImg from '../assets/home/hilom-whoishilomfor.png';
@@ -23,7 +23,7 @@ function ProductCard({ p }: { p: Product }) {
       {isBundle && <span className="badge">Bundle</span>}
       <h3>{p.name}</h3>
       <p className="desc">{p.description}</p>
-      <div className="price">{money(p.price_centavos, p.currency)}</div>
+      <div className="price">{displayPrice(p.price_centavos, p.currency)}</div>
       <Link className="btn btn-primary" to={`/courses/${p.slug}`}>
         View details
       </Link>
