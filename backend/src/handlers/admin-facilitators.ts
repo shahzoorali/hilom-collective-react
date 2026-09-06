@@ -28,7 +28,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
-import { sendFacilitatorApproved, sendBookingCancelled, sendPayoutPaid } from '../lib/booking-email.js';
+import { sendFacilitatorApproved, sendFacilitatorPublished, sendBookingCancelled, sendPayoutPaid } from '../lib/booking-email.js';
 import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
@@ -350,9 +350,9 @@ async function patchFacilitator(
 ): Promise<APIGatewayProxyResultV2> {
   const { data: existing, error: readError } = await supabase
     .from('facilitators')
-    .select('id, email, display_name, status')
+    .select('id, email, display_name, status, slug')
     .eq('id', facilitatorId)
-    .maybeSingle<{ id: string; email: string; display_name: string; status: string }>();
+    .maybeSingle<{ id: string; email: string; display_name: string; status: string; slug: string }>();
   if (readError) throw readError;
   if (!existing) return notFound('Facilitator not found');
 
@@ -401,6 +401,13 @@ async function patchFacilitator(
   // Sent only on the transition into access, not on every later edit.
   if (patch.approved_at) {
     await sendFacilitatorApproved(existing.email, existing.display_name);
+  }
+
+  // Sent only on the transition into `published` — the moment the profile
+  // actually goes live in the directory — not on `applied → published` (which
+  // is covered by the approval email above) nor on any later edit.
+  if (patch.status === 'published' && existing.status !== 'published') {
+    await sendFacilitatorPublished(existing.email, existing.display_name, existing.slug);
   }
 
   return ok({ facilitator: data });

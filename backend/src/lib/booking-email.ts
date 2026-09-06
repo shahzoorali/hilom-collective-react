@@ -878,6 +878,38 @@ export async function sendMeetingLinkFailed(ctx: {
   await send(ctx.facilitatorEmail, `Action needed: meeting link for ${ctx.serviceTitle}`, text, html);
 }
 
+/**
+ * Sent when an admin publishes a facilitator's profile — the moment their
+ * profile actually becomes visible in the directory and bookable by clients,
+ * distinct from `sendFacilitatorApproved` (dashboard access granted, nothing
+ * public yet). Without this a facilitator learns they've gone live only by
+ * noticing, or by a client turning up.
+ */
+export async function sendFacilitatorPublished(to: string, displayName: string, slug: string): Promise<void> {
+  const profileUrl = `https://www.hilomcollective.com/facilitators/${slug}`;
+  const dashboard = 'https://www.hilomcollective.com/facilitator';
+
+  const html = renderEmail({
+    preheader: 'Your profile is live — clients can now find and book you.',
+    heading: `You're live, ${displayName}`,
+    body:
+      p('Your profile has been published and is now visible in the Hilom Collective directory.') +
+      p('Clients can find you and book a session directly from your profile.') +
+      button('View your profile', profileUrl) +
+      note(`Manage your services and availability any time from ${link(dashboard, 'your dashboard')}.`),
+  });
+
+  const text = renderText(`You're live, ${displayName}.`, [
+    'Your profile has been published and is now visible in the Hilom Collective directory.',
+    'Clients can find you and book a session directly from your profile.',
+    '',
+    `View your profile: ${profileUrl}`,
+    `Your dashboard: ${dashboard}`,
+  ]);
+
+  await send(to, 'Your Hilom profile is now live', text, html);
+}
+
 const FACILITATOR_EARNINGS_URL = 'https://www.hilomcollective.com/facilitator/earnings';
 
 const peso = (centavos: number, currency = 'PHP'): string =>
