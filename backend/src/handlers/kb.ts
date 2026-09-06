@@ -19,11 +19,25 @@ import { ok, notFound, badRequest, serverError } from '../lib/http.js';
 
 const CATEGORY_COLUMNS = 'id, slug, name, description, icon, position';
 
-/** What a listing needs. Deliberately excludes `body` — see listing note below. */
-const ARTICLE_LIST_COLUMNS = 'id, slug, title, summary, kind, audience, position, tags';
+/**
+ * What a listing needs. Deliberately excludes `body` — see listing note below.
+ *
+ * `seo_description` and `updated_at` are here for the build-time prerender
+ * (scripts/prerender.ts), which writes the static `<head>` a crawler sees. With
+ * them, one request per section gives it everything; without them it would need
+ * a detail request per article — fifty-odd round trips at every build to
+ * recover two short fields. `seo_description` in particular has to be here or
+ * the prerendered description and the one `useDocumentHead` sets client-side
+ * would disagree on any article that overrides it.
+ */
+const ARTICLE_LIST_COLUMNS =
+  'id, slug, title, summary, kind, audience, position, tags, seo_description, updated_at';
 
+// `seo_description` and `updated_at` are already in the list columns above, so
+// they are deliberately absent here — naming a column twice in one PostgREST
+// select is at best redundant and at worst an error.
 const ARTICLE_DETAIL_COLUMNS =
-  `${ARTICLE_LIST_COLUMNS}, body, seo_title, seo_description, helpful_yes, published_at, updated_at, category_id`;
+  `${ARTICLE_LIST_COLUMNS}, body, seo_title, helpful_yes, published_at, category_id`;
 
 const RELATED_LIMIT = 3;
 const MAX_QUERY_LENGTH = 200;

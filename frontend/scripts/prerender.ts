@@ -64,6 +64,26 @@ interface FacilitatorSummary {
   photo_url: string | null;
 }
 
+interface KbCategory {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  article_count?: number;
+}
+
+interface KbArticleSummary {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string | null;
+  kind: 'guide' | 'troubleshooting';
+  audience: 'client' | 'facilitator' | 'both';
+  tags: string[];
+  seo_description: string | null;
+  updated_at: string;
+}
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -80,6 +100,7 @@ function createMetaTags({
   type = 'website',
   imageUrl,
   jsonLd,
+  noindex = false,
 }: {
   title: string;
   description: string;
@@ -87,6 +108,8 @@ function createMetaTags({
   type?: 'website' | 'article';
   imageUrl?: string | null;
   jsonLd?: Record<string, unknown>;
+  /** Keep the page out of the index but still follow its links. */
+  noindex?: boolean;
 }): string {
   const tags: string[] = [
     `<title>${escapeHtml(title)}</title>`,
@@ -113,7 +136,32 @@ function createMetaTags({
     tags.push(`<script type="application/ld+json">${JSON.stringify(jsonLd)}</script>`);
   }
 
+  if (noindex) {
+    tags.push(`<meta name="robots" content="noindex, follow" />`);
+  }
+
   return tags.join('\n    ');
+}
+
+/**
+ * The breadcrumb trail a help page sits in, as structured data.
+ *
+ * Worth emitting where the article JSON-LD mostly is not: Google still renders
+ * breadcrumbs in results, so a help article can show
+ * "Help › Sessions & Booking" instead of a bare URL — which is exactly the
+ * context that tells someone the result answers their question.
+ */
+function breadcrumbLd(trail: { name: string; url: string }[]): Record<string, unknown> {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: trail.map((item, i) => ({
+      '@type': 'ListItem',
+      position: i + 1,
+      name: item.name,
+      item: item.url,
+    })),
+  };
 }
 
 function injectHead(template: string, headHtml: string): string {
@@ -154,13 +202,28 @@ async function main() {
 
   // Fetch published blog posts, categories, CMS pages, products, and facilitators
   console.log(`[prerender] Fetching content from ${API_BASE}...`);
-  const [categoriesData, postsData, pagesData, productsData, facilitatorsData] = await Promise.all([
-    fetchJson<{ categories: Category[] }>(`${API_BASE}/categories`),
-    fetchJson<{ posts: Post[]; total: number }>(`${API_BASE}/posts?page=1`),
-    fetchJson<{ pages: CmsPageSummary[] }>(`${API_BASE}/pages`),
-    fetchJson<{ products: ProductSummary[] }>(`${API_BASE}/products`),
-    fetchJson<{ facilitators: FacilitatorSummary[] }>(`${API_BASE}/facilitators`),
-  ]);
+  const [categoriesData, postsData, pagesData, productsData, facilitatorsData, kbCategoriesData] =
+    await Promise.all([
+      fetchJson<{ categories: Category[] }>(`${API_BASE}/categories`),
+      fetchJson<{ posts: Post[]; total: number }>(`${API_BASE}/posts?page=1`),
+      fetchJson<{ pages: CmsPageSummary[] }>(`${API_BASE}/pages`),
+      fetchJson<{ products: ProductSummary[] }>(`${API_BASE}/products`),
+      fetchJson<{ facilitators: FacilitatorSummary[] }>(`${API_BASE}/facilitators`),
+      fetchJson<{ categories: KbCategory[] }>(`${API_BASE}/kb/categories`),
+    ]);
+
+  // Help articles come one request per section rather than one per article —
+  // the section endpoint carries everything the head tags need (see the note on
+  // ARTICLE_LIST_COLUMNS in backend/src/handlers/kb.ts).
+  const kbCategories = kbCategoriesData?.categories ?? [];
+  const kbArticlesBySection = new Map<string, KbArticleSummary[]>();
+  for (const section of kbCategories) {
+    const result = await fetchJson<{ articles: KbArticleSummary[] }>(
+      `${API_BASE}/kb/categories/${section.slug}`,
+    );
+    kbArticlesBySection.set(section.slug, result?.articles ?? []);
+  }
+  const kbArticleCount = [...kbArticlesBySection.values()].reduce((n, a) => n + a.length, 0);
 
   const categories = categoriesData?.categories ?? [];
   let allPosts: Post[] = postsData?.posts ?? [];
@@ -183,7 +246,8 @@ async function main() {
   const facilitators = facilitatorsData?.facilitators ?? [];
   console.log(
     `[prerender] Found ${categories.length} categories, ${allPosts.length} posts, ${pages.length} pages, ` +
-      `${products.length} products, ${facilitators.length} facilitators.`,
+      `${products.length} products, ${facilitators.length} facilitators, ` +
+      `${kbCategories.length} help sections, ${kbArticleCount} help articles.`,
   );
 
   // 1. /blog
@@ -342,7 +406,107 @@ async function main() {
     await writeRouteHtml(path.join('facilitators', facilitator.slug), template, facilitatorHead);
   }
 
-  // 8. Generate sitemap.xml
+  // 8. Help centre.
+  //
+  // This section matters more than most of the ones above it. A help article is
+  // typically reached by someone typing their problem into a search engine and
+  // clicking the first plausible result — they rarely arrive via the hub. So the
+  // per-article title and description here are doing the actual work of the help
+  // centre being findable, and without them a crawler sees an empty SPA shell.
+  console.log('[prerender] Prerendering /help...');
+  const helpHead = createMetaTags({
+    title: 'Help Centre — Hilom Collective',
+    description:
+      'Answers about courses, sessions, events, payments, and running your practice on Hilom Collective.',
+    url: `${SITE_URL}/help`,
+    type: 'website',
+    jsonLd: breadcrumbLd([{ name: 'Help', url: `${SITE_URL}/help` }]),
+  });
+  await writeRouteHtml('help', template, helpHead);
+
+  // /help/search is a real route, but a search-results page has nothing to
+  // offer an index and would compete with the articles it lists. Prerendered
+  // only so the noindex is there on first load, before any JS runs.
+  await writeRouteHtml(
+    path.join('help', 'search'),
+    template,
+    createMetaTags({
+      title: 'Search help — Hilom Collective',
+      description: 'Search the Hilom Collective help centre.',
+      url: `${SITE_URL}/help/search`,
+      type: 'website',
+      noindex: true,
+    }),
+  );
+
+  for (const section of kbCategories) {
+    const sectionArticles = kbArticlesBySection.get(section.slug) ?? [];
+    console.log(
+      `[prerender] Prerendering /help/${section.slug} (${sectionArticles.length} articles)...`,
+    );
+
+    const sectionUrl = `${SITE_URL}/help/${section.slug}`;
+    const sectionTrail = [
+      { name: 'Help', url: `${SITE_URL}/help` },
+      { name: section.name, url: sectionUrl },
+    ];
+
+    await writeRouteHtml(
+      path.join('help', section.slug),
+      template,
+      createMetaTags({
+        title: `${section.name} — Help — Hilom Collective`,
+        description:
+          section.description || `Help and answers about ${section.name} from Hilom Collective.`,
+        url: sectionUrl,
+        type: 'website',
+        jsonLd: breadcrumbLd(sectionTrail),
+      }),
+    );
+
+    for (const article of sectionArticles) {
+      const url = `${sectionUrl}/${article.slug}`;
+      const description =
+        article.seo_description ||
+        article.summary ||
+        `${article.title} — help and answers from Hilom Collective.`;
+
+      // TechArticle rather than Article: this is instructional support content,
+      // which is what the type is for. It will not produce a rich result —
+      // Google retired HowTo results and limited FAQPage ones — so this is here
+      // for correct structured data, and the breadcrumb beside it is the part
+      // that actually shows up in a result.
+      const articleLd = {
+        '@context': 'https://schema.org',
+        '@type': 'TechArticle',
+        headline: article.title,
+        description,
+        dateModified: article.updated_at,
+        // No `author`: a help article is written by the organisation, and
+        // inventing a person here would be a claim rather than a fact.
+        publisher: { '@type': 'Organization', name: 'Hilom Collective', url: SITE_URL },
+        mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+        isPartOf: { '@type': 'WebPage', name: section.name, '@id': sectionUrl },
+      };
+
+      const head = [
+        createMetaTags({
+          title: `${article.title} — Help — Hilom Collective`,
+          description,
+          url,
+          type: 'article',
+          jsonLd: articleLd,
+        }),
+        `<script type="application/ld+json">${JSON.stringify(
+          breadcrumbLd([...sectionTrail, { name: article.title, url }]),
+        )}</script>`,
+      ].join('\n    ');
+
+      await writeRouteHtml(path.join('help', section.slug, article.slug), template, head);
+    }
+  }
+
+  // 9. Generate sitemap.xml
   console.log('[prerender] Generating sitemap.xml...');
   const sitemapUrls: { loc: string; lastmod?: string; changefreq: string; priority: string }[] = [
     { loc: `${SITE_URL}/`, changefreq: 'weekly', priority: '1.0' },
@@ -353,6 +517,7 @@ async function main() {
     { loc: `${SITE_URL}/courses`, changefreq: 'weekly', priority: '0.9' },
     { loc: `${SITE_URL}/facilitators`, changefreq: 'weekly', priority: '0.8' },
     { loc: `${SITE_URL}/blog`, changefreq: 'daily', priority: '0.9' },
+    { loc: `${SITE_URL}/help`, changefreq: 'weekly', priority: '0.8' },
   ];
 
   // Add CMS pages
@@ -401,6 +566,27 @@ async function main() {
       changefreq: 'monthly',
       priority: '0.7',
     });
+  }
+
+  // Add help sections and articles. `/help/search` is deliberately absent —
+  // it carries a noindex, and listing a page in the sitemap while telling
+  // crawlers not to index it is a contradiction worth not shipping.
+  for (const section of kbCategories) {
+    sitemapUrls.push({
+      loc: `${SITE_URL}/help/${section.slug}`,
+      changefreq: 'weekly',
+      priority: '0.7',
+    });
+    for (const article of kbArticlesBySection.get(section.slug) ?? []) {
+      sitemapUrls.push({
+        loc: `${SITE_URL}/help/${section.slug}/${article.slug}`,
+        // `lastmod` is the point of carrying `updated_at`: a help article that
+        // is corrected needs recrawling, and this is how a crawler is told.
+        lastmod: article.updated_at ? article.updated_at.split('T')[0] : undefined,
+        changefreq: 'monthly',
+        priority: '0.7',
+      });
+    }
   }
 
   const sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>
