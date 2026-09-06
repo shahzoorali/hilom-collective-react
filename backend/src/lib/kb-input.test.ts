@@ -128,6 +128,15 @@ test('a section cannot be named "search", which /help/search already owns', () =
   assert.equal(validateCategory({ name: 'Searching for help' }).slug, 'searching-for-help');
 });
 
+test('a section may use a CMS-page reserved slug — it sits under /help/, not at the root', () => {
+  // `courses`, `account` and `help` are reserved for top-level CMS pages, but a
+  // KB section lives at `/help/:slug`, a different namespace. Three of the eight
+  // seeded sections use exactly these slugs, so the admin API must accept them.
+  assert.equal(validateCategory({ name: 'Courses' }).slug, 'courses');
+  assert.equal(validateCategory({ name: 'Account & Privacy', slug: 'account' }).slug, 'account');
+  assert.equal(validateCategory({ name: 'Getting Help', slug: 'help' }).slug, 'help');
+});
+
 test('an icon must be a plain key', () => {
   assert.equal(validateCategory({ name: 'A', icon: 'life-buoy' }).icon, 'life-buoy');
   assert.equal(validateCategory({ name: 'A' }).icon, null);

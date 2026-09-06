@@ -56,8 +56,13 @@ export const FACILITATOR_RESERVED_SLUGS = new Set(['apply']);
 
 export class SlugError extends Error {}
 
-/** Home is 'home'; everything else is `kebab-case`. */
-export function normalizeSlug(raw: unknown): string {
+/**
+ * Slug *format* only: trims, lowercases, strips wrapping slashes, and enforces
+ * the kebab-case shape and length cap. No reserved-word check — that guards a
+ * specific route namespace, so each caller applies the set that matches its
+ * own (`normalizeSlug` for CMS pages, `categorySlug` for KB sections).
+ */
+export function normalizeSlugFormat(raw: unknown): string {
   if (typeof raw !== 'string') throw new SlugError('slug must be a string');
 
   const slug = raw.trim().toLowerCase().replace(/^\/+|\/+$/g, '');
@@ -67,6 +72,12 @@ export function normalizeSlug(raw: unknown): string {
     throw new SlugError('slug must be lowercase letters, digits, and single hyphens');
   }
   if (slug.length > 80) throw new SlugError('slug is too long');
+  return slug;
+}
+
+/** Home is 'home'; everything else is `kebab-case`. Rejects CMS-page reserved slugs. */
+export function normalizeSlug(raw: unknown): string {
+  const slug = normalizeSlugFormat(raw);
   if (RESERVED_SLUGS.has(slug)) {
     throw new SlugError(`"${slug}" is reserved by a built-in page and cannot be used`);
   }

@@ -15,7 +15,7 @@
  * a label, and all of them are stripped.
  */
 import { stripTags } from './sanitize.js';
-import { normalizeSlug, slugify, SlugError, KB_RESERVED_SLUGS } from './slug.js';
+import { normalizeSlug, normalizeSlugFormat, slugify, SlugError, KB_RESERVED_SLUGS } from './slug.js';
 
 export class KbInputError extends Error {
   constructor(message: string) {
@@ -108,11 +108,17 @@ export interface CategoryInput {
  *
  * `/help/search` is a page, so a section that slugified to `search` would be
  * created successfully, appear in the admin, and be permanently unreachable
- * from the site — the exact failure `RESERVED_SLUGS` exists to turn into an
+ * from the site — the exact failure `KB_RESERVED_SLUGS` exists to turn into an
  * error message rather than a mystery.
+ *
+ * Uses `normalizeSlugFormat`, not `normalizeSlug`: sections live under
+ * `/help/:categorySlug`, so the CMS-page reserved set (`courses`, `account`,
+ * `help`, …) does not apply here — and three of the eight seeded sections
+ * legitimately use those very slugs. Only `KB_RESERVED_SLUGS` guards this
+ * namespace.
  */
 function categorySlug(raw: unknown, name: string): string {
-  const slug = normalizeSlug(raw ? raw : slugify(name));
+  const slug = normalizeSlugFormat(raw ? raw : slugify(name));
   if (KB_RESERVED_SLUGS.has(slug)) {
     throw new KbInputError(`"${slug}" is reserved by a help centre page and cannot be a section`);
   }
