@@ -1623,6 +1623,22 @@ div[class*="_PuckCanvas-root_"],
   gap: 1rem;
   margin-bottom: 1.5rem;
 }
+/* Writing surface beside its settings — used by the knowledge base editor.
+   Not `auto-fit`, unlike the stats grid above: these two columns have fixed
+   roles, and a sidebar that reflows to equal width with the body would make
+   the writing column too narrow to write in. Collapses to one column on
+   narrow screens, body first. */
+.admin-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .admin-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .admin-stat-card {
   background: var(--surface);
   border-radius: var(--radius);

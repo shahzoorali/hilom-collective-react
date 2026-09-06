@@ -17,6 +17,8 @@ import PeopleTab from './admin/PeopleTab';
 import CognitoUsersTab from './admin/CognitoUsersTab';
 import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
+import KnowledgeBaseTab from './admin/KnowledgeBaseTab';
+import KbArticleEditor from './admin/KbArticleEditor';
 import { MediaGrid } from './admin/MediaLibrary';
 
 const KEY_STORAGE = 'hilom.adminKey';
@@ -28,6 +30,7 @@ const NAV_GROUPS = [
       { label: 'Pages', path: 'pages', icon: '📄' },
       { label: 'Posts', path: 'posts', icon: '✍️' },
       { label: 'Events', path: 'events', icon: '📅' },
+      { label: 'Help Centre', path: 'knowledge-base', icon: '💡' },
       { label: 'Media', path: 'media', icon: '🖼️' },
       { label: 'Menus', path: 'menus', icon: '🧭' },
     ],
@@ -69,6 +72,19 @@ function PostEditorRoute({ adminKey }: { adminKey: string }) {
   const navigate = useNavigate();
   if (!postId) return <Navigate to="/admin/posts" replace />;
   return <PostEditor adminKey={adminKey} postId={postId} onBack={() => navigate('/admin/posts')} />;
+}
+
+function KbArticleEditorRoute({ adminKey }: { adminKey: string }) {
+  const { articleId } = useParams<{ articleId: string }>();
+  const navigate = useNavigate();
+  if (!articleId) return <Navigate to="/admin/knowledge-base" replace />;
+  return (
+    <KbArticleEditor
+      adminKey={adminKey}
+      articleId={articleId}
+      onBack={() => navigate('/admin/knowledge-base')}
+    />
+  );
 }
 
 export default function Admin() {
@@ -307,6 +323,11 @@ export default function Admin() {
           <Route path="pages/:pageId" element={<PageEditorRoute adminKey={adminKey} />} />
           <Route path="posts" element={<PostsTab adminKey={adminKey} />} />
           <Route path="posts/:postId" element={<PostEditorRoute adminKey={adminKey} />} />
+          <Route path="knowledge-base" element={<KnowledgeBaseTab adminKey={adminKey} />} />
+          <Route
+            path="knowledge-base/:articleId"
+            element={<KbArticleEditorRoute adminKey={adminKey} />}
+          />
           <Route path="events" element={<EventsTab adminKey={adminKey} />} />
           <Route
             path="media"
