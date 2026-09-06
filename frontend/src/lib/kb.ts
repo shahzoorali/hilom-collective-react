@@ -95,6 +95,53 @@ export interface CategoryInput {
   position?: number;
 }
 
+export interface KbSearchResult {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string | null;
+  category_slug: string;
+  category_name: string;
+  kind: ArticleKind;
+  audience: Audience;
+  /** Carries `[[hl]]` sentinels — render with `renderHighlight`, never raw. */
+  headline: string;
+  rank: number;
+}
+
+// ---------------------------------------------------------------------------
+// Public
+// ---------------------------------------------------------------------------
+
+export const getKbCategories = () =>
+  apiFetch<{ categories: KbCategory[] }>('/kb/categories').then((r) => r.categories);
+
+export const getKbCategory = (slug: string) =>
+  apiFetch<{ category: KbCategory; articles: KbArticle[] }>(
+    `/kb/categories/${encodeURIComponent(slug)}`,
+  );
+
+export const getKbArticle = (slug: string) =>
+  apiFetch<{ article: KbArticle; related: KbArticle[] }>(
+    `/kb/articles/${encodeURIComponent(slug)}`,
+  );
+
+/**
+ * `broadened` is true when the exact query found nothing and the backend
+ * retried the terms OR-ed. The UI has to say so — presenting loose matches as
+ * if they were the answer is how a reader concludes the search is broken.
+ */
+export const searchKb = (q: string, audience?: Audience | null) =>
+  apiFetch<{ results: KbSearchResult[]; query: string; broadened: boolean }>(
+    `/kb/search?q=${encodeURIComponent(q)}${audience ? `&audience=${audience}` : ''}`,
+  );
+
+/** Best-effort: a failed vote must never interrupt someone reading. */
+export const markArticleHelpful = (slug: string) =>
+  apiFetch<{ recorded: true }>(`/kb/articles/${encodeURIComponent(slug)}/helpful`, {
+    method: 'POST',
+  }).catch(() => ({ recorded: true as const }));
+
 // ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------

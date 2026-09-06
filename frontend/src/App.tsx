@@ -20,6 +20,7 @@ import AuthCallback from './pages/AuthCallback';
 import CmsPage from './pages/CmsPage';
 import Blog from './pages/Blog';
 import BlogPost from './pages/BlogPost';
+import { HelpHub, HelpCategory, HelpArticle, HelpSearch } from './pages/Help';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 
 /**
@@ -132,6 +133,14 @@ export default function App() {
                 <Route path="/blog" element={<Blog />} />
                 <Route path="/blog/category/:categorySlug" element={<Blog />} />
                 <Route path="/blog/:slug" element={<BlogPost />} />
+                {/* Help centre. `search` is declared before `:categorySlug` so
+                    the literal wins; `KB_RESERVED_SLUGS` in the backend also
+                    refuses a section named `search`, so the two cannot collide
+                    from either direction. */}
+                <Route path="/help" element={<HelpHub />} />
+                <Route path="/help/search" element={<HelpSearch />} />
+                <Route path="/help/:categorySlug" element={<HelpCategory />} />
+                <Route path="/help/:categorySlug/:articleSlug" element={<HelpArticle />} />
                 {/* Above /:slug so the CMS catch-all can't shadow it. */}
                 <Route
                   path="/motion-lab"

@@ -25,7 +25,21 @@ export const RESERVED_SLUGS = new Set([
   'booking',
   'bookings',
   'account',
+  // Help centre. `/help` and everything under it are real routes in App.tsx,
+  // so a CMS page here would be invisible for the same reason as the rest.
+  'help',
 ]);
+
+/**
+ * Slugs a knowledge-base *section* must never occupy.
+ *
+ * Separate from both sets above, for the same reason those two are separate
+ * from each other: this guards the `/help/:categorySlug` namespace, whose only
+ * collision is the `/help/search` route sitting above it. A CMS page at
+ * `/search` and a facilitator at `/facilitators/search` both remain perfectly
+ * legal — only a *section* named `search` would be unreachable.
+ */
+export const KB_RESERVED_SLUGS = new Set(['search']);
 
 /**
  * Slugs a facilitator profile must never occupy.

@@ -119,6 +119,15 @@ test('a category derives its slug and requires a name', () => {
   assert.throws(() => validateCategory({}), KbInputError);
 });
 
+test('a section cannot be named "search", which /help/search already owns', () => {
+  // Without this the section would save, appear in the admin, and be
+  // permanently unreachable — the route above it always wins.
+  assert.throws(() => validateCategory({ name: 'Search' }), KbInputError);
+  assert.throws(() => validateCategory({ name: 'Anything', slug: 'search' }), KbInputError);
+  // Adjacent names are still fine.
+  assert.equal(validateCategory({ name: 'Searching for help' }).slug, 'searching-for-help');
+});
+
 test('an icon must be a plain key', () => {
   assert.equal(validateCategory({ name: 'A', icon: 'life-buoy' }).icon, 'life-buoy');
   assert.equal(validateCategory({ name: 'A' }).icon, null);

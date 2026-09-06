@@ -15,7 +15,7 @@
  * a label, and all of them are stripped.
  */
 import { stripTags } from './sanitize.js';
-import { normalizeSlug, slugify, SlugError } from './slug.js';
+import { normalizeSlug, slugify, SlugError, KB_RESERVED_SLUGS } from './slug.js';
 
 export class KbInputError extends Error {
   constructor(message: string) {
@@ -103,12 +103,28 @@ export interface CategoryInput {
   position: number;
 }
 
+/**
+ * A section slug, rejected if it would sit under a real route.
+ *
+ * `/help/search` is a page, so a section that slugified to `search` would be
+ * created successfully, appear in the admin, and be permanently unreachable
+ * from the site — the exact failure `RESERVED_SLUGS` exists to turn into an
+ * error message rather than a mystery.
+ */
+function categorySlug(raw: unknown, name: string): string {
+  const slug = normalizeSlug(raw ? raw : slugify(name));
+  if (KB_RESERVED_SLUGS.has(slug)) {
+    throw new KbInputError(`"${slug}" is reserved by a help centre page and cannot be a section`);
+  }
+  return slug;
+}
+
 export function validateCategory(body: Record<string, unknown>): CategoryInput {
   const name = stripTags(String(body.name ?? '')).trim();
   if (!name) throw new KbInputError('name is required');
 
   return {
-    slug: normalizeSlug(body.slug ? body.slug : slugify(name)),
+    slug: categorySlug(body.slug, name),
     name: name.slice(0, MAX_TITLE),
     description: optionalText(body.description, MAX_SUMMARY, 'description'),
     // An icon *key* the frontend resolves against a fixed set it ships, so the

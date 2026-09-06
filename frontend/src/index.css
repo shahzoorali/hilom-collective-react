@@ -3218,3 +3218,188 @@ div[class*="_PuckCanvas-root_"],
   font-size: 0.85rem; color: var(--on-forest-dim);
 }
 .cv-foot__legal p { margin: 0; }
+
+/* ==========================================================================
+   Help centre (/help)
+
+   The one part of the public site that deliberately does NOT use the `cv-`
+   band grammar above. Those bands exist to move someone who is browsing;
+   a reader here is stuck and scanning for one sentence, and alternating
+   full-bleed colour behind a troubleshooting article is friction. Same
+   tokens, reading layout: sidebar, narrow measure, no CTAs.
+   ========================================================================== */
+
+/* Hub hero — the only band in the section. Search is the hero, not decoration. */
+.kb-hero {
+  background: var(--forest-deep);
+  color: var(--on-forest);
+  padding: clamp(2.5rem, 6vw, 4rem) 0;
+}
+.kb-hero h1 {
+  color: var(--on-forest);
+  margin: 0 0 1.25rem;
+  font-size: clamp(1.9rem, 4vw, 2.75rem);
+}
+
+.kb-search { display: flex; gap: 0.5rem; max-width: 32rem; margin: 0 0 1.5rem; }
+.kb-search--large { max-width: 40rem; margin-bottom: 0; }
+.kb-search input {
+  flex: 1; min-width: 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--ink); font-size: 1rem;
+}
+.kb-search--large input { padding: 0.9rem 1.1rem; font-size: 1.05rem; }
+
+/* Sidebar + content. The TOC column is added only on article pages. */
+.kb-layout {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  padding: clamp(1.5rem, 4vw, 3rem) 0 4rem;
+  align-items: start;
+}
+.kb-layout--article { grid-template-columns: 14rem minmax(0, 1fr) 13rem; }
+@media (max-width: 1024px) {
+  .kb-layout, .kb-layout--article { grid-template-columns: minmax(0, 1fr); }
+  /* Sidebar and TOC follow the article on narrow screens rather than
+     pushing the thing the reader came for below two lists. */
+  .kb-sidebar, .kb-toc { order: 2; }
+  .kb-main { order: 1; }
+}
+
+.kb-sidebar {
+  background: var(--sand);
+  border-radius: var(--radius);
+  padding: 1rem;
+  position: sticky; top: 1.5rem;
+  font-size: 0.9rem;
+}
+@media (max-width: 1024px) { .kb-sidebar { position: static; } }
+.kb-sidebar__home {
+  display: block; font-weight: 600; color: var(--forest-deep);
+  text-decoration: none; margin-bottom: 0.6rem;
+}
+.kb-sidebar ul { list-style: none; margin: 0; padding: 0; }
+.kb-sidebar li + li { margin-top: 0.15rem; }
+.kb-sidebar a {
+  display: flex; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.5rem; border-radius: 6px;
+  color: var(--ink); text-decoration: none;
+}
+.kb-sidebar a:hover { background: rgba(47, 94, 62, 0.07); }
+.kb-sidebar a.is-active { background: var(--forest-deep); color: var(--on-forest); font-weight: 600; }
+.kb-sidebar__count { color: var(--muted); font-size: 0.8rem; }
+.kb-sidebar a.is-active .kb-sidebar__count { color: var(--on-forest-dim); }
+
+.kb-main { min-width: 0; }
+.kb-main h1 { margin: 0.25rem 0 0.5rem; font-size: clamp(1.6rem, 3.2vw, 2.2rem); }
+.kb-lede { color: var(--muted); font-size: 1.05rem; margin: 0 0 1.25rem; }
+
+.kb-crumbs { font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }
+.kb-crumbs a { color: var(--muted); }
+
+/* Hub cards */
+.kb-hub { padding: clamp(2rem, 5vw, 3rem) 0 4rem; }
+.kb-hub__grid {
+  display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+.kb-hub__card {
+  display: block; padding: 1.25rem;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); text-decoration: none; color: var(--ink);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.kb-hub__card:hover { border-color: var(--leaf); transform: translateY(-2px); }
+.kb-hub__card h2 { margin: 0 0 0.4rem; font-size: 1.1rem; color: var(--forest-deep); }
+.kb-hub__card p { margin: 0 0 0.6rem; color: var(--muted); font-size: 0.92rem; }
+.kb-hub__count { font-size: 0.82rem; color: var(--muted); }
+
+/* Article lists */
+.kb-article-list { list-style: none; margin: 0 0 1.5rem; padding: 0; }
+.kb-article-list li { border-bottom: 1px solid var(--line); }
+.kb-article-list a { display: block; padding: 0.85rem 0; text-decoration: none; color: var(--ink); }
+.kb-article-list a:hover .kb-article-link__title { text-decoration: underline; }
+.kb-article-link__title { display: block; font-weight: 600; color: var(--forest-deep); }
+.kb-article-link__summary { display: block; color: var(--muted); font-size: 0.9rem; margin-top: 0.15rem; }
+.kb-subhead {
+  font-size: 1rem; margin: 2rem 0 0.5rem; padding-top: 1rem;
+  border-top: 1px solid var(--line); color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* Article body. ~68ch measure: the line length is the whole job here. */
+.kb-body { max-width: 68ch; line-height: 1.7; }
+.kb-body h2 { font-size: 1.3rem; margin: 2rem 0 0.6rem; }
+.kb-body h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+.kb-body h4 { font-size: 1rem; margin: 1.25rem 0 0.4rem; }
+.kb-body p { margin: 0 0 1rem; }
+.kb-body ul, .kb-body ol { margin: 0 0 1rem; padding-left: 1.4rem; }
+.kb-body li { margin-bottom: 0.4rem; }
+.kb-body code {
+  background: var(--sand); padding: 0.1rem 0.3rem;
+  border-radius: 4px; font-size: 0.9em;
+}
+.kb-body pre {
+  background: var(--sand); padding: 0.9rem 1rem;
+  border-radius: var(--radius); overflow-x: auto; margin: 0 0 1rem;
+}
+.kb-body pre code { background: none; padding: 0; }
+.kb-body hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+/* Callout: an ochre hairline, not an ochre fill — the action colour stays
+   rationed, exactly as in the band grammar. */
+.kb-callout {
+  margin: 0 0 1rem; padding: 0.85rem 1rem;
+  background: var(--sand); border-left: 3px solid var(--ochre);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.kb-callout p:last-child { margin-bottom: 0; }
+.kb-audience-note {
+  display: inline-block; font-size: 0.85rem; color: var(--muted);
+  background: var(--sand); padding: 0.3rem 0.6rem; border-radius: 999px;
+  margin: 0 0 1.25rem;
+}
+
+/* On this page */
+.kb-toc { position: sticky; top: 1.5rem; font-size: 0.85rem; }
+@media (max-width: 1024px) { .kb-toc { position: static; } }
+.kb-toc h2 {
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); margin: 0 0 0.5rem;
+}
+.kb-toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--line); }
+.kb-toc li.is-nested a { padding-left: 1.4rem; }
+.kb-toc a {
+  display: block; padding: 0.3rem 0 0.3rem 0.75rem;
+  color: var(--muted); text-decoration: none;
+}
+.kb-toc a:hover { color: var(--forest-deep); }
+
+/* Feedback + related + support */
+.kb-helpful {
+  display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+  margin: 2.5rem 0 0; padding: 1rem 0; border-top: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+.kb-helpful p { margin: 0; color: var(--muted); }
+.kb-related { margin-top: 2rem; }
+.kb-related h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+.kb-stuck {
+  margin-top: 2.5rem; padding: 1.25rem;
+  background: var(--sand); border-radius: var(--radius);
+}
+.kb-stuck h2 { font-size: 1rem; margin: 0 0 0.35rem; }
+.kb-stuck p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+
+/* Search results */
+.kb-result-count { color: var(--muted); font-size: 0.9rem; margin: 0 0 1rem; }
+.kb-results { list-style: none; margin: 0; padding: 0; }
+.kb-results li { padding: 1rem 0; border-bottom: 1px solid var(--line); }
+.kb-results a { text-decoration: none; }
+.kb-results__title { font-weight: 600; color: var(--forest-deep); }
+.kb-results__where { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.1rem; }
+.kb-results__snippet { margin: 0.4rem 0 0; color: var(--ink); font-size: 0.92rem; line-height: 1.6; }
+.kb-results__snippet mark { background: var(--cream); padding: 0 0.15rem; border-radius: 3px; }
+.kb-empty { padding: 2rem 0; }
+.kb-empty p { margin: 0 0 0.5rem; }

@@ -22,5 +22,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* Unit tests run under `tsx --test` in Node, not in the browser bundle, so
+     they import `node:test` — a module this config has no types for and should
+     not gain them. Adding @types/node here would also let node APIs typecheck
+     inside app code, which is the actual thing worth preventing. */
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }
