@@ -94,6 +94,13 @@ a { color: var(--forest); }
 }
 .user-menu-item:hover { background: var(--sand, rgba(0, 0, 0, 0.05)); color: var(--forest); }
 .user-menu-item--active { color: var(--forest); font-weight: 600; }
+.user-menu-sep { height: 1px; margin: 0.35rem 0.4rem; background: var(--line); }
+/* The dark-header rule `.nav a { color: var(--on-forest) }` (0-0-1-1) outweighs
+   `.user-menu-item` (0-0-1-0), so the dropdown's links rendered as pale cream on
+   the white panel. Re-assert the panel's own colours at a higher specificity. */
+.user-menu-panel .user-menu-item { color: var(--ink); }
+.user-menu-panel .user-menu-item:hover,
+.user-menu-panel .user-menu-item--active { color: var(--forest); }
 
 @media (max-width: 780px) {
   .user-menu { width: 100%; }
@@ -149,6 +156,11 @@ img { max-width: 100%; }
 
 /* product grid */
 .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+/* `.grid` is declared after `.two-col` further up, so on `<div class="grid
+   two-col">` (the About mission/vision band, and every other two-up CMS band)
+   its auto-fill tracks won the cascade — two cards in a 270px column hugging the
+   left of a wide container, the rest of the row empty. Re-assert the pair. */
+.grid.two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .card {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 1.4rem; display: flex; flex-direction: column; box-shadow: var(--shadow);
@@ -464,6 +476,7 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   .brand-logo { height: 38px; }
 
   .two-col { grid-template-columns: minmax(0, 1fr); }
+  .grid.two-col { grid-template-columns: minmax(0, 1fr); }
   .row { grid-template-columns: 1fr; }
   .grid { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
 
@@ -2761,6 +2774,14 @@ div[class*="_PuckCanvas-root_"],
 /* --- Bands ---------------------------------------------------------------
    Full-bleed, never rounded. Radii belong to cards, not sections. */
 .cv-band { padding: clamp(3.5rem, 8vw, 7rem) 0; }
+/* Two consecutive bands of the same tone read as one surface, so their facing
+   paddings stack into a dead zone with nothing in it (the About page's
+   mission/vision grid above "Why do we want to create this brand?"). Drop the
+   seam: the first band's bottom padding alone spaces them. */
+.cv-band--cream + .cv-band--cream,
+.cv-band--sand + .cv-band--sand,
+.cv-band--white + .cv-band--white,
+.cv-band--forest + .cv-band--forest { padding-top: 0; }
 .cv-band--forest { background: var(--forest-deep); color: var(--on-forest); }
 .cv-band--cream { background: var(--cream); }
 .cv-band--sand { background: var(--sand); }

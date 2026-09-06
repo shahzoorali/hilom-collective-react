@@ -403,8 +403,9 @@ export default function FacilitatorProfile() {
                     {offer?.eyebrow && <p className="cv-eyebrow">{offer.eyebrow}</p>}
                     <h3 className="fac-tier__name">{s.title}</h3>
                     <p className="fac-tier__meta">
-                      {formatDuration(s.duration_minutes)}
-                      {isPackage ? ` · ${s.sessions_count} sessions` : ''}
+                      {isPackage
+                        ? `${s.sessions_count} sessions · ${formatDuration(s.duration_minutes)} each`
+                        : formatDuration(s.duration_minutes)}
                     </p>
 
                     {offer ? (

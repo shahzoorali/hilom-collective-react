@@ -1,6 +1,6 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { currentUser, login, logout } from '../lib/auth';
+import { currentUser, hasGroup, login, logout } from '../lib/auth';
 import { MOODLE_URL } from '../config';
 import hilomLogo from '../assets/hilom-logo.png';
 import { useMenus } from '../cms/useMenus';
@@ -66,6 +66,7 @@ function UserMenu({ email }: { email: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { pathname } = useLocation();
+  const isFacilitator = hasGroup('facilitator');
 
   // Close on route change and on any click outside the menu.
   useEffect(() => setOpen(false), [pathname]);
@@ -92,6 +93,14 @@ function UserMenu({ email }: { email: string }) {
       </button>
       {open && (
         <div className="user-menu-panel" role="menu">
+          {isFacilitator && (
+            <>
+              <Link to="/facilitator" role="menuitem" className="user-menu-item">
+                Facilitator dashboard
+              </Link>
+              <div className="user-menu-sep" role="separator" />
+            </>
+          )}
           {ACCOUNT_MENU.map((item) => (
             <NavLink
               key={item.to}
@@ -202,8 +211,8 @@ export default function Layout({ children }: { children: ReactNode }) {
               </ul>
               <div className="cv-social">
                 <a href="https://www.facebook.com/hilomcollective" target="_blank" rel="noreferrer" aria-label="Hilom Collective on Facebook">f</a>
-                <a href="https://www.instagram.com/hilomcollective" target="_blank" rel="noreferrer" aria-label="Hilom Collective on Instagram">ig</a>
-                <a href="https://www.tiktok.com/@hilomcollective" target="_blank" rel="noreferrer" aria-label="Hilom Collective on TikTok">tt</a>
+                <a href="https://www.instagram.com/hilomcollective/" target="_blank" rel="noreferrer" aria-label="Hilom Collective on Instagram">ig</a>
+                <a href="https://www.tiktok.com/@hilom.collective" target="_blank" rel="noreferrer" aria-label="Hilom Collective on TikTok">tt</a>
               </div>
             </div>
 

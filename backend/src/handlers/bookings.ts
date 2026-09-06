@@ -324,8 +324,13 @@ async function create(
       starts_at: slot.startsAt,
       // The padded end, so the exclusion constraint enforces the buffer.
       ends_at: slot.blockEndsAt,
-      // Free calls skip PayMongo entirely and are live immediately.
-      status: isFree ? 'confirmed' : 'pending_payment',
+      // Always inserted pending — including free calls and package sessions.
+      // confirmBooking() below is what actually transitions the row, and that
+      // transition is also what creates the meeting link and sends both
+      // confirmation emails; inserting 'confirmed' here made confirmBooking
+      // early-return and no one was ever emailed. hold_expires_at stays null for
+      // the free case (see below) so the sweep cannot reclaim it in the gap.
+      status: 'pending_payment',
       price_centavos: fee.priceCentavos,
       platform_fee_centavos: fee.platformFeeCentavos,
       facilitator_net_centavos: fee.facilitatorNetCentavos,

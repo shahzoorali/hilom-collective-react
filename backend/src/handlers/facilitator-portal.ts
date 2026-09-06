@@ -926,8 +926,13 @@ async function createForClient(
       client_name: clientName,
       starts_at: slot.startsAt,
       ends_at: slot.blockEndsAt,
-      // No payment to wait for.
-      status: 'confirmed',
+      // No payment to wait for, but still inserted pending: confirmBooking()
+      // below is what transitions the row *and* creates the meeting link and
+      // emails both parties. Inserting 'confirmed' here made confirmBooking
+      // early-return, so the client was never told they had a session.
+      // hold_expires_at stays null so the sweep cannot reclaim it in the gap.
+      status: 'pending_payment',
+      hold_expires_at: null,
       // Zero, and not a rounding of anything. See 0031.
       price_centavos: 0,
       platform_fee_centavos: 0,
