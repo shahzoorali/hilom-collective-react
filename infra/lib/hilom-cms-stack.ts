@@ -29,6 +29,8 @@ import * as eventsTargets from 'aws-cdk-lib/aws-events-targets';
 import { Construct } from 'constructs';
 import {
   ADMIN_KEY_SECRET_NAME,
+  DEFAULT_COGNITO_SPA_CLIENT_ID,
+  DEFAULT_COGNITO_USER_POOL_ID,
   lambdaFactory,
   routeAttacher,
   sesSendPolicy,
@@ -77,6 +79,8 @@ export class HilomCmsStack extends cdk.Stack {
     const adminEvents = makeFn('AdminEventsFn', 'handlers/admin-events.ts', 'handler');
     const postsPublic = makeFn('PostsPublicFn', 'handlers/posts.ts', 'handler');
     const adminPosts = makeFn('AdminPostsFn', 'handlers/admin-posts.ts', 'handler');
+    const kbPublic = makeFn('KbPublicFn', 'handlers/kb.ts', 'handler');
+    const adminKb = makeFn('AdminKbFn', 'handlers/admin-kb.ts', 'handler');
 
     // Not behind API Gateway — invoked on a schedule, not by a request.
     // Publishes posts/pages whose scheduled_at has arrived.
@@ -88,14 +92,25 @@ export class HilomCmsStack extends cdk.Stack {
 
     for (const fn of [
       pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms,
-      eventsPublic, adminEvents, postsPublic, adminPosts, scheduledPublishSweep,
+      eventsPublic, adminEvents, postsPublic, adminPosts, kbPublic, adminKb, scheduledPublishSweep,
     ]) {
       supabaseSecret.grantRead(fn);
     }
 
-    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts]) {
+    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts, adminKb]) {
       adminKeySecret.grantRead(fn);
     }
+
+    // admin-kb.ts authorizes with `isAdminCaller`, which accepts a Cognito
+    // admin-group token *or* the shared key. Without these two variables the
+    // token branch cannot verify anything and fails closed — falling back to
+    // the shared key, so the endpoint still works but only for the legacy
+    // credential, and an admin signed in with their own account gets a 401
+    // that looks like a permissions bug. Every other function in this stack
+    // predates `isAdminCaller` and checks the key alone, which is why the
+    // stack did not already set these.
+    adminKb.addEnvironment('COGNITO_USER_POOL_ID', props.cognitoUserPoolId ?? DEFAULT_COGNITO_USER_POOL_ID);
+    adminKb.addEnvironment('COGNITO_SPA_CLIENT_ID', props.cognitoSpaClientId ?? DEFAULT_COGNITO_SPA_CLIENT_ID);
 
     // The public form endpoint salts its IP hashes with the admin key, which is
     // the one high-entropy secret this function already has a reason to reach.
@@ -200,6 +215,25 @@ export class HilomCmsStack extends cdk.Stack {
       ['/admin/posts/{postId}/revisions/{revisionId}/restore', [POST]],
       ['/admin/categories', [GET, POST]],
       ['/admin/categories/{categoryId}', [PATCH, DELETE]],
+    ]);
+    attach(kbPublic, 'KbPublicInt', [
+      // Literal ahead of the {slug} routes, same convention as the trash lists
+      // above — HTTP APIs prefer the exact match regardless of order.
+      ['/kb/search', [GET]],
+      ['/kb/categories', [GET]],
+      ['/kb/categories/{slug}', [GET]],
+      ['/kb/articles/{slug}', [GET]],
+      ['/kb/articles/{slug}/helpful', [POST]],
+    ]);
+    attach(adminKb, 'AdminKbInt', [
+      ['/admin/kb/categories', [GET, POST]],
+      ['/admin/kb/categories/{categoryId}', [PATCH, DELETE]],
+      ['/admin/kb/articles', [GET, POST]],
+      ['/admin/kb/articles/{articleId}', [GET, PATCH, DELETE]],
+      ['/admin/kb/articles/{articleId}/publish', [POST]],
+      ['/admin/kb/articles/{articleId}/unpublish', [POST]],
+      ['/admin/kb/articles/{articleId}/revisions', [GET]],
+      ['/admin/kb/articles/{articleId}/revisions/{revisionId}/restore', [POST]],
     ]);
   }
 }
