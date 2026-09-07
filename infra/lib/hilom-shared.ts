@@ -256,7 +256,11 @@ const routeSlug = (routePath: string): string =>
  */
 export const sesSendPolicy = (stack: cdk.Stack): iam.PolicyStatement =>
   new iam.PolicyStatement({
-    actions: ['ses:SendEmail'],
+    // `SendEmail` covers SESv2 `Content.Simple`; `SendRawEmail` is the action
+    // SES maps a raw-MIME send to (SESv2 `Content.Raw`), which is how
+    // `email-mime.ts` attaches the .ics calendar invite to booking
+    // confirmations. Without it every invite-bearing email fails AccessDenied.
+    actions: ['ses:SendEmail', 'ses:SendRawEmail'],
     resources: [
       `arn:aws:ses:${SES_REGION}:${stack.account}:identity/hilomcollective.com`,
       // The domain identity has a default configuration set attached, so SES
