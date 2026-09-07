@@ -343,7 +343,7 @@ export async function sendBookingReminder(ctx: BookingEmailContext): Promise<voi
       (ctx.intakePending
         ? note(
             'Your facilitator has a short form they would like you to fill in before this ' +
-              `session. You can do that at ${link(ACCOUNT_BOOKINGS_URL, 'your bookings')}.`,
+              `session. You can do that at ${link('your bookings', ACCOUNT_BOOKINGS_URL)}.`,
           )
         : '') +
       (ctx.meetingUrl ? button('Join the session', ctx.meetingUrl) : '') +
@@ -896,7 +896,7 @@ export async function sendFacilitatorPublished(to: string, displayName: string, 
       p('Your profile has been published and is now visible in the Hilom Collective directory.') +
       p('Clients can find you and book a session directly from your profile.') +
       button('View your profile', profileUrl) +
-      note(`Manage your services and availability any time from ${link(dashboard, 'your dashboard')}.`),
+      note(`Manage your services and availability any time from ${link('your dashboard', dashboard)}.`),
   });
 
   const text = renderText(`You're live, ${displayName}.`, [
