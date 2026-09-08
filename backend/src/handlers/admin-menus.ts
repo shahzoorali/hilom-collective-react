@@ -18,6 +18,7 @@ interface IncomingItem {
   label: string;
   href: string;
   target: 'self' | 'blank';
+  style: 'link' | 'button';
   visible: boolean;
   children: IncomingItem[];
 }
@@ -40,7 +41,7 @@ async function list(): Promise<APIGatewayProxyResultV2> {
     supabase.from('menus').select('id, key, label').order('key'),
     supabase
       .from('menu_items')
-      .select('id, menu_id, parent_id, position, label, href, target, visible')
+      .select('id, menu_id, parent_id, position, label, href, target, style, visible')
       .order('position'),
   ]);
 
@@ -59,10 +60,17 @@ async function list(): Promise<APIGatewayProxyResultV2> {
             label: i.label,
             href: i.href,
             target: i.target,
+            style: i.style,
             visible: i.visible,
             children: own
               .filter((c) => c.parent_id === i.id)
-              .map((c) => ({ label: c.label, href: c.href, target: c.target, visible: c.visible })),
+              .map((c) => ({
+                label: c.label,
+                href: c.href,
+                target: c.target,
+                style: c.style,
+                visible: c.visible,
+              })),
           })),
       };
     }),
@@ -85,6 +93,9 @@ function coerceItem(raw: unknown, path: string): IncomingItem {
     label: label.slice(0, 120),
     href: href.slice(0, 500),
     target: item.target === 'blank' ? 'blank' : 'self',
+    // 'button' renders the item as a primary CTA in the nav; anything else is a
+    // plain link. Unknown values fall back to 'link' rather than erroring.
+    style: item.style === 'button' ? 'button' : 'link',
     visible: item.visible === undefined ? true : Boolean(item.visible),
     children: Array.isArray(item.children)
       ? item.children.slice(0, 20).map((c, i) => coerceItem(c, `${path}.children[${i}]`))
@@ -129,6 +140,7 @@ async function replace(key: string, event: APIGatewayProxyEventV2): Promise<APIG
         label: item.label,
         href: item.href,
         target: item.target,
+        style: item.style,
         visible: item.visible,
       })
       .select('id')
@@ -145,6 +157,7 @@ async function replace(key: string, event: APIGatewayProxyEventV2): Promise<APIG
           label: child.label,
           href: child.href,
           target: child.target,
+          style: child.style,
           visible: child.visible,
         })),
       );

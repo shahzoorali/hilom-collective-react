@@ -9,7 +9,14 @@ import { adminGetMenus, adminSaveMenu, listPages, type AdminMenu } from '../../l
 
 type Item = AdminMenu['items'][number];
 
-const blank = (): Item => ({ label: '', href: '/', target: 'self', visible: true, children: [] });
+const blank = (): Item => ({
+  label: '',
+  href: '/',
+  target: 'self',
+  style: 'link',
+  visible: true,
+  children: [],
+});
 
 export default function MenusTab({ adminKey }: { adminKey: string }) {
   const [menus, setMenus] = useState<AdminMenu[]>([]);
@@ -151,6 +158,16 @@ export default function MenusTab({ adminKey }: { adminKey: string }) {
                       >
                         <option value="self">Same tab</option>
                         <option value="blank">New tab ↗</option>
+                      </select>
+
+                      <select
+                        value={item.style ?? 'link'}
+                        onChange={(e) => replace({ style: e.target.value as 'link' | 'button' })}
+                        style={{ width: 'auto' }}
+                        title="How this item looks in the nav"
+                      >
+                        <option value="link">Link</option>
+                        <option value="button">Button</option>
                       </select>
 
                       <label className="small" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', margin: 0, cursor: 'pointer' }}>

@@ -11,10 +11,16 @@ import { useEffect, useState } from 'react';
 import { getMenus, type MenuLink } from '../lib/cms';
 import { MOODLE_URL } from '../config';
 
-const link = (label: string, href: string, target: 'self' | 'blank' = 'self'): MenuLink => ({
+const link = (
+  label: string,
+  href: string,
+  target: 'self' | 'blank' = 'self',
+  style: 'link' | 'button' = 'link',
+): MenuLink => ({
   label,
   href,
   target,
+  style,
   children: [],
 });
 
@@ -23,9 +29,9 @@ export const FALLBACK_HEADER: MenuLink[] = [
   link('About Hilom', '/about'),
   link('Services', '/services'),
   link('Events', '/events'),
-  link('Join Our Community', '/community'),
   link('Courses', '/courses'),
   link('Login to Hilom Learning Hub ➞', MOODLE_URL, 'blank'),
+  link('Join our community', '/community', 'self', 'button'),
 ];
 
 export const FALLBACK_FOOTER: MenuLink[] = [

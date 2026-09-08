@@ -23,6 +23,9 @@ export interface MenuLink {
   label: string;
   href: string;
   target: 'self' | 'blank';
+  /** 'button' renders the item as a primary CTA in the nav; 'link' (default)
+   *  is a plain nav link. Absent on older payloads — treat as 'link'. */
+  style?: 'link' | 'button';
   children: MenuLink[];
 }
 

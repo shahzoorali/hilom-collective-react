@@ -28,16 +28,22 @@ export function displayPrice(centavos: number, currency = 'PHP'): string {
   return money(centavos, currency).replace(/\.00$/, '');
 }
 
-/** Internal paths stay client-side; external ones open in a new tab. */
+/** Internal paths stay client-side; external ones open in a new tab. A menu
+ *  item with style 'button' renders as a primary CTA rather than a plain link. */
 function MenuLinkView({ item }: { item: MenuLink }) {
+  const className = item.style === 'button' ? 'btn btn-primary' : undefined;
   if (item.target === 'blank' || !item.href.startsWith('/')) {
     return (
-      <a href={item.href} target="_blank" rel="noreferrer">
+      <a href={item.href} target="_blank" rel="noreferrer" className={className}>
         {item.label}
       </a>
     );
   }
-  return <Link to={item.href}>{item.label}</Link>;
+  return (
+    <Link to={item.href} className={className}>
+      {item.label}
+    </Link>
+  );
 }
 
 /** The `/account/*` sub-navigation, surfaced here under the username dropdown
@@ -159,9 +165,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             {menus.header.map((item) => (
               <MenuLinkView key={`${item.label}-${item.href}`} item={item} />
             ))}
-            {/* Two right-hand actions rather than one: a quiet way in for
-                people who already have an account, and the loud one that is
-                the same phrase repeated at every scroll depth of the page. */}
+            {/* A quiet way in for people who already have an account. Any
+                loud call-to-action button now lives in the editable header
+                menu — add an item with style "Button" in Admin → Menus. */}
             <div className="nav-actions">
               {user ? (
                 <UserMenu email={user.email} />
@@ -173,9 +179,6 @@ export default function Layout({ children }: { children: ReactNode }) {
                   Log in
                 </button>
               )}
-              <Link className="btn btn-primary" to="/community">
-                Join our community
-              </Link>
             </div>
           </nav>
         </div>

@@ -17,6 +17,7 @@ interface MenuItemRow {
   label: string;
   href: string;
   target: string;
+  style: string;
 }
 
 export async function handler(): Promise<APIGatewayProxyResultV2> {
@@ -28,7 +29,7 @@ export async function handler(): Promise<APIGatewayProxyResultV2> {
         supabase.from('menus').select('id, key, label'),
         supabase
           .from('menu_items')
-          .select('id, menu_id, parent_id, position, label, href, target')
+          .select('id, menu_id, parent_id, position, label, href, target, style')
           .eq('visible', true)
           .order('position'),
       ]);
@@ -46,9 +47,10 @@ export async function handler(): Promise<APIGatewayProxyResultV2> {
         label: i.label,
         href: i.href,
         target: i.target,
+        style: i.style,
         children: own
           .filter((c) => c.parent_id === i.id)
-          .map((c) => ({ label: c.label, href: c.href, target: c.target })),
+          .map((c) => ({ label: c.label, href: c.href, target: c.target, style: c.style })),
       }));
     }
 
