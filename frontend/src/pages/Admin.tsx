@@ -15,6 +15,7 @@ import EventsTab from './admin/EventsTab';
 import RegistrationsTab from './admin/RegistrationsTab';
 import PeopleTab from './admin/PeopleTab';
 import CognitoUsersTab from './admin/CognitoUsersTab';
+import { MOODLE_URL } from '../config';
 import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
 import KnowledgeBaseTab from './admin/KnowledgeBaseTab';
@@ -302,6 +303,18 @@ export default function Admin() {
           >
             <span>🌐</span>
             <span>View Site ↗</span>
+          </a>
+          {/* Moodle's login page auto-redirects to Cognito SSO; ?nosso=1 is the
+              bypass that reaches the password form for the admin/manual account. */}
+          <a
+            href={`${MOODLE_URL}/login/index.php?nosso=1`}
+            target="_blank"
+            rel="noreferrer"
+            className="admin-view-site-link"
+            title="Open the Moodle password login (bypasses SSO)"
+          >
+            <span>🎓</span>
+            <span>Moodle staff login ↗</span>
           </a>
           <button
             className="btn btn-ghost small"
