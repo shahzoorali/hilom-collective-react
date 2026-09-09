@@ -9,6 +9,7 @@ import { getMoodleSecret } from '../lib/secrets.js';
 import { MoodleClient } from '../lib/moodle.js';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { revokeOrderAccess } from '../lib/revocation.js';
+import { slugify } from '../lib/slug.js';
 import { ok, json, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 
 const s3 = new S3Client({});
@@ -65,11 +66,32 @@ async function mirrorCourseImage(
 }
 
 /**
+ * Moodle courses that must never become a sellable product on their own:
+ *
+ *   1  — the Moodle site-level pseudo-course (already dropped by the client).
+ *   3  — EI101, retired and hidden.
+ *   6  — SELFDEVELOPEMENT_CONFIDENCE1 ("The Confidence Takeoff"), retired.
+ *        It is visible in Moodle again but is deliberately not sold here.
+ *   17 — EI101_BUNDLE1 ("The Breakthrough Bundle"). Sold as a bundle whose
+ *        purchase enrols into 10/15/16 — never into course 17 itself.
+ *
+ * A course listed here is skipped by the auto-draft step below. Everything
+ * else that is visible and not already linked to a product gets a hidden,
+ * zero-price draft so an admin only has to set a price and flip it live.
+ */
+const NON_SELLABLE_COURSE_IDS = new Set([1, 3, 6, 17]);
+
+/**
  * POST /admin/sync-courses
  *
  * Read-only against Moodle, upserting into the `courses` cache. Moodle is the
  * source of truth; this never writes back to it. Course images are mirrored
  * into Supabase Storage rather than linked directly (see mirrorCourseImage).
+ *
+ * After the cache is refreshed, any newly-visible course that isn't excluded
+ * and isn't already sold gets a draft product (hidden, ₱0) plus its
+ * product_courses link, so a course added in Moodle shows up under
+ * "Products & pricing" ready to price rather than needing a DB insert.
  */
 export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   if (!(await isAuthorizedAdmin(event.headers))) return unauthorized();
@@ -117,14 +139,66 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
 
     if (error) throw error;
 
+    const drafted = await draftMissingProducts(supabase, courses);
+
     return ok({
       synced: rows.length,
+      drafted,
       last_synced_at: rows[0]?.last_synced_at ?? null,
       courses: rows.map((r) => ({ id: r.moodle_course_id, shortname: r.shortname })),
     });
   } catch (err) {
     return serverError('admin.syncCourses', err);
   }
+}
+
+/**
+ * Creates a hidden, zero-price draft product for every visible Moodle course
+ * that isn't excluded (NON_SELLABLE_COURSE_IDS) and isn't already linked to a
+ * product via product_courses. Returns the drafts it created so the caller can
+ * surface them. Never touches existing products — pricing and visibility stay
+ * entirely in the admin's hands.
+ */
+async function draftMissingProducts(
+  supabase: Awaited<ReturnType<typeof getSupabase>>,
+  courses: { id: number; shortname: string; fullname: string; visible: number }[],
+): Promise<{ id: string; name: string; slug: string; moodle_course_id: number }[]> {
+  const { data: linked, error: linkedErr } = await supabase
+    .from('product_courses')
+    .select('moodle_course_id');
+  if (linkedErr) throw linkedErr;
+  const alreadySold = new Set((linked ?? []).map((r) => r.moodle_course_id as number));
+
+  const { data: existing, error: existingErr } = await supabase.from('products').select('slug');
+  if (existingErr) throw existingErr;
+  const takenSlugs = new Set((existing ?? []).map((r) => r.slug as string));
+
+  const candidates = courses.filter(
+    (c) => c.visible && !NON_SELLABLE_COURSE_IDS.has(c.id) && !alreadySold.has(c.id),
+  );
+
+  const drafted: { id: string; name: string; slug: string; moodle_course_id: number }[] = [];
+  for (const c of candidates) {
+    const base = slugify(c.shortname || c.fullname) || `course-${c.id}`;
+    let slug = base;
+    for (let n = 2; takenSlugs.has(slug); n++) slug = `${base.slice(0, 78)}-${n}`;
+    takenSlugs.add(slug);
+
+    const { data: product, error: insertErr } = await supabase
+      .from('products')
+      .insert({ name: c.fullname, slug, price_centavos: 0, is_active: false })
+      .select('id')
+      .single();
+    if (insertErr) throw insertErr;
+
+    const { error: linkErr } = await supabase
+      .from('product_courses')
+      .insert({ product_id: product.id, moodle_course_id: c.id });
+    if (linkErr) throw linkErr;
+
+    drafted.push({ id: product.id, name: c.fullname, slug, moodle_course_id: c.id });
+  }
+  return drafted;
 }
 
 /**

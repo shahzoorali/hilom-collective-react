@@ -97,7 +97,11 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     setNotice(null);
     try {
       const r = await adminSyncCourses(adminKey);
-      setNotice(`Synced ${r.synced} courses from Moodle.`);
+      const draftNote = r.drafted.length
+        ? ` Created ${r.drafted.length} draft product${r.drafted.length === 1 ? '' : 's'} `
+          + `(${r.drafted.map((d) => d.name).join(', ')}) — hidden and unpriced until you set them up.`
+        : '';
+      setNotice(`Synced ${r.synced} courses from Moodle.${draftNote}`);
       await load(adminKey, onlyStuck);
     } catch (e) {
       setError((e as Error).message);

@@ -189,7 +189,11 @@ export const adminListOrders = (adminKey: string, status?: string) =>
   }).then((r) => r.orders);
 
 export const adminSyncCourses = (adminKey: string) =>
-  apiFetch<{ synced: number; last_synced_at: string | null }>('/admin/sync-courses', {
+  apiFetch<{
+    synced: number;
+    drafted: { id: string; name: string; slug: string; moodle_course_id: number }[];
+    last_synced_at: string | null;
+  }>('/admin/sync-courses', {
     method: 'POST',
     headers: { 'x-admin-key': adminKey },
   });
