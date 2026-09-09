@@ -94,6 +94,21 @@ function CtaLink({ value, extraClass }: { value: Cta | undefined; extraClass?: s
   );
 }
 
+/**
+ * Loading hints for a CMS image.
+ *
+ * Media URLs point straight at the S3-backed CDN with no resizing service, so
+ * the bytes are whatever an editor uploaded. We can't shrink them here, but we
+ * can stop the below-the-fold images from competing with the LCP image for a
+ * slow connection's bandwidth: only the first block's image loads eagerly and
+ * at high priority, everything else is lazy.
+ */
+function imgLoading(priority: boolean | undefined) {
+  return priority
+    ? ({ loading: 'eager', fetchPriority: 'high', decoding: 'async' } as const)
+    : ({ loading: 'lazy', fetchPriority: 'low', decoding: 'async' } as const);
+}
+
 /** Rich text is sanitized server-side on save, so what reaches here is already
  *  an allowlisted subset of HTML. */
 function RichText({ html }: { html: string }) {
@@ -127,13 +142,13 @@ function Hero({ props }: { props: Props }) {
  * which is why the hero carries extra bottom padding it never uses itself.
  * Used alone on a page it simply sits in the flow.
  */
-function FullWidthImage({ props }: { props: Props }) {
+function FullWidthImage({ props, priority }: { props: Props; priority?: boolean }) {
   const image = media(props.image);
   if (!image) return null;
   return (
     <div className="cv-breakout">
       <div className="container">
-        <img src={image.url} alt={image.alt} />
+        <img src={image.url} alt={image.alt} {...imgLoading(priority)} />
       </div>
     </div>
   );
@@ -149,7 +164,7 @@ function RichTextSection({ props }: { props: Props }) {
   );
 }
 
-function Split({ props }: { props: Props }) {
+function Split({ props, priority }: { props: Props; priority?: boolean }) {
   const image = media(props.image);
   const heading = str(props.heading);
   const copy = (
@@ -162,7 +177,7 @@ function Split({ props }: { props: Props }) {
   );
   const picture = image ? (
     <div className="cv-feature__media">
-      <img src={image.url} alt={image.alt} />
+      <img src={image.url} alt={image.alt} {...imgLoading(priority)} />
     </div>
   ) : null;
 
@@ -306,7 +321,13 @@ function ImageCardGrid({ props }: { props: Props }) {
           return (
             <div className="card" style={{ padding: 0, overflow: 'hidden' }} key={i}>
               {image ? (
-                <img src={image.url} alt={image.alt} style={{ width: '100%', aspectRatio, objectFit: 'cover' }} />
+                <img
+                  src={image.url}
+                  alt={image.alt}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: '100%', aspectRatio, objectFit: 'cover' }}
+                />
               ) : null}
               <div style={{ padding: '1.4rem' }}>
                 <h3>{str(item.title)}</h3>
@@ -417,6 +438,8 @@ function EventCard({ event, past }: { event: CmsEvent; past: boolean }) {
         <img
           src={event.image_url}
           alt={event.image_alt ?? ''}
+          loading="lazy"
+          decoding="async"
           style={{ width: '100%', aspectRatio: '4/5', objectFit: 'cover' }}
         />
       ) : null}
@@ -648,7 +671,10 @@ function FacilitatorGrid({ props }: { props: Props }) {
   );
 }
 
-export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode> = {
+export const BLOCK_COMPONENTS: Record<
+  string,
+  (p: { props: Props; priority?: boolean }) => ReactNode
+> = {
   hero: Hero,
   fullWidthImage: FullWidthImage,
   richText: RichTextSection,
@@ -670,7 +696,7 @@ export const BLOCK_COMPONENTS: Record<string, (p: { props: Props }) => ReactNode
 export default function BlockRenderer({ blocks }: { blocks: Block[] }) {
   return (
     <>
-      {blocks.map((block) => {
+      {blocks.map((block, i) => {
         const Component = BLOCK_COMPONENTS[block.type];
         // An unknown type renders nothing rather than throwing: an older
         // frontend must not white-screen on content authored against a newer
@@ -679,7 +705,10 @@ export default function BlockRenderer({ blocks }: { blocks: Block[] }) {
           if (import.meta.env.DEV) console.warn(`[cms] no renderer for block type "${block.type}"`);
           return null;
         }
-        return <Component key={block.id} props={block.props} />;
+        // Only the first two blocks can hold the LCP image (a hero carries no
+        // image of its own, so an image directly after it is block index 1);
+        // everything lower loads lazily.
+        return <Component key={block.id} props={block.props} priority={i <= 1} />;
       })}
     </>
   );

@@ -2,8 +2,13 @@
    Forest Green #2F5E3E (primary), Leaf Green #7FA468 (secondary/accents),
    Warm Ochre #F2A429 (CTAs/highlights), Warm Cream #F3E6C8 (backgrounds),
    Clean White #FFFFFF. Typography: Libre Baskerville (headers), Montserrat
-   (subheads/body), fallback Arial / Tenor Sans. */
-@import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Montserrat:wght@400;500;600;700&display=swap');
+   (subheads/body), fallback Arial / Tenor Sans.
+
+   The webfonts are loaded from index.html, not `@import`ed here: an @import at
+   the top of the stylesheet is render-blocking and serialized (fetch this
+   file → discover the import → fetch Google's CSS → fetch the font files)
+   before the first paint. index.html loads them without blocking instead, and
+   `display=swap` means text paints immediately in the fallbacks below. */
 
 :root {
   --forest: #2f5e3e;
@@ -2850,7 +2855,7 @@ div[class*="_PuckCanvas-root_"],
 .cv-breakout { position: relative; z-index: 1; }
 .cv-breakout > .container { position: relative; }
 .cv-breakout img {
-  width: 100%; display: block; border-radius: 18px;
+  width: 100%; height: auto; aspect-ratio: 16 / 9; display: block; border-radius: 18px;
   box-shadow: 0 24px 60px rgba(31, 66, 41, 0.18);
 }
 
