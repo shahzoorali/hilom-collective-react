@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--workspace", "frontend"],
       "port": 5173
+    },
+    {
+      "name": "hilom-frontend-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--workspace", "frontend", "--", "--port", "4173", "--strictPort"],
+      "port": 4173
     }
   ]
 }
