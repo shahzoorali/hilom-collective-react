@@ -3421,6 +3421,10 @@ div[class*="_PuckCanvas-root_"],
 .cv-foot__headline {
   font-family: var(--serif); color: var(--on-forest); font-weight: 700;
   font-size: clamp(1.4rem, 2.4vw, 1.9rem); line-height: 1.2; margin: 1.2rem 0 1.4rem;
+  /* Honours the line break an admin typed into the headline — "Paghilom." /
+     "Para sa lahat." is a two-line lockup, not a sentence that happens to
+     wrap. `pre-line` rather than markup so the stored text stays plain. */
+  white-space: pre-line;
 }
 .cv-foot h3 {
   font-family: var(--sans); font-size: 0.76rem; font-weight: 700;

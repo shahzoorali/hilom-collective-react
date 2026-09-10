@@ -59,7 +59,10 @@ export const DEFAULT_FOOTER: FooterSettings = {
     {
       id: 'brand',
       type: 'brand',
-      headline: 'Paghilom. Para sa lahat.',
+      // Two lines, as it is set on the home page hero. The break is stored in
+      // the value rather than forced by the stylesheet, so a footer headline
+      // of a different length is not stuck with a break in the wrong place.
+      headline: 'Paghilom.\nPara sa lahat.',
       cta_label: 'Join our community',
       cta_href: '/community',
     },

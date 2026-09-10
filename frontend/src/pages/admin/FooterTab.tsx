@@ -231,10 +231,16 @@ export default function FooterTab({ adminKey }: { adminKey: string }) {
               </p>
               <label className="field">
                 <span>Closing line</span>
-                <input
+                {/* A textarea, not an input: the headline is a short lockup
+                    that is usually broken across two lines ("Paghilom." /
+                    "Para sa lahat."), and a single-line input gives no way to
+                    place that break. */}
+                <textarea
+                  rows={2}
                   value={widget.headline}
                   onChange={(e) => update(index, { headline: e.target.value })}
                 />
+                <small className="muted">Press Enter to break the line.</small>
               </label>
               <div className="two-col">
                 <label className="field">
