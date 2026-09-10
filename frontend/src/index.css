@@ -3052,8 +3052,13 @@ div[class*="_PuckCanvas-root_"],
   background: var(--surface); border: 1px solid var(--line);
   border-radius: 12px; overflow: hidden;
 }
-.cv-person__photo { aspect-ratio: 1 / 1; background: var(--leaf); line-height: 0; }
-.cv-person__photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Square regardless of what was uploaded. `height: 100%` on the image would
+   resolve against an auto height and let a 4480x6720 portrait stretch the box
+   into a tower, so the image carries the ratio itself and the frame clips. */
+.cv-person__photo { aspect-ratio: 1 / 1; background: var(--leaf); line-height: 0; overflow: hidden; }
+.cv-person__photo img {
+  width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; display: block;
+}
 /* Initials stand in when there is no portrait, on the same leaf ground so the
    grid still reads as one system. */
 .cv-person__monogram {
@@ -3066,7 +3071,12 @@ div[class*="_PuckCanvas-root_"],
   border-bottom: 1px solid var(--line);
   font-size: 1.15rem; color: var(--forest);
 }
-.cv-person__role { margin: 0 0 0.9rem; font-style: italic; color: var(--muted); font-size: 0.92rem; }
+/* Headlines are free text and some are a full positioning statement. Two lines
+   is enough to place someone; the rest is what the profile page is for. */
+.cv-person__role {
+  margin: 0 0 0.9rem; font-style: italic; color: var(--muted); font-size: 0.92rem;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
 .cv-person__link {
   margin-top: auto; padding-top: 0.9rem; font-weight: 700; font-size: 0.95rem;
   color: var(--forest); text-decoration: none;

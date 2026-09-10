@@ -25,6 +25,7 @@ import { Stars } from '../components/Stars';
 import { playFlip } from '../lib/pageFlip';
 import { YEARS_EXPERIENCE, labelFor } from '../lib/facilitator-intake';
 import { useDocumentHead } from '../lib/useDocumentHead';
+import { shortName } from '../lib/names';
 
 const deliveryLabel = (mode: Facilitator['delivery_mode']): string =>
   mode === 'both' ? 'Online or in person' : mode === 'in_person' ? 'In person' : 'Online';
@@ -157,7 +158,7 @@ export default function FacilitatorProfile() {
   const paid = services
     .filter((s) => s.kind !== 'exploratory')
     .sort((a, b) => a.price_centavos - b.price_centavos);
-  const firstName = f.display_name.split(' ')[0];
+  const firstName = shortName(f.display_name, f.short_name);
 
   // The application form accepts a bare "@handle" as well as a URL, so a value
   // here is not necessarily linkable — an un-linkable one renders as plain text

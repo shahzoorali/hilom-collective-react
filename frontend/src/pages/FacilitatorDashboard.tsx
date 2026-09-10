@@ -22,6 +22,7 @@ import { currentUser, login, logout } from '../lib/auth';
 import { money } from '../components/Layout';
 import MessageThread from '../components/MessageThread';
 import AddToCalendar from '../components/AddToCalendar';
+import { shortName } from '../lib/names';
 import {
   getMyEarnings,
   getMyFacilitatorProfile,
@@ -854,7 +855,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
               <MessageThread
                 bookingId={b.id}
                 side="facilitator"
-                otherName={(b.client_name || b.client_email).split(' ')[0] ?? 'your client'}
+                otherName={shortName(b.client_name || b.client_email)}
               />
             )}
 

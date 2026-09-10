@@ -19,6 +19,7 @@ import {
 } from '../../lib/booking';
 import { Link } from 'react-router-dom';
 import { YEARS_EXPERIENCE } from '../../lib/facilitator-intake';
+import { shortName } from '../../lib/names';
 
 export default function ProfileTab({
   profile,
@@ -29,6 +30,7 @@ export default function ProfileTab({
 }) {
   const [draft, setDraft] = useState({
     display_name: profile.display_name,
+    short_name: profile.short_name ?? '',
     headline: profile.headline ?? '',
     bio: profile.bio ?? '',
     photo_url: profile.photo_url ?? '',
@@ -55,6 +57,10 @@ export default function ProfileTab({
   const [notice, setNotice] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<VacationConflict[]>([]);
 
+  // What the name-above would resolve to on its own, shown as the placeholder
+  // and in the preview text so "leave blank" has something concrete to mean.
+  const firstNameGuess = shortName(draft.display_name);
+
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
 
@@ -80,6 +86,7 @@ export default function ProfileTab({
     try {
       const saved = await updateMyFacilitatorProfile({
         display_name: draft.display_name,
+        short_name: draft.short_name.trim() || null,
         headline: draft.headline,
         bio: draft.bio,
         photo_url: draft.photo_url,
@@ -180,6 +187,20 @@ export default function ProfileTab({
       <label className="field">
         <span>Name shown to clients</span>
         <input value={draft.display_name} onChange={(e) => set('display_name', e.target.value)} />
+      </label>
+
+      <label className="field">
+        <span>Preferred name</span>
+        <input
+          value={draft.short_name}
+          onChange={(e) => set('short_name', e.target.value)}
+          placeholder={firstNameGuess}
+        />
+        <small className="muted">
+          How you're addressed in a sentence — "About {draft.short_name.trim() || firstNameGuess}",
+          "{draft.short_name.trim() || firstNameGuess} would like to know a few things". Leave blank
+          and we take it from your name above.
+        </small>
       </label>
 
       <label className="field">

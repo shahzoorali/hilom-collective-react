@@ -55,6 +55,8 @@ export interface Facilitator {
   id: string;
   slug: string;
   display_name: string;
+  /** Optional "call me this" override (0042); null falls back to the shortName() heuristic. */
+  short_name: string | null;
   headline: string | null;
   bio: string | null;
   photo_url: string | null;
@@ -793,6 +795,7 @@ export const adminCreateFacilitator = (
   body: {
     email: string;
     display_name: string;
+    short_name?: string;
     headline?: string;
     credentials?: string[];
     specialties?: string[];
@@ -815,7 +818,12 @@ export const adminGetFacilitator = (adminKey: string, facilitatorId: string) =>
 export const adminPatchFacilitator = (
   adminKey: string,
   facilitatorId: string,
-  patch: { status?: FacilitatorStatus; platform_fee_bps?: number; admin_notes?: string },
+  patch: {
+    status?: FacilitatorStatus;
+    platform_fee_bps?: number;
+    admin_notes?: string;
+    short_name?: string | null;
+  },
 ) =>
   apiFetch<{ facilitator: AdminFacilitator }>(
     `/admin/facilitators/${encodeURIComponent(facilitatorId)}`,

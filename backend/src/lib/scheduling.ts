@@ -34,7 +34,7 @@ import { HOLD_MINUTES } from './booking-domain.js';
  * rating per card in one query instead of N+1.
  */
 export const FACILITATOR_PUBLIC_COLUMNS =
-  'id, slug, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, timezone, status, rating_count, rating_sum';
+  'id, slug, display_name, short_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, timezone, status, rating_count, rating_sum';
 
 export const SERVICE_PUBLIC_COLUMNS =
   'id, facilitator_id, kind, title, description, duration_minutes, price_centavos, currency, sessions_count, delivery_mode, meeting_provider, buffer_minutes, min_notice_minutes, max_advance_days, max_per_day, cancellation_policy, refund_full_hours, refund_half_hours, intake_questions, is_active, sort_order';

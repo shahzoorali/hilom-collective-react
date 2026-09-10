@@ -24,6 +24,7 @@
  */
 import { useCallback, useEffect, useImperativeHandle, useMemo, useState, type Ref } from 'react';
 import { getAvailability, viewerTimezone, zoneLabel, type SlotOption } from '../lib/booking';
+import { shortName } from '../lib/names';
 
 const DAY_MS = 86_400_000;
 
@@ -48,6 +49,7 @@ export default function SlotPicker({
   serviceId,
   facilitatorTimezone,
   facilitatorName,
+  facilitatorShortName,
   selected,
   onSelect,
   handleRef,
@@ -56,6 +58,8 @@ export default function SlotPicker({
   serviceId: string;
   facilitatorTimezone: string;
   facilitatorName: string;
+  /** The facilitator's `short_name` override (0042); falls back to a heuristic on the full name. */
+  facilitatorShortName?: string | null;
   selected: string | null;
   onSelect: (startsAt: string | null) => void;
   handleRef?: Ref<SlotPickerHandle>;
@@ -127,7 +131,7 @@ export default function SlotPicker({
 
   const daySlots = selectedDay ? (byDay.get(selectedDay) ?? []) : [];
   const zonesDiffer = facilitatorTimezone !== viewerZone;
-  const firstName = facilitatorName.split(' ')[0];
+  const firstName = shortName(facilitatorName, facilitatorShortName);
 
   return (
     <>

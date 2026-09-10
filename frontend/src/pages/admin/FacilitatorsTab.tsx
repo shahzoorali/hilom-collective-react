@@ -31,6 +31,7 @@ import {
   YEARS_EXPERIENCE,
   labelFor,
 } from '../../lib/facilitator-intake';
+import { shortName } from '../../lib/names';
 
 /**
  * What must be true before a profile can go in the directory.
@@ -89,6 +90,7 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
   const [addDraft, setAddDraft] = useState({
     email: '',
     display_name: '',
+    short_name: '',
     headline: '',
     credentials: '',
     specialties: '',
@@ -148,6 +150,23 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  async function setShortName(facilitatorId: string, displayName: string, current: string | null) {
+    const input = window.prompt(
+      `How ${displayName} is addressed in a sentence — "About X", "X would like to know a few things".\n\n` +
+        'Leave blank to take it from their name automatically (drops a leading "Miss", "Dr.", "Coach", etc).',
+      current ?? '',
+    );
+    if (input === null) return;
+    try {
+      await adminPatchFacilitator(adminKey, facilitatorId, { short_name: input.trim() || null });
+      setNotice(input.trim() ? `Preferred name set to ${input.trim()}` : 'Preferred name cleared');
+      setDetail(await adminGetFacilitator(adminKey, facilitatorId));
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update');
+    }
+  }
+
   async function setFee(facilitatorId: string, current: number) {
     const input = window.prompt(
       'Platform fee for this facilitator, as a percentage.\n\nOnly affects future bookings — the split is snapshotted on each booking when it is taken.',
@@ -202,6 +221,7 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
       const created = await adminCreateFacilitator(adminKey, {
         email: addDraft.email.trim(),
         display_name: addDraft.display_name.trim(),
+        short_name: addDraft.short_name.trim() || undefined,
         headline: addDraft.headline.trim() || undefined,
         credentials: lines(addDraft.credentials),
         specialties: lines(addDraft.specialties),
@@ -212,6 +232,7 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
       setAddDraft({
         email: '',
         display_name: '',
+        short_name: '',
         headline: '',
         credentials: '',
         specialties: '',
@@ -294,6 +315,19 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
               onChange={(e) => setAddDraft((d) => ({ ...d, headline: e.target.value }))}
               placeholder="Somatic coach for people in career transitions"
             />
+          </label>
+
+          <label className="field">
+            <span>Preferred name (optional)</span>
+            <input
+              value={addDraft.short_name}
+              onChange={(e) => setAddDraft((d) => ({ ...d, short_name: e.target.value }))}
+              placeholder="What they're called in a sentence — e.g. Kayce for &ldquo;Miss Kayce&rdquo;"
+            />
+            <small className="muted">
+              Leave blank unless the first word of their name isn't what they go by. They can
+              change it themselves later in their dashboard.
+            </small>
           </label>
 
           <label className="field">
@@ -444,6 +478,26 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
                   </p>
 
                   {detail.facilitator.headline && <p>{detail.facilitator.headline}</p>}
+
+                  <p className="small" style={{ margin: '0 0 0.6rem' }}>
+                    Addressed as{' '}
+                    <strong>{detail.facilitator.short_name?.trim() || shortName(detail.facilitator.display_name)}</strong>
+                    {!detail.facilitator.short_name?.trim() && <span className="muted"> (from their name)</span>}
+                    {' · '}
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() =>
+                        void setShortName(
+                          detail.facilitator.id,
+                          detail.facilitator.display_name,
+                          detail.facilitator.short_name,
+                        )
+                      }
+                    >
+                      change
+                    </button>
+                  </p>
 
                   {/* ---------------------------------------------------------
                       The application itself. This is what the approve/reject

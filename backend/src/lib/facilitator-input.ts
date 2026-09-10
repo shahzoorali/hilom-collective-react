@@ -116,6 +116,7 @@ function timezone(value: unknown): string {
 
 export interface ProfileInput {
   display_name: string;
+  short_name: string | null;
   headline: string | null;
   bio: string | null;
   photo_media_id: string | null;
@@ -159,6 +160,9 @@ export function validateProfile(body: Record<string, unknown>): ProfileInput {
 
   return {
     display_name: str(body.display_name, 'Name', 120, true)!,
+    // Optional override for how the person is addressed mid-sentence (0042).
+    // Blank falls through to the honorific-stripping heuristic in names.ts.
+    short_name: str(body.short_name, 'Preferred name', 60),
     headline: str(body.headline, 'Headline', 200),
     // The one field allowed to keep markup — it is the long-form "my approach"
     // text, and the allowlist is the same one page rich-text blocks use.

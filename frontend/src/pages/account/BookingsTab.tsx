@@ -23,6 +23,7 @@ import AddToCalendar from '../../components/AddToCalendar';
 import PackagesPanel from './PackagesPanel';
 import { StarInput } from '../../components/Stars';
 import { currentUser } from '../../lib/auth';
+import { shortName } from '../../lib/names';
 import {
   cancelBooking,
   listMyBookings,
@@ -514,13 +515,13 @@ export default function BookingsTab() {
                   >
                     {threadId === b.id
                       ? 'Close messages'
-                      : `Message ${b.facilitators.display_name.split(' ')[0]}`}
+                      : `Message ${shortName(b.facilitators.display_name)}`}
                   </button>
                   {threadId === b.id && (
                     <MessageThread
                       bookingId={b.id}
                       side="client"
-                      otherName={b.facilitators.display_name.split(' ')[0]}
+                      otherName={shortName(b.facilitators.display_name)}
                     />
                   )}
                 </div>

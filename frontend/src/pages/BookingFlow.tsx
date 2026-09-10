@@ -12,6 +12,7 @@ import { money } from '../components/Layout';
 import SlotPicker, { type SlotPickerHandle } from '../components/SlotPicker';
 import IntakeForm from '../components/IntakeForm';
 import { currentUser, login } from '../lib/auth';
+import { shortName } from '../lib/names';
 import {
   buyPackage,
   createBooking,
@@ -198,7 +199,7 @@ export default function BookingFlow() {
         {isPackage && (
           <div className="panel" style={{ marginTop: '1.5rem' }}>
             <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>
-              {service.sessions_count} sessions with {facilitator.display_name.split(' ')[0]}
+              {service.sessions_count} sessions with {shortName(facilitator.display_name, facilitator.short_name)}
             </h2>
             <p>
               You are buying the whole block now and booking each session as you go — no times are
@@ -237,6 +238,7 @@ export default function BookingFlow() {
           serviceId={serviceId}
           facilitatorTimezone={facilitator.timezone}
           facilitatorName={facilitator.display_name}
+          facilitatorShortName={facilitator.short_name}
           selected={selectedSlot}
           onSelect={setSelectedSlot}
         />
@@ -261,7 +263,7 @@ export default function BookingFlow() {
             {service.intake_questions?.length > 0 && (
               <>
                 <p className="small muted" style={{ marginBottom: '0.5rem' }}>
-                  {facilitator.display_name.split(' ')[0]} would like to know a few things before
+                  {shortName(facilitator.display_name, facilitator.short_name)} would like to know a few things before
                   your session. You can change your answers later, up until it starts.
                 </p>
                 <IntakeForm
@@ -273,7 +275,7 @@ export default function BookingFlow() {
             )}
 
             <label className="field">
-              <span>Anything you'd like {facilitator.display_name.split(' ')[0]} to know? (optional)</span>
+              <span>Anything you'd like {shortName(facilitator.display_name, facilitator.short_name)} to know? (optional)</span>
               <textarea
                 rows={3}
                 value={notes}

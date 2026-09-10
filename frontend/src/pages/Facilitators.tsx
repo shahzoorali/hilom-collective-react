@@ -24,6 +24,22 @@ import { listFacilitators, type FacilitatorCard } from '../lib/booking';
 import { SkeletonCardGrid } from '../components/Skeleton';
 import { captureFlip } from '../lib/pageFlip';
 
+/**
+ * The chip form of a specialty.
+ *
+ * Specialties are free text and some are written as a whole service
+ * description — "Personal Branding (Creating Your Personal Brand through
+ * visual language that translates your personality and core values". On a card
+ * that turns a chip into a paragraph, so only the part before the first
+ * bracket or dash is shown. The full text is still on the profile page, and
+ * filtering still matches the original string.
+ */
+function specialtyLabel(specialty: string): string {
+  const head = specialty.split(/[(–—:|]|\s-\s/)[0].trim().replace(/[,;]$/, '');
+  const label = head.length >= 3 ? head : specialty.trim();
+  return label.length > 42 ? `${label.slice(0, 41).trimEnd()}…` : label;
+}
+
 /** Specialties shared by at least two facilitators, alphabetised. */
 function sharedSpecialties(rows: FacilitatorCard[]): string[] {
   const counts = new Map<string, number>();
@@ -179,6 +195,10 @@ function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) 
     facilitator;
   const cardRef = useRef<HTMLElement>(null);
 
+  // Shortening can collapse two specialties onto the same label, and a card
+  // showing the same chip twice reads as a bug.
+  const chips = [...new Set(specialties.map(specialtyLabel))].slice(0, 3);
+
   return (
     <article className="cv-person" ref={cardRef}>
       <div className="cv-person__photo">
@@ -215,9 +235,9 @@ function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) 
           </p>
         )}
 
-        {specialties.length > 0 && (
+        {chips.length > 0 && (
           <ul className="cv-chips">
-            {specialties.slice(0, 3).map((s) => (
+            {chips.map((s) => (
               <li className="cv-chip" key={s}>
                 {s}
               </li>

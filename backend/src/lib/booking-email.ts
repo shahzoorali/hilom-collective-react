@@ -19,6 +19,7 @@ import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { renderEmail, renderText, escapeHtml, p, note, details, button, link } from './email-layout.js';
 import { renderInvite, type InviteMethod } from './ical.js';
 import { sendWithInvite } from './email-mime.js';
+import { shortName } from './names.js';
 
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
@@ -760,7 +761,7 @@ export async function sendPackagePurchased(
  * rather than a report.
  */
 export async function sendReviewRequest(ctx: BookingEmailContext): Promise<void> {
-  const first = ctx.facilitatorName.split(' ')[0] ?? ctx.facilitatorName;
+  const first = shortName(ctx.facilitatorName);
 
   const html = renderEmail({
     preheader: `How was your session with ${ctx.facilitatorName}?`,

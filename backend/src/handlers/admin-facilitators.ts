@@ -35,7 +35,7 @@ import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 
 const ADMIN_FACILITATOR_COLUMNS =
-  'id, slug, email, cognito_sub, display_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at, ' +
+  'id, slug, email, cognito_sub, display_name, short_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at, ' +
   // Intake, from the application form (0023). Read here and nowhere else —
   // none of it is in the public column grant, and none of it belongs on a
   // profile.
@@ -386,6 +386,16 @@ async function patchFacilitator(
 
   if (body.admin_notes !== undefined) {
     patch.admin_notes = String(body.admin_notes ?? '').slice(0, 4000) || null;
+  }
+
+  // The one public profile field editable from here. `display_name` doubles as
+  // the billing name and is the facilitator's to change in their own dashboard;
+  // `short_name` (0042) is the "actually, call me X" fix an admin often needs
+  // to make on someone else's behalf right after adding them. Blank clears it
+  // and the heuristic in names.ts takes over again.
+  if (body.short_name !== undefined) {
+    const trimmed = String(body.short_name ?? '').trim().slice(0, 60);
+    patch.short_name = trimmed || null;
   }
 
   if (Object.keys(patch).length === 0) return badRequest('Nothing to update');

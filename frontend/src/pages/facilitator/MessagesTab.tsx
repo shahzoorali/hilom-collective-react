@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import MessageThread from '../../components/MessageThread';
+import { shortName } from '../../lib/names';
 import {
   formatInZone,
   listMyMessageThreads,
@@ -104,7 +105,7 @@ export default function MessagesTab() {
             <MessageThread
               bookingId={t.bookingId}
               side="facilitator"
-              otherName={(t.clientName || t.clientEmail || 'your client').split(' ')[0] ?? 'your client'}
+              otherName={shortName(t.clientName || t.clientEmail || 'your client')}
               canWrite={ACTIVE.has(t.status ?? '')}
             />
           )}
