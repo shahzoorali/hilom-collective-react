@@ -2504,11 +2504,76 @@ div[class*="_PuckCanvas-root_"],
   margin-top: 0;
   color: var(--on-forest);
 }
+/* Photo, identity, and the ask. The third column used to be empty space —
+   see .fac-hero__act. */
 .fac-hero__inner {
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr) minmax(0, 15rem);
   gap: 2rem;
   align-items: start;
+}
+
+/* The booking card in the header band.
+   A marketplace profile exists to be booked from, and the first way to do it
+   was a full screen below the fold, under the entire bio. This carries the
+   cheapest price and the free call where people actually land. */
+.fac-hero__act {
+  background: rgba(247, 239, 219, 0.08);
+  border: 1px solid rgba(247, 239, 219, 0.18);
+  border-radius: 14px;
+  padding: 1.15rem 1.2rem;
+  display: grid;
+  gap: 0.6rem;
+  justify-items: center;
+  text-align: center;
+}
+.fac-hero__rating {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--on-forest);
+}
+.fac-hero__from {
+  margin: 0;
+  display: grid;
+  gap: 0.1rem;
+  color: var(--on-forest-dim);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.fac-hero__from strong {
+  font-family: var(--serif);
+  font-size: 1.55rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--on-forest);
+}
+.fac-hero__act-note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--on-forest-dim);
+}
+.fac-hero__act-link {
+  font-size: 0.82rem;
+  color: var(--on-forest-dim);
+}
+
+/* The hero card's "see all sessions" jump. Without this the sticky site
+   header lands on top of the heading it just scrolled to. */
+.fac-booking {
+  scroll-margin-top: 5rem;
+}
+
+@media (max-width: 900px) {
+  /* Two columns can no longer hold the card; it moves under the identity
+     block, spanning the full width so the button stays thumb-sized. */
+  .fac-hero__inner {
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+  .fac-hero__act {
+    grid-column: 1 / -1;
+  }
 }
 .fac-hero__photo {
   width: 168px;
@@ -2563,12 +2628,30 @@ div[class*="_PuckCanvas-root_"],
 
 /* --- body layout ----------------------------------------------------- */
 .fac-body-band { background: var(--surface); }
-/* Bio above, panels below — not a two-column split. The panels are far taller
-   than a typical bio, so as a sidebar they left a tall empty gutter beside a
-   short paragraph. Stacked, both halves get the full width and the band ends
-   level. */
+/* Bio left, the short facts right.
+   This was stacked — bio full width, panels in a row underneath — because the
+   panels used to be taller than a typical bio and left an empty gutter beside
+   it. The scope note was what made them tall, and it has moved to its own band
+   below, so the sidebar now holds only "At a glance" and "Credentials".
+   Stacked, the cost had inverted: prose caps at 62ch for readability, so a
+   long bio ran for hundreds of pixels with half the band empty beside it.
+   `align-items: start` keeps the two columns independent, so whichever is
+   shorter simply ends. */
 .fac-body {
   padding: clamp(2rem, 4vw, 3rem) 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 19rem);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: start;
+}
+.fac-body__main { min-width: 0; }
+
+@media (max-width: 860px) {
+  /* Below this the sidebar is too narrow to hold a credential line, and the
+     bio is the thing people came for — so the facts follow it instead. */
+  .fac-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .fac-section {
   margin-bottom: 2.5rem;
@@ -2737,10 +2820,20 @@ div[class*="_PuckCanvas-root_"],
    empty box beside it. */
 .fac-body__aside {
   display: grid;
-  gap: 1.25rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  gap: 1rem;
   align-items: start;
-  margin-top: 0.5rem;
+  /* Sits level with the "About" heading rather than the prose under it. */
+  margin-top: 0.35rem;
+  /* Follows a long bio down. Offset past the sticky site header (76px) rather
+     than pinned to the viewport top, where it would slide underneath it. */
+  position: sticky;
+  top: 6rem;
+}
+@media (max-width: 860px) {
+  .fac-body__aside {
+    position: static;
+    grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  }
 }
 .fac-panel {
   padding: 1.25rem 1.35rem;
@@ -2756,17 +2849,42 @@ div[class*="_PuckCanvas-root_"],
   color: var(--muted);
   margin: 0 0 0.85rem;
 }
-.fac-panel--scope {
+/* Scope of practice — a full-width band, not a sidebar card.
+   It is the statement that tells a client whether they are booking a coach or
+   a clinician, and it runs to several paragraphs. Squeezed into a 16rem
+   column it was a 440px wall of 0.9rem type, which is how you bury something
+   while appearing to feature it. Given the width it reads in a few seconds. */
+.fac-scope {
   background: var(--forest-deep);
-  border-color: transparent;
+  color: var(--on-forest);
+  margin-top: clamp(2rem, 4vw, 3rem);
+  padding: clamp(1.75rem, 4vw, 2.5rem) 0;
+}
+.fac-scope__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: clamp(0.75rem, 3vw, 2.5rem);
+  align-items: start;
+}
+.fac-scope h3 {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--on-forest-dim);
+}
+.fac-scope__body {
+  max-width: 68ch;
+  font-size: 0.95rem;
+  line-height: 1.7;
   color: var(--on-forest);
 }
-.fac-panel--scope h3 { color: var(--on-forest-dim); }
-.fac-panel--scope p {
-  margin: 0;
-  font-size: 0.9rem;
-  line-height: 1.6;
-  color: var(--on-forest);
+.fac-scope__body p { margin: 0 0 0.85rem; }
+.fac-scope__body p:last-child { margin-bottom: 0; }
+
+@media (max-width: 700px) {
+  .fac-scope__inner { grid-template-columns: minmax(0, 1fr); }
 }
 .fac-glance {
   margin: 0;
@@ -2794,6 +2912,26 @@ div[class*="_PuckCanvas-root_"],
 }
 .fac-creds li {
   margin-bottom: 0.35rem;
+}
+
+/* What the hero chips could not say. Term and detail, so the eye can run down
+   the names and stop at the one it recognises. */
+.fac-helps {
+  margin: 0;
+  display: grid;
+  gap: 1rem;
+  max-width: 62ch;
+}
+.fac-helps dt {
+  font-family: var(--serif);
+  font-size: 1.02rem;
+  color: var(--forest);
+  margin-bottom: 0.2rem;
+}
+.fac-helps dd {
+  margin: 0;
+  color: #3f4a3d;
+  line-height: 1.65;
 }
 
 @media (max-width: 560px) {

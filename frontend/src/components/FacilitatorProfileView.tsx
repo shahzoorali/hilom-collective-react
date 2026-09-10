@@ -111,6 +111,92 @@ function parseOffer(text: string): ParsedOffer | null {
   return { eyebrow: isLabel ? prose.shift()! : null, lede: prose, points };
 }
 
+/** Hosts we can name properly, rather than showing a bare domain as the label. */
+const PLATFORMS: [RegExp, string][] = [
+  [/instagram\.com/i, 'Instagram'],
+  [/facebook\.com|fb\.com/i, 'Facebook'],
+  [/tiktok\.com/i, 'TikTok'],
+  [/linkedin\.com/i, 'LinkedIn'],
+  [/youtube\.com|youtu\.be/i, 'YouTube'],
+  [/(^|\.)x\.com|twitter\.com/i, 'X'],
+  [/threads\.net/i, 'Threads'],
+];
+
+/**
+ * The links under the headline, deduped and named.
+ *
+ * The raw data is messier than the old one-line map assumed. Miss Kayce's row
+ * carries `website_url` *and* a `social_links.website` holding the same URL,
+ * plus a `social_links.social` of "https://misskayce/" — a host with no dot,
+ * typed without the TLD. Rendered literally that produced
+ * "Website · misskayce · website": three links, one a duplicate of another and
+ * one that resolves nowhere.
+ *
+ * So: anything that is not a resolvable absolute URL is dropped rather than
+ * shown as dead text (the apply form accepts a bare "@handle", which reads as
+ * noise here and is already covered by the profile copy), duplicates collapse
+ * on their normalized URL, and a known platform gets its own name instead of a
+ * hostname. `website_url` goes first because it is the one link a client is
+ * actually looking for.
+ */
+function profileLinks(f: Facilitator): { label: string; href: string }[] {
+  const out: { label: string; href: string }[] = [];
+  const seen = new Set<string>();
+
+  const push = (value: unknown, preferred?: string) => {
+    const raw = String(value ?? '').trim();
+    if (!/^https?:\/\//i.test(raw)) return;
+
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      return;
+    }
+    // "https://misskayce/" parses fine but names no reachable host. A hostname
+    // with no dot is a typo, not a site.
+    if (!url.hostname.includes('.')) return;
+
+    const key = `${url.hostname.replace(/^www\./, '')}${url.pathname.replace(/\/$/, '')}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const platform = PLATFORMS.find(([pattern]) => pattern.test(url.hostname))?.[1];
+    out.push({ label: platform ?? preferred ?? url.hostname.replace(/^www\./, ''), href: raw });
+  };
+
+  push(f.website_url, 'Website');
+  for (const value of Object.values(f.social_links ?? {})) push(value);
+  return out;
+}
+
+/**
+ * A specialty split into the bit worth scanning and the bit that explains it.
+ *
+ * Facilitators write these as a label with the explanation appended —
+ * "Personal Branding (Creating Your Personal Brand through visual language
+ * that translates your personality and core values" — and the whole string was
+ * going into a hero chip. A 120-character chip is not a chip: it rendered as a
+ * full-width lozenge wrapping onto two lines, and three of them buried the
+ * name they sat under.
+ *
+ * The label is what the chip shows; the explanation moves to "What I help
+ * with" in the body, where there is room for it. An unbalanced "(" is closed
+ * on the way past — that is a typo in the copy, not something a reader should
+ * have to see.
+ */
+function splitSpecialty(text: string): { label: string; detail: string | null } {
+  const match = text.match(/^(.+?)\s*[([]\s*(.+)$/);
+  if (!match) {
+    const dashed = text.match(/^(.{3,40}?)\s+[—–]\s+(.+)$/);
+    return dashed
+      ? { label: dashed[1].trim(), detail: dashed[2].trim() }
+      : { label: text.trim(), detail: null };
+  }
+  const detail = match[2].replace(/[)\]]\s*$/, '').trim();
+  return { label: match[1].trim(), detail: detail || null };
+}
+
 /** A booking link, or the same button rendered inert in the admin preview. */
 function BookAction({
   className,
@@ -168,18 +254,13 @@ export default function FacilitatorProfileView({
   // The application form accepts a bare "@handle" as well as a URL, so a value
   // here is not necessarily linkable — an un-linkable one renders as plain text
   // rather than as a dead anchor.
-  const links = [
-    f.website_url ? { label: 'Website', href: f.website_url } : null,
-    ...Object.entries(f.social_links ?? {})
-      .filter(([, value]) => Boolean(value))
-      .map(([key, value]) => ({
-        label:
-          key === 'social'
-            ? String(value).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')
-            : key,
-        href: /^https?:\/\//.test(String(value)) ? String(value) : null,
-      })),
-  ].filter((l): l is { label: string; href: string | null } => l !== null);
+  const links = profileLinks(f);
+
+  const specialties = f.specialties.map(splitSpecialty);
+  // Only worth its own section when the labels in the hero left something
+  // unsaid. Where a facilitator wrote plain tags ("Emotional Wellbeing") the
+  // chips already are the list, and repeating them below would be filler.
+  const explained = specialties.filter((s) => s.detail);
 
   const glanceRows: { label: string; value: string }[] = [
     f.years_experience
@@ -231,28 +312,75 @@ export default function FacilitatorProfileView({
             {links.length > 0 && (
               <p className="fac-hero__links">
                 {links.map(({ label, href }, i) => (
-                  <span key={label}>
+                  <span key={href}>
                     {i > 0 && <span aria-hidden="true"> · </span>}
-                    {href ? (
-                      <a href={href} target="_blank" rel="noopener noreferrer nofollow">
-                        {label}
-                      </a>
-                    ) : (
-                      label
-                    )}
+                    <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+                      {label}
+                    </a>
                   </span>
                 ))}
               </p>
             )}
 
-            {f.specialties.length > 0 && (
+            {specialties.length > 0 && (
               <ul className="cv-chips fac-hero__tags">
-                {f.specialties.map((s) => (
-                  <li key={s} className="cv-chip">{s}</li>
+                {specialties.map((s) => (
+                  <li key={s.label} className="cv-chip">{s.label}</li>
                 ))}
               </ul>
             )}
           </div>
+
+          {/* ---- the ask -------------------------------------------------
+              A profile in a marketplace exists to be booked from, and until
+              now the first way to do that was a thousand pixels below the
+              fold, past the whole bio. The right-hand third of the header
+              band was empty the entire time. This is the cheapest price, the
+              free call if there is one, and one button — the same three facts
+              the booking section opens with, said where people arrive. */}
+          {(freeCall || paid.length > 0) && (
+            <div className="fac-hero__act">
+              {rating.average !== null && (
+                <p className="fac-hero__rating">
+                  <Stars value={rating.average} /> {rating.average.toFixed(1)}
+                  <span className="muted"> · {rating.count} {rating.count === 1 ? 'review' : 'reviews'}</span>
+                </p>
+              )}
+
+              {paid.length > 0 && (
+                <p className="fac-hero__from">
+                  <span>From</span>
+                  <strong>{displayPrice(paid[0].price_centavos, paid[0].currency)}</strong>
+                </p>
+              )}
+
+              {freeCall ? (
+                <>
+                  <BookAction
+                    className="btn btn-accent btn-block"
+                    to={`/book/${f.slug}/${freeCall.id}`}
+                    preview={preview}
+                  >
+                    Book a free intro call
+                  </BookAction>
+                  <p className="fac-hero__act-note">
+                    {formatDuration(freeCall.duration_minutes)}, no charge — start here if you're
+                    not sure yet.
+                  </p>
+                </>
+              ) : (
+                <a className="btn btn-accent btn-block" href="#sessions">
+                  See sessions
+                </a>
+              )}
+
+              {freeCall && paid.length > 0 && (
+                <a className="fac-hero__act-link" href="#sessions">
+                  or see all {paid.length} {paid.length === 1 ? 'session' : 'sessions'} ↓
+                </a>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -272,6 +400,24 @@ export default function FacilitatorProfileView({
                   recovers the paragraph breaks when it was typed as plain
                   text, which is what the textarea on the edit screen keeps. */}
               <Prose className="fac-prose" text={f.bio} />
+            </section>
+          )}
+
+          {/* Where the explanations from the hero chips land. See
+              `splitSpecialty`: the chip carries the name of the thing, this
+              carries what it actually involves — which is the part a client
+              weighing two facilitators is reading for. */}
+          {explained.length > 0 && (
+            <section className="fac-section">
+              <h2>What {firstName} helps with</h2>
+              <dl className="fac-helps">
+                {explained.map((s) => (
+                  <div key={s.label}>
+                    <dt>{s.label}</dt>
+                    <dd>{s.detail}</dd>
+                  </div>
+                ))}
+              </dl>
             </section>
           )}
 
@@ -346,17 +492,27 @@ export default function FacilitatorProfileView({
             </div>
           )}
 
-          {/* Shown verbatim and deliberately not buried: a coach, a breathwork
-              facilitator and a licensed psychologist are not interchangeable,
-              and a client is entitled to know which they are booking. */}
-          {f.scope_note && (
-            <div className="panel fac-panel fac-panel--scope">
-              <h3>Scope of practice</h3>
-              <p>{f.scope_note}</p>
-            </div>
-          )}
         </aside>
       </div>
+
+      {/* Shown verbatim and deliberately not buried: a coach, a breathwork
+          facilitator and a licensed psychologist are not interchangeable, and
+          a client is entitled to know which they are booking.
+
+          Its own full-width band rather than a third card in the sidebar. It
+          is several paragraphs of the most consequential text on the page, and
+          in a 16rem column it rendered as a 440px wall of 0.9rem type that
+          nobody was going to read — the opposite of not burying it. `Prose`
+          also restores the paragraph breaks the facilitator typed, which a
+          bare text node dropped the same way the bio's did. */}
+      {f.scope_note && (
+        <section className="fac-scope">
+          <div className="container fac-scope__inner">
+            <h3>Scope of practice</h3>
+            <Prose className="fac-scope__body" text={f.scope_note} />
+          </div>
+        </section>
+      )}
       </div>
 
       {/* ---- booking ----------------------------------------------------
@@ -365,7 +521,7 @@ export default function FacilitatorProfileView({
           300px sidebar each one got about 240px — too narrow to compare, which
           is the only thing this section is for. */}
       {(freeCall || paid.length > 0) && (
-        <section className="cv-band cv-band--sand fac-booking">
+        <section className="cv-band cv-band--sand fac-booking" id="sessions">
           <div className="container">
             <div className="cv-head cv-head--center" style={{ marginBottom: '2.25rem' }}>
               <h2>Book a session with {firstName}</h2>
@@ -382,10 +538,21 @@ export default function FacilitatorProfileView({
                 <div>
                   <span className="cv-chip">Complimentary</span>
                   <h3>{freeCall.title}</h3>
+                  {/* The facilitator's own description of their intro call
+                      when they wrote one — "Let's get to know each other!",
+                      "Discover which session/s suit their needs most" — which
+                      the generic sentence below was overwriting. The fallback
+                      stays for the facilitators who left the field empty. */}
                   <p>
-                    A short conversation to understand what you're looking for and see whether{' '}
-                    {firstName} is the right fit. {formatDuration(freeCall.duration_minutes)}, one
-                    per person.
+                    {freeCall.description?.trim() || (
+                      <>
+                        A short conversation to understand what you're looking for and see whether{' '}
+                        {firstName} is the right fit.
+                      </>
+                    )}{' '}
+                    <span className="muted">
+                      {formatDuration(freeCall.duration_minutes)}, one per person.
+                    </span>
                   </p>
                 </div>
                 <BookAction className="btn btn-accent" to={`/book/${f.slug}/${freeCall.id}`} preview={preview}>
