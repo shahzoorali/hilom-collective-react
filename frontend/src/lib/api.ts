@@ -238,6 +238,7 @@ export const adminUpdateProduct = (
     name?: string;
     description?: string;
     thumbnail_url?: string | null;
+    slug?: string;
   },
 ) =>
   apiFetch<{ product: AdminProduct }>(`/admin/products/${productId}`, {

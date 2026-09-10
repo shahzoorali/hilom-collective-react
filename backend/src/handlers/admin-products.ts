@@ -7,6 +7,7 @@
  */
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
+import { normalizeSlugFormat, SlugError } from '../lib/slug.js';
 import { ok, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 
 /** GET /admin/products — every product, including inactive ones. */
@@ -36,6 +37,12 @@ interface UpdateBody {
   is_active?: boolean;
   /** Absolute URL, or null/"" to clear and fall back to the Moodle image. */
   thumbnail_url?: string | null;
+  /**
+   * Public URL slug (`/products/<slug>`). Auto-drafted products get an ugly
+   * slug from the Moodle shortname (e.g. `hilomca1`); this lets an admin set a
+   * readable one. Kebab-case only, and unique across products.
+   */
+  slug?: string;
 }
 
 /**
@@ -72,6 +79,13 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
     if (!body.name.trim()) return badRequest('name cannot be empty');
     patch.name = body.name.trim();
   }
+  if (body.slug !== undefined) {
+    try {
+      patch.slug = normalizeSlugFormat(body.slug);
+    } catch (err) {
+      return badRequest(err instanceof SlugError ? err.message : 'Invalid slug');
+    }
+  }
   if (body.description !== undefined) patch.description = body.description;
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active);
   if (body.thumbnail_url !== undefined) {
@@ -96,7 +110,13 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
       .select('id, name, slug, description, price_centavos, currency, thumbnail_url, is_active')
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      // 23505 = unique_violation, i.e. another product already has this slug.
+      if ((error as { code?: string }).code === '23505') {
+        return badRequest('That slug is already used by another product');
+      }
+      throw error;
+    }
     if (!data) return notFound(`Product ${productId} not found`);
 
     // Deliberately does not touch existing orders: they store amount_centavos

@@ -34,6 +34,17 @@ function isPriceDirty(product: AdminProduct, raw: string) {
   return Math.round(Number(raw.trim()) * 100) !== product.price_centavos;
 }
 
+/**
+ * Mirrors the server's `normalizeSlugFormat`: kebab-case, lowercase, 1–80 chars.
+ * Checked here too so the card can block a save that the API would only reject
+ * after a round trip.
+ */
+const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+function isSlugValid(raw: string) {
+  const s = raw.trim();
+  return s.length > 0 && s.length <= 80 && SLUG_RE.test(s);
+}
+
 function StatusPill({ status }: { status: string }) {
   const cls =
     status === 'fulfilled' ? 'pill pill-ok'
@@ -50,6 +61,9 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   // every keystroke fights the user mid-edit (e.g. "1499." or a cleared field).
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
   const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
+  // Public URL slug, held as typed so a mid-edit value like "alaga-" doesn't
+  // fight the user. Validated on blur/save, not per keystroke.
+  const [slugDrafts, setSlugDrafts] = useState<Record<string, string>>({});
   // Per-product image override. null = "use the Moodle course image". Set here,
   // it survives a course sync — the mirrored Moodle image does not.
   const [thumbDrafts, setThumbDrafts] = useState<Record<string, string | null>>({});
@@ -77,6 +91,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
         Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
       );
       setDescriptionDrafts(Object.fromEntries(prods.map((p) => [p.id, p.description ?? ''])));
+      setSlugDrafts(Object.fromEntries(prods.map((p) => [p.id, p.slug])));
       setThumbDrafts(Object.fromEntries(prods.map((p) => [p.id, p.thumbnail_url])));
     },
     [],
@@ -139,9 +154,15 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   async function onSaveProduct(product: AdminProduct) {
     const raw = (priceDrafts[product.id] ?? '').trim();
     const trimmedDesc = (descriptionDrafts[product.id] ?? '').trim();
+    const trimmedSlug = (slugDrafts[product.id] ?? '').trim();
     const thumb = thumbDrafts[product.id] ?? null;
 
-    const patch: { price_centavos?: number; description?: string; thumbnail_url?: string | null } = {};
+    const patch: {
+      price_centavos?: number;
+      description?: string;
+      thumbnail_url?: string | null;
+      slug?: string;
+    } = {};
 
     if (isPriceDirty(product, raw)) {
       if (!isPriceValid(raw)) {
@@ -155,6 +176,13 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     }
     if (trimmedDesc !== (product.description ?? '')) patch.description = trimmedDesc;
     if (thumb !== (product.thumbnail_url ?? null)) patch.thumbnail_url = thumb;
+    if (trimmedSlug !== product.slug) {
+      if (!isSlugValid(trimmedSlug)) {
+        setError(`"${trimmedSlug}" is not a valid slug — use lowercase letters, digits and single hyphens.`);
+        return;
+      }
+      patch.slug = trimmedSlug;
+    }
 
     if (Object.keys(patch).length === 0) {
       setNotice('Nothing to save.');
@@ -178,6 +206,9 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
       if (patch.thumbnail_url !== undefined) {
         parts.push(`image ${patch.thumbnail_url ? 'updated' : 'cleared'}`);
       }
+      if (patch.slug !== undefined) {
+        parts.push(`URL → /${updated.slug}`);
+      }
       setNotice(`${updated.name}: ${parts.join(', ')}.`);
       await load(adminKey, onlyStuck);
     } catch (e) {
@@ -191,6 +222,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   function onDiscard(product: AdminProduct) {
     setPriceDrafts({ ...priceDrafts, [product.id]: (product.price_centavos / 100).toFixed(2) });
     setDescriptionDrafts({ ...descriptionDrafts, [product.id]: product.description ?? '' });
+    setSlugDrafts({ ...slugDrafts, [product.id]: product.slug });
     setThumbDrafts({ ...thumbDrafts, [product.id]: product.thumbnail_url });
   }
 
@@ -303,12 +335,15 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
               {products.map((p) => {
                 const draft = priceDrafts[p.id] ?? '';
                 const descDraft = descriptionDrafts[p.id] ?? '';
+                const slugDraft = slugDrafts[p.id] ?? '';
                 const thumbDraft = thumbDrafts[p.id] ?? null;
                 const priceDirty = isPriceDirty(p, draft);
                 const descDirty = descDraft.trim() !== (p.description ?? '');
+                const slugDirty = slugDraft.trim() !== p.slug;
                 const thumbDirty = thumbDraft !== (p.thumbnail_url ?? null);
-                const dirty = priceDirty || descDirty || thumbDirty;
+                const dirty = priceDirty || descDirty || slugDirty || thumbDirty;
                 const priceValid = isPriceValid(draft);
+                const slugValid = isSlugValid(slugDraft);
                 return (
                   <article
                     key={p.id}
@@ -318,7 +353,22 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
                       <div className="prod-card__id">
                         <h3 className="prod-card__name">{p.name}</h3>
                         <div className="prod-card__meta">
-                          <code className="prod-card__slug">/{p.slug}</code>
+                          <span className={`prod-card__slug prod-slug${slugValid ? '' : ' is-invalid'}`}>
+                            <span aria-hidden="true">/products/</span>
+                            <input
+                              className="prod-slug__input"
+                              value={slugDraft}
+                              spellCheck={false}
+                              autoCapitalize="off"
+                              autoCorrect="off"
+                              aria-label={`URL slug for ${p.name}`}
+                              aria-invalid={!slugValid}
+                              size={Math.max(slugDraft.length, 8)}
+                              onChange={(e) =>
+                                setSlugDrafts({ ...slugDrafts, [p.id]: e.target.value })
+                              }
+                            />
+                          </span>
                           <span className="prod-card__courses">
                             {p.product_courses.length === 0 ? (
                               <span className="muted">no courses linked</span>
@@ -443,7 +493,10 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
                         {dirty ? (
                           <>
                             <span className="prod-dot" />
-                            Unsaved {[priceDirty && 'price', descDirty && 'description', thumbDirty && 'image'].filter(Boolean).join(' and ')}
+                            Unsaved {[priceDirty && 'price', descDirty && 'description', slugDirty && 'URL', thumbDirty && 'image'].filter(Boolean).join(' and ')}
+                            {slugDirty && !slugValid && (
+                              <span className="prod-hint--bad"> · invalid slug</span>
+                            )}
                           </>
                         ) : (
                           <span className="muted">No changes</span>
@@ -464,7 +517,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
                       <button
                         className="btn btn-primary small"
                         onClick={() => onSaveProduct(p)}
-                        disabled={busy || !dirty || !priceValid}
+                        disabled={busy || !dirty || !priceValid || !slugValid}
                       >
                         {busy ? 'Saving…' : 'Save changes'}
                       </button>

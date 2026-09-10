@@ -1070,6 +1070,30 @@ div[class*="_PuckCanvas-root_"],
   border-radius: 5px;
   padding: 0.08rem 0.35rem;
 }
+.prod-slug {
+  display: inline-flex;
+  align-items: center;
+}
+.prod-slug__input {
+  font: inherit;
+  color: var(--forest-dark);
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed var(--line);
+  padding: 0 0.1rem;
+  min-width: 4rem;
+}
+.prod-slug__input:focus {
+  outline: none;
+  border-bottom-color: var(--forest);
+}
+.prod-slug.is-invalid {
+  border-color: #c0392b;
+}
+.prod-slug.is-invalid .prod-slug__input {
+  color: #c0392b;
+  border-bottom-color: #c0392b;
+}
 .prod-card__courses { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; }
 /* Bare comma-joined Moodle ids ("10, 15, 16") read as prose; as chips they read
    as the set of things this product actually grants. */
