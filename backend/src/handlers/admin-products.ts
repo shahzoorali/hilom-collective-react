@@ -18,7 +18,7 @@ export async function list(event: APIGatewayProxyEventV2): Promise<APIGatewayPro
     const { data, error } = await supabase
       .from('products')
       .select(
-        'id, name, slug, description, price_centavos, currency, is_active, product_courses(moodle_course_id)',
+        'id, name, slug, description, price_centavos, currency, thumbnail_url, is_active, product_courses(moodle_course_id)',
       )
       .order('price_centavos', { ascending: true });
 
@@ -34,6 +34,8 @@ interface UpdateBody {
   name?: string;
   description?: string;
   is_active?: boolean;
+  /** Absolute URL, or null/"" to clear and fall back to the Moodle image. */
+  thumbnail_url?: string | null;
 }
 
 /**
@@ -72,6 +74,16 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
   }
   if (body.description !== undefined) patch.description = body.description;
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active);
+  if (body.thumbnail_url !== undefined) {
+    const raw = body.thumbnail_url;
+    if (raw === null || raw === '') {
+      patch.thumbnail_url = null;
+    } else if (typeof raw === 'string' && /^https?:\/\//i.test(raw.trim())) {
+      patch.thumbnail_url = raw.trim();
+    } else {
+      return badRequest('thumbnail_url must be an absolute http(s) URL, or null to clear it');
+    }
+  }
 
   if (Object.keys(patch).length === 0) return badRequest('No updatable fields provided');
 
@@ -81,7 +93,7 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
       .from('products')
       .update(patch)
       .eq('id', productId)
-      .select('id, name, slug, description, price_centavos, currency, is_active')
+      .select('id, name, slug, description, price_centavos, currency, thumbnail_url, is_active')
       .maybeSingle();
 
     if (error) throw error;

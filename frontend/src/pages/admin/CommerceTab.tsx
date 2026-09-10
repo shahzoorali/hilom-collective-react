@@ -5,6 +5,8 @@ import {
   type AdminOrder, type AdminProduct, type CourseSummary,
 } from '../../lib/api';
 import { money } from '../../components/Layout';
+import type { MediaAsset } from '../../lib/cms';
+import { MediaPickerModal } from './MediaLibrary';
 import OrderDetail from './OrderDetail';
 
 /**
@@ -48,6 +50,10 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   // every keystroke fights the user mid-edit (e.g. "1499." or a cleared field).
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
   const [descriptionDrafts, setDescriptionDrafts] = useState<Record<string, string>>({});
+  // Per-product image override. null = "use the Moodle course image". Set here,
+  // it survives a course sync — the mirrored Moodle image does not.
+  const [thumbDrafts, setThumbDrafts] = useState<Record<string, string | null>>({});
+  const [pickingThumbFor, setPickingThumbFor] = useState<string | null>(null);
   const [courses, setCourses] = useState<CourseSummary[]>([]);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +77,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
         Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
       );
       setDescriptionDrafts(Object.fromEntries(prods.map((p) => [p.id, p.description ?? ''])));
+      setThumbDrafts(Object.fromEntries(prods.map((p) => [p.id, p.thumbnail_url])));
     },
     [],
   );
@@ -132,8 +139,9 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   async function onSaveProduct(product: AdminProduct) {
     const raw = (priceDrafts[product.id] ?? '').trim();
     const trimmedDesc = (descriptionDrafts[product.id] ?? '').trim();
+    const thumb = thumbDrafts[product.id] ?? null;
 
-    const patch: { price_centavos?: number; description?: string } = {};
+    const patch: { price_centavos?: number; description?: string; thumbnail_url?: string | null } = {};
 
     if (isPriceDirty(product, raw)) {
       if (!isPriceValid(raw)) {
@@ -146,6 +154,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
       patch.price_centavos = Math.round(Number(raw) * 100);
     }
     if (trimmedDesc !== (product.description ?? '')) patch.description = trimmedDesc;
+    if (thumb !== (product.thumbnail_url ?? null)) patch.thumbnail_url = thumb;
 
     if (Object.keys(patch).length === 0) {
       setNotice('Nothing to save.');
@@ -166,6 +175,9 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
       if (patch.description !== undefined) {
         parts.push(`description ${patch.description ? 'updated' : 'cleared'}`);
       }
+      if (patch.thumbnail_url !== undefined) {
+        parts.push(`image ${patch.thumbnail_url ? 'updated' : 'cleared'}`);
+      }
       setNotice(`${updated.name}: ${parts.join(', ')}.`);
       await load(adminKey, onlyStuck);
     } catch (e) {
@@ -179,6 +191,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   function onDiscard(product: AdminProduct) {
     setPriceDrafts({ ...priceDrafts, [product.id]: (product.price_centavos / 100).toFixed(2) });
     setDescriptionDrafts({ ...descriptionDrafts, [product.id]: product.description ?? '' });
+    setThumbDrafts({ ...thumbDrafts, [product.id]: product.thumbnail_url });
   }
 
   async function onToggleActive(product: AdminProduct) {
@@ -290,9 +303,11 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
               {products.map((p) => {
                 const draft = priceDrafts[p.id] ?? '';
                 const descDraft = descriptionDrafts[p.id] ?? '';
+                const thumbDraft = thumbDrafts[p.id] ?? null;
                 const priceDirty = isPriceDirty(p, draft);
                 const descDirty = descDraft.trim() !== (p.description ?? '');
-                const dirty = priceDirty || descDirty;
+                const thumbDirty = thumbDraft !== (p.thumbnail_url ?? null);
+                const dirty = priceDirty || descDirty || thumbDirty;
                 const priceValid = isPriceValid(draft);
                 return (
                   <article
@@ -376,14 +391,59 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
                           }
                         />
                       </div>
+
+                      <div className="prod-field prod-field--thumb">
+                        <label className="prod-label">Catalog image</label>
+                        {thumbDraft ? (
+                          <img
+                            src={thumbDraft}
+                            alt=""
+                            style={{ width: '100%', maxWidth: 220, borderRadius: 6, display: 'block', marginBottom: '0.4rem' }}
+                          />
+                        ) : (
+                          <p className="small muted" style={{ margin: '0 0 0.4rem' }}>
+                            Using the Moodle course image. Set one here to stop sync from
+                            overwriting it.
+                          </p>
+                        )}
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost small"
+                            onClick={() => setPickingThumbFor(p.id)}
+                          >
+                            {thumbDraft ? 'Change' : 'Choose image'}
+                          </button>
+                          {thumbDraft && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost small"
+                              onClick={() => setThumbDrafts({ ...thumbDrafts, [p.id]: null })}
+                            >
+                              Use Moodle image
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
+
+                    {pickingThumbFor === p.id && (
+                      <MediaPickerModal
+                        adminKey={adminKey}
+                        onPick={(asset: MediaAsset) => {
+                          setThumbDrafts({ ...thumbDrafts, [p.id]: asset.url });
+                          setPickingThumbFor(null);
+                        }}
+                        onClose={() => setPickingThumbFor(null)}
+                      />
+                    )}
 
                     <footer className="prod-card__foot">
                       <span className="prod-status small">
                         {dirty ? (
                           <>
                             <span className="prod-dot" />
-                            Unsaved {[priceDirty && 'price', descDirty && 'description'].filter(Boolean).join(' and ')}
+                            Unsaved {[priceDirty && 'price', descDirty && 'description', thumbDirty && 'image'].filter(Boolean).join(' and ')}
                           </>
                         ) : (
                           <span className="muted">No changes</span>

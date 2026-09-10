@@ -52,7 +52,10 @@ export async function list(): Promise<APIGatewayProxyResultV2> {
     return ok({
       products: products.map((p) => ({
         ...p,
-        image_url: firstImageByProductId.get(p.id) ?? null,
+        // An admin-set thumbnail wins over the mirrored Moodle image, which the
+        // course sync overwrites on every run. Falls back to that mirror, then
+        // to nothing.
+        image_url: p.thumbnail_url ?? firstImageByProductId.get(p.id) ?? null,
         moodle_course_ids: courseIdsByProductId.get(p.id) ?? [],
       })),
     });
@@ -104,6 +107,9 @@ export async function detail(event: APIGatewayProxyEventV2): Promise<APIGatewayP
         ...product,
         moodle_course_ids: courseIds,
         courses: courses ?? [],
+        // Same precedence as the catalog list: admin thumbnail first, then the
+        // lowest-numbered linked course's mirrored Moodle image.
+        image_url: product.thumbnail_url ?? courses?.[0]?.image_url ?? null,
       },
     });
   } catch (err) {
