@@ -33,6 +33,41 @@ const deliveryLabel = (mode: Facilitator['delivery_mode']): string =>
 
 const BULLET = /^[•·*\-–]\s+/;
 
+/** Whether a value carries real markup, versus plain text a facilitator typed
+ *  into a textarea. Shared so `parseOffer` and `Prose` agree on the answer. */
+const HAS_MARKUP = /<[a-z][^>]*>/i;
+
+/**
+ * Free text stored with real newlines — a bio, a service description — that was
+ * going straight into `dangerouslySetInnerHTML`, where HTML collapses every
+ * newline. The public page rendered a run-on blob while the edit screen (a
+ * plain `<textarea>`) showed the paragraph breaks the facilitator actually
+ * typed. This is what closes that gap.
+ *
+ * A value with real markup came through the CMS rich-text allowlist and is
+ * already structured — it renders as HTML, untouched. Plain text is split into
+ * paragraphs on blank lines, with single newlines kept as line breaks inside a
+ * paragraph via `pre-wrap`.
+ */
+function Prose({ text, className }: { text: string; className?: string }) {
+  if (HAS_MARKUP.test(text)) {
+    return <div className={className} dangerouslySetInnerHTML={{ __html: text }} />;
+  }
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return (
+    <div className={className}>
+      {paragraphs.map((p, i) => (
+        <p key={i} style={{ whiteSpace: 'pre-wrap' }}>
+          {p}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 type ParsedOffer = { eyebrow: string | null; lede: string[]; points: string[] };
 
 /**
@@ -56,7 +91,7 @@ type ParsedOffer = { eyebrow: string | null; lede: string[]; points: string[] };
  * it has no bullet lines to lift out. Both fall back to rendering as HTML.
  */
 function parseOffer(text: string): ParsedOffer | null {
-  if (/<[a-z][^>]*>/i.test(text)) return null;
+  if (HAS_MARKUP.test(text)) return null;
 
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const points: string[] = [];
@@ -233,8 +268,10 @@ export default function FacilitatorProfileView({
             <section className="fac-section">
               <h2>About {firstName}</h2>
               {/* Sanitized server-side on write with the allowlist the CMS
-                  rich-text blocks use — see facilitator-input.ts. */}
-              <div className="fac-prose" dangerouslySetInnerHTML={{ __html: f.bio }} />
+                  rich-text blocks use — see facilitator-input.ts. `Prose`
+                  recovers the paragraph breaks when it was typed as plain
+                  text, which is what the textarea on the edit screen keeps. */}
+              <Prose className="fac-prose" text={f.bio} />
             </section>
           )}
 
@@ -391,12 +428,7 @@ export default function FacilitatorProfileView({
                         </ul>
                       </>
                     ) : (
-                      s.description && (
-                        <div
-                          className="fac-prose small"
-                          dangerouslySetInnerHTML={{ __html: s.description }}
-                        />
-                      )
+                      s.description && <Prose className="fac-prose small" text={s.description} />
                     )}
 
                     {/* Everything below is pinned to the bottom of the card, so
