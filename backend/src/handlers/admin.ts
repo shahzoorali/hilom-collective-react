@@ -173,8 +173,22 @@ async function draftMissingProducts(
   if (existingErr) throw existingErr;
   const takenSlugs = new Set((existing ?? []).map((r) => r.slug as string));
 
+  // Courses we've already offered a draft for, whether or not that draft still
+  // exists. An admin who deletes an unwanted auto-draft should not have it
+  // resurrected on the next sync (see migration 0041).
+  const { data: drafted0, error: draftedErr } = await supabase
+    .from('courses')
+    .select('moodle_course_id')
+    .not('product_drafted_at', 'is', null);
+  if (draftedErr) throw draftedErr;
+  const alreadyDrafted = new Set((drafted0 ?? []).map((r) => r.moodle_course_id as number));
+
   const candidates = courses.filter(
-    (c) => c.visible && !NON_SELLABLE_COURSE_IDS.has(c.id) && !alreadySold.has(c.id),
+    (c) =>
+      c.visible &&
+      !NON_SELLABLE_COURSE_IDS.has(c.id) &&
+      !alreadySold.has(c.id) &&
+      !alreadyDrafted.has(c.id),
   );
 
   const drafted: { id: string; name: string; slug: string; moodle_course_id: number }[] = [];
@@ -195,6 +209,14 @@ async function draftMissingProducts(
       .from('product_courses')
       .insert({ product_id: product.id, moodle_course_id: c.id });
     if (linkErr) throw linkErr;
+
+    // Mark the course as drafted-for so a later deletion of this draft is not
+    // undone by the next sync.
+    const { error: stampErr } = await supabase
+      .from('courses')
+      .update({ product_drafted_at: new Date().toISOString() })
+      .eq('moodle_course_id', c.id);
+    if (stampErr) throw stampErr;
 
     drafted.push({ id: product.id, name: c.fullname, slug, moodle_course_id: c.id });
   }

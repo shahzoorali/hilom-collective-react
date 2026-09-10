@@ -43,4 +43,7 @@ export interface Course {
   summary: string | null;
   visible: boolean;
   last_synced_at: string;
+  /** Set once the sync has auto-created a draft product for this course; keeps a
+   *  deleted draft from being resurrected on the next sync. */
+  product_drafted_at: string | null;
 }
