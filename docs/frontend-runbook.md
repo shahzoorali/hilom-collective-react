@@ -22,22 +22,23 @@ Phase 7 step, because it would take the existing store offline.
 
 ## Deploying
 
-```bash
-cd frontend && npm run build
-cd dist && python -c "import shutil; shutil.make_archive('../dist','zip','.')"
-```
-
-Then create a deployment, upload the zip to the returned URL, and start it:
+The Amplify app is connected to `github.com/shahzoorali/hilom-collective-react`
+with auto-build on `main`. **Deploy = push to `main`:**
 
 ```bash
-aws amplify create-deployment --region ap-southeast-1 --app-id d2hx75l7mk7woi --branch-name main
-curl -X PUT -T frontend/dist.zip "<zipUploadUrl>"
-aws amplify start-deployment --region ap-southeast-1 --app-id d2hx75l7mk7woi --branch-name main --job-id <jobId>
+git push origin main
 ```
 
-This is manual zip deployment rather than a GitHub CI/CD connection, which would
-need a GitHub OAuth authorization the build doesn't currently have. Connecting the
-repo later is a drop-in improvement.
+Amplify picks up the commit and runs `amplify.yml` (`npm ci` → `npm run build` →
+`npm run prerender`, artifacts from `frontend/dist`). Watch the job:
+
+```bash
+aws amplify list-jobs --region ap-southeast-1 --app-id d2hx75l7mk7woi --branch-name main --max-items 1
+```
+
+The old manual zip flow (`aws amplify create-deployment` + `curl -T`) no longer
+works — once a repo is connected Amplify rejects it with `Operation not supported.
+App is already connected a repository`.
 
 ### SPA routing
 
