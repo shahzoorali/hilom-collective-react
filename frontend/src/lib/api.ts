@@ -269,3 +269,22 @@ export const getMyOwnedCourses = (): Promise<number[]> => {
     headers: { Authorization: `Bearer ${token}` },
   }).then((r) => r.courseIds);
 };
+
+/**
+ * Renames the signed-in account — Cognito, and the buyer's Moodle account
+ * with it, so the name on a course page matches the name here.
+ *
+ * `moodleSynced` is false for someone who has no Moodle account yet (signed up
+ * but never bought). That is a normal save, not a partial one — the name they
+ * just set is what `core_user_create_users` will use at first purchase — so the
+ * caller reports success either way and uses the flag only for wording.
+ */
+export const updateMyProfile = (givenName: string, familyName: string) => {
+  const token = idToken();
+  if (!token) return Promise.reject(new Error('Sign in to continue'));
+  return apiFetch<{ givenName: string; familyName: string; moodleSynced: boolean }>('/me/profile', {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ givenName, familyName }),
+  });
+};

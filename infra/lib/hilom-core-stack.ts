@@ -285,10 +285,28 @@ export class HilomCoreStack extends cdk.Stack {
     const orderStatusByIntent = makeFn('OrderStatusByIntentFn', 'handlers/orders.ts', 'statusByIntent');
     const orderStatusBySession = makeFn('OrderStatusBySessionFn', 'handlers/orders.ts', 'statusBySession');
     const meOwnedCourses = makeFn('MeOwnedCoursesFn', 'handlers/me.ts', 'ownedCourses');
+    const meUpdateProfile = makeFn('MeUpdateProfileFn', 'handlers/me.ts', 'updateProfile');
     // Same reasoning as checkoutSession below: verifies the buyer's id_token,
     // so it needs the same (non-secret) pool/client ids.
-    meOwnedCourses.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
-    meOwnedCourses.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
+    for (const fn of [meOwnedCourses, meUpdateProfile]) {
+      fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
+      fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
+    }
+
+    // A buyer renaming themselves writes their own Cognito attributes and then
+    // their Moodle account, so this one function needs the pool secret (region
+    // + pool id), the Moodle WS token, and a write action no other function
+    // holds. Scoped to `AdminUpdateUserAttributes` alone: the handler only ever
+    // sets given_name/family_name, and nothing here should be able to disable
+    // an account or move an email address.
+    cognitoSecret.grantRead(meUpdateProfile);
+    moodleSecret.grantRead(meUpdateProfile);
+    meUpdateProfile.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cognito-idp:AdminUpdateUserAttributes'],
+        resources: [cognitoUserPoolArn],
+      }),
+    );
 
     // Only QRPh is activated on the PayMongo account today. Adding GCash or
     // card later is a config change here, not a code change — but every value
@@ -540,6 +558,7 @@ export class HilomCoreStack extends cdk.Stack {
     route('/orders/status-by-intent/{intentId}', apigw.HttpMethod.GET, orderStatusByIntent, 'OrderStatusByIntentInt');
     route('/orders/status-by-session/{sessionId}', apigw.HttpMethod.GET, orderStatusBySession, 'OrderStatusBySessionInt');
     route('/me/owned-courses', apigw.HttpMethod.GET, meOwnedCourses, 'MeOwnedCoursesInt');
+    route('/me/profile', apigw.HttpMethod.PATCH, meUpdateProfile, 'MeUpdateProfileInt');
     route('/admin/orders', apigw.HttpMethod.GET, adminOrders, 'AdminOrdersInt');
     route('/admin/orders/{orderId}/payment', apigw.HttpMethod.GET, adminOrderPayment, 'AdminOrderPaymentInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');

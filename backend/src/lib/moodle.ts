@@ -171,6 +171,21 @@ export class MoodleClient {
     return users[0];
   }
 
+  /**
+   * Renames an existing Moodle user.
+   *
+   * Only firstname/lastname are sent. `core_user_update_users` will happily
+   * write `email`, `username` or `auth` too, and those are the fields that
+   * would break the OAuth2 link between the Cognito identity and this Moodle
+   * account — so this method deliberately cannot express them. The account
+   * self-service form that calls it has no business touching them either.
+   */
+  async updateUserName(userid: number, firstname: string, lastname: string): Promise<void> {
+    await this.call<null>('core_user_update_users', {
+      users: [{ id: userid, firstname, lastname }],
+    });
+  }
+
   async createUser(user: {
     username: string;
     email: string;

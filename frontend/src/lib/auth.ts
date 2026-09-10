@@ -14,6 +14,21 @@ import { COGNITO, redirectUri } from '../config';
 const VERIFIER_KEY = 'hilom.pkce.verifier';
 const TOKENS_KEY = 'hilom.tokens';
 
+/**
+ * A name the user has just changed, held over the top of the id_token claim.
+ *
+ * There is no refresh-token flow here (see the file header — the SPA holds only
+ * what the code exchange returned), so a rename lands in Cognito but the token
+ * in this tab keeps the old `given_name` until the next sign-in. Without this
+ * override, saving your name appears to do nothing: the form reports success
+ * and the page immediately re-renders the stale claim.
+ *
+ * Cleared by `logout`, and stored beside the tokens in sessionStorage so it
+ * dies with the tab like they do. Display only, exactly like the claims it
+ * shadows — Cognito holds the real value.
+ */
+const NAME_OVERRIDE_KEY = 'hilom.nameOverride';
+
 export interface HilomUser {
   email: string;
   givenName?: string;
@@ -119,10 +134,11 @@ export function currentUser(): HilomUser | null {
       'cognito:groups'?: string[];
     };
     if (!payload.email) return null;
+    const override = readNameOverride();
     return {
       email: payload.email,
-      givenName: payload.given_name,
-      familyName: payload.family_name,
+      givenName: override?.givenName ?? payload.given_name,
+      familyName: override?.familyName ?? payload.family_name,
       // Absent, not empty, for a user in no groups — which is every buyer.
       groups: Array.isArray(payload['cognito:groups']) ? payload['cognito:groups'] : [],
     };
@@ -155,8 +171,25 @@ export function idToken(): string | null {
   }
 }
 
+function readNameOverride(): { givenName: string; familyName: string } | null {
+  const raw = sessionStorage.getItem(NAME_OVERRIDE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as { givenName: string; familyName: string };
+  } catch {
+    sessionStorage.removeItem(NAME_OVERRIDE_KEY);
+    return null;
+  }
+}
+
+/** Records a just-saved name so `currentUser()` stops returning the stale claim. */
+export function setNameOverride(givenName: string, familyName: string): void {
+  sessionStorage.setItem(NAME_OVERRIDE_KEY, JSON.stringify({ givenName, familyName }));
+}
+
 export function logout(): void {
   sessionStorage.removeItem(TOKENS_KEY);
+  sessionStorage.removeItem(NAME_OVERRIDE_KEY);
   const params = new URLSearchParams({
     client_id: COGNITO.clientId,
     logout_uri: `${window.location.origin}/`,
