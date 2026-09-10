@@ -19,6 +19,7 @@ import {
   describeRefundPolicy,
   formatDuration,
   getFacilitator,
+  listMyBookings,
   viewerTimezone,
   zoneLabel,
   type Facilitator,
@@ -40,6 +41,11 @@ export default function BookingFlow() {
   const [intake, setIntake] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // For an exploratory (free) call: whether this client has already had one with
+  // this facilitator. The one-per-client rule is enforced by a unique index and
+  // surfaces server-side as a 23505 *after* the form is filled in — checked here
+  // up front so the picker and intake are never shown when they cannot be used.
+  const [freeCallSpent, setFreeCallSpent] = useState(false);
 
   const pickerRef = useRef<SlotPickerHandle>(null);
   const viewerZone = viewerTimezone();
@@ -57,6 +63,36 @@ export default function BookingFlow() {
       live = false;
     };
   }, [slug, serviceId]);
+
+  // Once we know this is a free call, ask whether the client has already used it
+  // with this facilitator. `/me/bookings` keeps cancelled rows, so the filter
+  // here mirrors the DB's partial unique index: a cancelled call does not count.
+  const userEmail = user?.email ?? null;
+  useEffect(() => {
+    if (!userEmail || !facilitator || !service || service.kind !== 'exploratory') return;
+    let live = true;
+    listMyBookings()
+      .then((bookings) => {
+        if (!live) return;
+        setFreeCallSpent(
+          bookings.some(
+            (b) =>
+              b.facilitator_id === facilitator.id &&
+              b.service_kind === 'exploratory' &&
+              b.status !== 'cancelled_by_client' &&
+              b.status !== 'cancelled_by_facilitator' &&
+              b.status !== 'refunded',
+          ),
+        );
+      })
+      .catch(() => {
+        // A failed check must not block a booking the server would allow — the
+        // 23505 handler in confirm() is still there as the backstop.
+      });
+    return () => {
+      live = false;
+    };
+  }, [userEmail, facilitator, service]);
 
   /**
    * Buy a block of sessions (0035).
@@ -231,7 +267,24 @@ export default function BookingFlow() {
           </div>
         )}
 
-        {!isPackage && (
+        {freeCallSpent && (
+          <div className="panel" style={{ marginTop: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>
+              You've already had your complimentary call with{' '}
+              {shortName(facilitator.display_name, facilitator.short_name)}
+            </h2>
+            <p>
+              The free introductory call is one per person, per facilitator. To keep working
+              together, book one of {shortName(facilitator.display_name, facilitator.short_name)}'s
+              paid sessions.
+            </p>
+            <Link className="btn btn-accent" to={`/facilitators/${facilitator.slug}`}>
+              See {shortName(facilitator.display_name, facilitator.short_name)}'s sessions
+            </Link>
+          </div>
+        )}
+
+        {!isPackage && !freeCallSpent && (
         <SlotPicker
           handleRef={pickerRef}
           facilitatorSlug={facilitator.slug}
@@ -244,7 +297,7 @@ export default function BookingFlow() {
         />
         )}
 
-        {selectedSlot && (
+        {selectedSlot && !freeCallSpent && (
           <div className="panel" style={{ marginTop: '2rem' }}>
             <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>Confirm your session</h2>
             <p>
