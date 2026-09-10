@@ -4,12 +4,14 @@ import { adminListPages, ADMIN_ACTOR_STORAGE } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
+import FacilitatorEditor from './admin/FacilitatorEditor';
 import PayoutsTab from './admin/PayoutsTab';
 import ReviewsTab from './admin/ReviewsTab';
 import BookingsTab from './admin/BookingsTab';
 import PagesTab from './admin/PagesTab';
 import PageEditor from './admin/PageEditor';
 import MenusTab from './admin/MenusTab';
+import FooterTab from './admin/FooterTab';
 import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
 import RegistrationsTab from './admin/RegistrationsTab';
@@ -34,6 +36,7 @@ const NAV_GROUPS = [
       { label: 'Help Centre', path: 'knowledge-base', icon: '💡' },
       { label: 'Media', path: 'media', icon: '🖼️' },
       { label: 'Menus', path: 'menus', icon: '🧭' },
+      { label: 'Footer', path: 'footer', icon: '🧱' },
     ],
   },
   {
@@ -355,9 +358,14 @@ export default function Admin() {
             }
           />
           <Route path="menus" element={<MenusTab adminKey={adminKey} />} />
+          <Route path="footer" element={<FooterTab adminKey={adminKey} />} />
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
+          <Route
+            path="facilitators/:facilitatorId"
+            element={<FacilitatorEditor adminKey={adminKey} />}
+          />
           <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
           <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
           <Route path="people" element={<PeopleTab adminKey={adminKey} />} />

@@ -6,6 +6,7 @@ import hilomLogo from '../assets/hilom-logo.png';
 import { useMenus } from '../cms/useMenus';
 import type { MenuLink } from '../lib/cms';
 import RouteTransition from './RouteTransition';
+import SiteFooter from './SiteFooter';
 
 export function money(centavos: number, currency = 'PHP'): string {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency }).format(centavos / 100);
@@ -56,17 +57,6 @@ const ACCOUNT_MENU = [
   { label: 'My details', to: '/account/details' },
 ] as const;
 
-/** The footer's site column. Hardcoded rather than CMS-driven: the editable
- *  footer menu carries legal and platform links, and mixing the two into one
- *  list is what made the old single-line footer unreadable. */
-const FOOTER_EXPLORE = [
-  { label: 'About Hilom', to: '/about' },
-  { label: 'Services', to: '/services' },
-  { label: 'Courses', to: '/courses' },
-  { label: 'Facilitators', to: '/facilitators' },
-  { label: 'Events', to: '/events' },
-  { label: 'Journal', to: '/blog' },
-] as const;
 
 function UserMenu({ email }: { email: string }) {
   const [open, setOpen] = useState(false);
@@ -188,69 +178,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <RouteTransition>{children}</RouteTransition>
       </main>
 
-      <footer className="site-footer">
-        <div className="container">
-          <div className="cv-foot">
-            {/* Zone 1 — the brand, one closing line, and the same call to
-                action the header opens with. */}
-            <div className="cv-foot__cta">
-              <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" />
-              <p className="cv-foot__headline">Paghilom. Para sa lahat.</p>
-              <Link className="btn btn-primary" to="/community">
-                Join our community
-              </Link>
-            </div>
-
-            {/* Zone 2 — how to reach a person. */}
-            <div>
-              <h3>Get in touch</h3>
-              <ul className="cv-foot__contact">
-                <li>
-                  <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a>
-                </li>
-                <li>
-                  <span>Metro Manila, Philippines</span>
-                </li>
-              </ul>
-              <div className="cv-social">
-                <a href="https://www.facebook.com/hilomcollective" target="_blank" rel="noreferrer" aria-label="Hilom Collective on Facebook">f</a>
-                <a href="https://www.instagram.com/hilomcollective/" target="_blank" rel="noreferrer" aria-label="Hilom Collective on Instagram">ig</a>
-                <a href="https://www.tiktok.com/@hilom.collective" target="_blank" rel="noreferrer" aria-label="Hilom Collective on TikTok">tt</a>
-              </div>
-            </div>
-
-            {/* Zone 3 — where to go next on the site. */}
-            <div>
-              <h3>Explore</h3>
-              <ul className="cv-foot__list">
-                {FOOTER_EXPLORE.map((item) => (
-                  <li key={item.to}>
-                    <Link to={item.to}>{item.label}</Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Zone 4 — the CMS-editable menu, which is where the legal and
-                platform links live. */}
-            <div>
-              <h3>More</h3>
-              <ul className="cv-foot__list">
-                {menus.footer.map((item) => (
-                  <li key={`${item.label}-${item.href}`}>
-                    <MenuLinkView item={item} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className="cv-foot__legal">
-            <p>© {new Date().getFullYear()} Hilom Collective. All rights reserved.</p>
-            <p>A holistic wellness platform rooted in Filipino life.</p>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter settings={menus.footerSettings} menus={menus.byKey} />
     </>
   );
 }

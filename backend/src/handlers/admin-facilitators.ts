@@ -32,7 +32,13 @@ import { sendFacilitatorApproved, sendFacilitatorPublished, sendBookingCancelled
 import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
-import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
+import {
+  normalizeSlug,
+  slugify,
+  findAvailableFacilitatorSlug,
+  FACILITATOR_RESERVED_SLUGS,
+  SlugError,
+} from '../lib/slug.js';
 
 const ADMIN_FACILITATOR_COLUMNS =
   'id, slug, email, cognito_sub, display_name, short_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at, ' +
@@ -388,14 +394,69 @@ async function patchFacilitator(
     patch.admin_notes = String(body.admin_notes ?? '').slice(0, 4000) || null;
   }
 
-  // The one public profile field editable from here. `display_name` doubles as
-  // the billing name and is the facilitator's to change in their own dashboard;
-  // `short_name` (0042) is the "actually, call me X" fix an admin often needs
-  // to make on someone else's behalf right after adding them. Blank clears it
-  // and the heuristic in names.ts takes over again.
-  if (body.short_name !== undefined) {
+  // `short_name` (0042) on its own is the "actually, call me X" fix an admin
+  // often needs to make right after adding someone, and it stays a one-field
+  // patch so the existing inline prompt keeps working. Blank clears it and the
+  // heuristic in names.ts takes over again.
+  if (body.short_name !== undefined && body.display_name === undefined) {
     const trimmed = String(body.short_name ?? '').trim().slice(0, 60);
     patch.short_name = trimmed || null;
+  }
+
+  // The full profile edit, from Admin -> Facilitators -> Edit profile.
+  //
+  // Keyed off `display_name` because `validateProfile` is a whole-profile
+  // validator: it requires a name and returns every public column, so sending
+  // it a partial body would blank the fields that were left out. The admin
+  // editor always posts the complete profile, so the presence of the one
+  // required field is what distinguishes it from the small single-field
+  // patches above.
+  //
+  // Deliberately the same validator the facilitator's own dashboard save goes
+  // through (facilitator-portal.ts) — an admin editing on someone's behalf
+  // must not be able to store a bio, photo URL or social link that the owner
+  // could not have stored themselves.
+  if (body.display_name !== undefined) {
+    Object.assign(patch, validateProfile(body));
+
+    // Private columns, which `validateProfile` does not cover because the
+    // public apply form never collects them.
+    if (body.legal_name !== undefined) {
+      patch.legal_name = String(body.legal_name ?? '').trim().slice(0, 160) || null;
+    }
+    if (body.phone !== undefined) {
+      patch.phone = String(body.phone ?? '').trim().slice(0, 40) || null;
+    }
+    if (body.payout_details !== undefined) {
+      const details = body.payout_details;
+      patch.payout_details =
+        details && typeof details === 'object' && !Array.isArray(details) ? details : {};
+    }
+
+    // The profile URL. Admin-only on purpose: changing it breaks every link
+    // anyone has to the profile, which is not a self-service operation — the
+    // same reasoning that keeps it read-only on the facilitator's own screen.
+    if (body.slug !== undefined) {
+      try {
+        const slug = normalizeSlug(body.slug);
+        if (FACILITATOR_RESERVED_SLUGS.has(slug)) {
+          return badRequest(`"${slug}" is reserved — pick another profile URL`);
+        }
+        if (slug !== existing.slug) {
+          const { data: clash } = await supabase
+            .from('facilitators')
+            .select('id')
+            .eq('slug', slug)
+            .neq('id', facilitatorId)
+            .maybeSingle();
+          if (clash) return badRequest(`Another facilitator already uses /facilitators/${slug}`);
+          patch.slug = slug;
+        }
+      } catch (err) {
+        if (err instanceof SlugError) return badRequest(err.message);
+        throw err;
+      }
+    }
   }
 
   if (Object.keys(patch).length === 0) return badRequest('Nothing to update');

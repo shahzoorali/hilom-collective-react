@@ -89,8 +89,9 @@ export const getPage = (slug: string) =>
 export const listPages = () =>
   apiFetch<{ pages: { slug: string; title: string }[] }>('/pages').then((r) => r.pages);
 
+/** Menus and the editable site settings, in one request — see backend/handlers/menus.ts. */
 export const getMenus = () =>
-  apiFetch<{ menus: Record<string, MenuLink[]> }>('/menus').then((r) => r.menus);
+  apiFetch<{ menus: Record<string, MenuLink[]>; settings?: Record<string, unknown> }>('/menus');
 
 export const getForm = (slug: string) =>
   apiFetch<{ form: CmsForm }>(`/forms/${encodeURIComponent(slug)}`).then((r) => r.form);
@@ -237,6 +238,18 @@ export interface AdminMenu {
   label: string;
   items: (MenuLink & { visible: boolean })[];
 }
+
+export const adminGetSiteSettings = (adminKey: string) =>
+  apiFetch<{ settings: Record<string, unknown> }>('/admin/site-settings', adminInit(adminKey)).then(
+    (r) => r.settings,
+  );
+
+/** Replaces one setting's value wholesale, matching the menu editor's save. */
+export const adminSaveSiteSetting = (adminKey: string, key: string, value: unknown) =>
+  apiFetch<{ settings: Record<string, unknown> }>(
+    `/admin/site-settings/${encodeURIComponent(key)}`,
+    adminInit(adminKey, 'PUT', value as Record<string, unknown>),
+  ).then((r) => r.settings);
 
 export const adminGetMenus = (adminKey: string) =>
   apiFetch<{ menus: AdminMenu[] }>('/admin/menus', adminInit(adminKey)).then((r) => r.menus);

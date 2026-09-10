@@ -815,15 +815,48 @@ export const adminGetFacilitator = (adminKey: string, facilitatorId: string) =>
     { headers: { 'x-admin-key': adminKey } },
   );
 
+export type AdminFacilitatorPatch =
+  | { status?: FacilitatorStatus; platform_fee_bps?: number; admin_notes?: string; short_name?: string | null }
+  | AdminFacilitatorProfilePatch;
+
+/** The full public profile, as the admin profile editor sends it. */
+export interface AdminFacilitatorProfilePatch {
+  display_name: string;
+  short_name: string | null;
+  headline: string;
+  bio: string;
+  photo_url: string;
+  credentials: string[];
+  specialties: string[];
+  languages: string[];
+  location: string;
+  delivery_mode: DeliveryMode;
+  scope_note: string;
+  social_links: Record<string, string>;
+  website_url: string;
+  years_experience: YearsExperience | null;
+  timezone: string;
+  vacation_until: string | null;
+  slug: string;
+  legal_name: string;
+  phone: string;
+  payout_details: Record<string, unknown>;
+  admin_notes: string;
+}
+
 export const adminPatchFacilitator = (
   adminKey: string,
   facilitatorId: string,
-  patch: {
-    status?: FacilitatorStatus;
-    platform_fee_bps?: number;
-    admin_notes?: string;
-    short_name?: string | null;
-  },
+  /**
+   * Either a small single-field patch (status, fee, notes, preferred name) or
+   * a whole public profile.
+   *
+   * The two are not mixed: the backend treats the presence of `display_name`
+   * as "this is the full profile" and validates every public column together,
+   * because the validator behind it returns a complete profile and a partial
+   * body would blank whatever was left out.
+   */
+  patch: AdminFacilitatorPatch,
 ) =>
   apiFetch<{ facilitator: AdminFacilitator }>(
     `/admin/facilitators/${encodeURIComponent(facilitatorId)}`,

@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from 'react';
 import { getMenus, type MenuLink } from '../lib/cms';
+import { coerceFooter, DEFAULT_FOOTER, type FooterSettings } from '../lib/footer';
 import { MOODLE_URL } from '../config';
 
 const link = (
@@ -39,29 +40,51 @@ export const FALLBACK_FOOTER: MenuLink[] = [
   link('Privacy Policy', '/privacy-policy'),
 ];
 
-let cache: Record<string, MenuLink[]> | null = null;
+interface SiteChrome {
+  menus: Record<string, MenuLink[]>;
+  settings: Record<string, unknown>;
+}
 
-export function useMenus(): Record<string, MenuLink[]> {
-  const [menus, setMenus] = useState<Record<string, MenuLink[]> | null>(cache);
+let cache: SiteChrome | null = null;
+
+export interface Chrome {
+  header: MenuLink[];
+  footer: MenuLink[];
+  /** Every menu by key, so a footer "menu" widget can name one other than 'footer'. */
+  byKey: Record<string, MenuLink[]>;
+  /** The editable footer, defaulted to what Layout.tsx used to hardcode. */
+  footerSettings: FooterSettings;
+}
+
+export function useMenus(): Chrome {
+  const [chrome, setChrome] = useState<SiteChrome | null>(cache);
 
   useEffect(() => {
     if (cache) return;
     let live = true;
     getMenus()
       .then((loaded) => {
-        cache = loaded;
-        if (live) setMenus(loaded);
+        const next = { menus: loaded.menus ?? {}, settings: loaded.settings ?? {} };
+        cache = next;
+        if (live) setChrome(next);
       })
       .catch(() => {
-        /* falls through to the hardcoded menus below */
+        /* falls through to the hardcoded menus and footer below */
       });
     return () => {
       live = false;
     };
   }, []);
 
+  const menus = chrome?.menus;
+  const footerValue = chrome?.settings?.footer;
+
   return {
     header: menus?.header?.length ? menus.header : FALLBACK_HEADER,
     footer: menus?.footer?.length ? menus.footer : FALLBACK_FOOTER,
+    byKey: menus ?? {},
+    // Absent means nobody has edited the footer — see the note in footer.ts on
+    // why that renders the built-in footer rather than an empty one.
+    footerSettings: footerValue ? coerceFooter(footerValue) : DEFAULT_FOOTER,
   };
 }

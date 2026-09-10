@@ -11,6 +11,7 @@
  * profile and no availability.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { money } from '../../components/Layout';
 import {
   adminCreateFacilitator,
@@ -396,6 +397,12 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
             <button type="button" className="btn btn-ghost small" onClick={() => setOpenId(f.id)}>
               Review
             </button>
+            {/* The application is what the drawer above shows; this is the
+                public profile, which is a different job and a different
+                screen — see FacilitatorEditor.tsx. */}
+            <Link className="btn btn-ghost small" to={`/admin/facilitators/${f.id}`}>
+              Edit profile
+            </Link>
             {f.status === 'applied' && (
               <>
                 <button
@@ -462,9 +469,16 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
           <div className="admin-drawer">
             <header className="admin-drawer-header">
               <h3 style={{ margin: 0 }}>{detail?.facilitator.display_name ?? 'Loading…'}</h3>
-              <button type="button" className="btn btn-ghost small" onClick={() => setOpenId(null)}>
-                Close
-              </button>
+              <div className="row" style={{ gap: '0.5rem' }}>
+                {detail && (
+                  <Link className="btn btn-accent small" to={`/admin/facilitators/${detail.facilitator.id}`}>
+                    Edit profile
+                  </Link>
+                )}
+                <button type="button" className="btn btn-ghost small" onClick={() => setOpenId(null)}>
+                  Close
+                </button>
+              </div>
             </header>
 
             <div className="admin-drawer-body">

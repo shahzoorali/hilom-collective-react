@@ -770,6 +770,51 @@ th { font-weight: 700; color: var(--muted); text-transform: uppercase; font-size
   margin: 0 auto;
 }
 
+/* Editor beside a live preview (Admin -> Facilitators -> Edit profile).
+   The preview renders the real public component, which is built for a
+   full-width page, so it is zoomed down rather than restyled: `zoom` reflows
+   at the smaller size, so the column's height stays honest, where a
+   `transform: scale` would leave the original height behind as dead space. */
+.admin-split {
+  display: grid;
+  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+.admin-split__form {
+  min-width: 0;
+}
+.admin-split__preview {
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+.admin-split__preview-label {
+  margin: 0 0 0.4rem;
+}
+.admin-preview-frame {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden auto;
+  max-height: calc(100dvh - 9rem);
+  background: var(--page);
+  zoom: 0.72;
+}
+
+@media (max-width: 1100px) {
+  /* Below this the two columns are each too narrow to be worth having. The
+     form comes first because it is what the screen is for. */
+  .admin-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-split__preview {
+    position: static;
+  }
+  .admin-preview-frame {
+    max-height: 70dvh;
+  }
+}
+
 /* Admin Mobile Topbar + Drawer — hidden on desktop, the sidebar becomes a
    slide-in drawer under this bar on narrow / touch screens. Mirrors the
    nav-drawer pattern of a native mobile app rather than shrinking the

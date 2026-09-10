@@ -73,6 +73,7 @@ export class HilomCmsStack extends cdk.Stack {
     const formsPublic = makeFn('FormsPublicFn', 'handlers/forms.ts', 'handler');
     const adminPages = makeFn('AdminPagesFn', 'handlers/admin-pages.ts', 'handler');
     const adminMenus = makeFn('AdminMenusFn', 'handlers/admin-menus.ts', 'handler');
+    const adminSiteSettings = makeFn('AdminSiteSettingsFn', 'handlers/admin-site-settings.ts', 'handler');
     const adminMedia = makeFn('AdminMediaFn', 'handlers/admin-media.ts', 'handler');
     const adminForms = makeFn('AdminFormsFn', 'handlers/admin-forms.ts', 'handler');
     const eventsPublic = makeFn('EventsPublicFn', 'handlers/events.ts', 'handler');
@@ -91,13 +92,13 @@ export class HilomCmsStack extends cdk.Stack {
     );
 
     for (const fn of [
-      pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminMedia, adminForms,
+      pagesPublic, menusPublic, formsPublic, adminPages, adminMenus, adminSiteSettings, adminMedia, adminForms,
       eventsPublic, adminEvents, postsPublic, adminPosts, kbPublic, adminKb, scheduledPublishSweep,
     ]) {
       supabaseSecret.grantRead(fn);
     }
 
-    for (const fn of [adminPages, adminMenus, adminMedia, adminForms, adminEvents, adminPosts, adminKb]) {
+    for (const fn of [adminPages, adminMenus, adminSiteSettings, adminMedia, adminForms, adminEvents, adminPosts, adminKb]) {
       adminKeySecret.grantRead(fn);
     }
 
@@ -178,6 +179,10 @@ export class HilomCmsStack extends cdk.Stack {
     attach(adminMenus, 'AdminMenusInt', [
       ['/admin/menus', [GET]],
       ['/admin/menus/{key}', [PUT]],
+    ]);
+    attach(adminSiteSettings, 'AdminSiteSettingsInt', [
+      ['/admin/site-settings', [GET]],
+      ['/admin/site-settings/{key}', [PUT]],
     ]);
     attach(adminMedia, 'AdminMediaInt', [
       ['/admin/media', [GET, POST]],
