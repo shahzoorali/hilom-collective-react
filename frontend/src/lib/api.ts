@@ -219,6 +219,7 @@ export interface AdminProduct {
   description: string | null;
   price_centavos: number;
   currency: string;
+  thumbnail_url: string | null;
   is_active: boolean;
   product_courses: { moodle_course_id: number }[];
 }
@@ -231,7 +232,13 @@ export const adminListProducts = (adminKey: string) =>
 export const adminUpdateProduct = (
   adminKey: string,
   productId: string,
-  patch: { price_centavos?: number; is_active?: boolean; name?: string; description?: string },
+  patch: {
+    price_centavos?: number;
+    is_active?: boolean;
+    name?: string;
+    description?: string;
+    thumbnail_url?: string | null;
+  },
 ) =>
   apiFetch<{ product: AdminProduct }>(`/admin/products/${productId}`, {
     method: 'PATCH',
