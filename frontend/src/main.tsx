@@ -14,10 +14,14 @@ window.addEventListener('vite:preloadError', () => {
   window.location.reload()
 })
 
-sessionStorage.removeItem('vite-preload-reload')
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
   </StrictMode>,
 )
+
+// Only clear the guard once the app has actually rendered without hitting
+// another preload error — clearing it unconditionally at parse time let a
+// persistently failing chunk (e.g. a stale dev-server hash) wipe its own
+// guard on every reload and loop forever.
+window.setTimeout(() => sessionStorage.removeItem('vite-preload-reload'), 3000)
