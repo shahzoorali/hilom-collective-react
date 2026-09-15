@@ -32,6 +32,7 @@ import { ok, badRequest, notFound, serverError, unauthorized } from '../lib/http
 import { requireBuyer, UnauthorizedError } from '../lib/auth.js';
 import { accessUrl } from '../lib/access-url.js';
 import { getOwnedCourseIds } from '../lib/ownership.js';
+import { resolvePromoCode, PromoCodeError } from '../lib/promo-codes.js';
 
 interface CreateSessionBody {
   slug?: string;
@@ -41,6 +42,54 @@ interface CreateSessionBody {
    * back to the token's name claims when absent.
    */
   name?: string;
+  /** Optional promo code. Re-validated and re-priced here, never trusted for the amount. */
+  promoCode?: string;
+}
+
+/**
+ * POST /checkout/preview-promo
+ *
+ * Lets the checkout page show the discount before the buyer commits — the
+ * "Have a promo code?" field applies live rather than only at the final
+ * button. Uses the same resolvePromoCode() the session-creation path uses, so
+ * the preview and the real charge can never disagree.
+ */
+export async function previewPromo(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  let body: { slug?: string; promoCode?: string };
+  try {
+    body = JSON.parse(event.body ?? '{}') as { slug?: string; promoCode?: string };
+  } catch {
+    return badRequest('Malformed body');
+  }
+
+  const slug = body.slug?.trim();
+  const promoCode = body.promoCode?.trim();
+  if (!slug) return badRequest('Missing slug');
+  if (!promoCode) return badRequest('Missing promoCode');
+
+  try {
+    const supabase = await getSupabase();
+    const { data: product, error } = await supabase
+      .from('products')
+      .select('price_centavos, currency')
+      .eq('slug', slug)
+      .eq('is_active', true)
+      .maybeSingle<{ price_centavos: number; currency: string }>();
+    if (error) throw error;
+    if (!product) return notFound('Product not found');
+
+    const resolved = await resolvePromoCode(supabase, promoCode, product.price_centavos);
+    return ok({
+      valid: true,
+      code: resolved.code,
+      discountCentavos: resolved.discountCentavos,
+      finalAmountCentavos: resolved.finalAmountCentavos,
+      currency: product.currency,
+    });
+  } catch (err) {
+    if (err instanceof PromoCodeError) return ok({ valid: false, error: err.message });
+    return serverError('checkout.previewPromo', err);
+  }
 }
 
 export async function createSession(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -111,10 +160,26 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
       return ok({ alreadyOwned: true, accessUrl: accessUrl(overlap) });
     }
 
+    let amountCentavos = product.price_centavos;
+    let promoCodeId: string | undefined;
+    let discountCentavos = 0;
+    const promoCode = body.promoCode?.trim();
+    if (promoCode) {
+      try {
+        const resolved = await resolvePromoCode(supabase, promoCode, product.price_centavos);
+        amountCentavos = resolved.finalAmountCentavos;
+        promoCodeId = resolved.promoCodeId;
+        discountCentavos = resolved.discountCentavos;
+      } catch (err) {
+        if (err instanceof PromoCodeError) return badRequest(err.message);
+        throw err;
+      }
+    }
+
     const session = await createHostedCheckout({
       name: product.name,
       description: product.name,
-      amountCentavos: product.price_centavos,
+      amountCentavos,
       currency: product.currency,
       billing: { email, name },
       // The webhook reads these back to know what to fulfill and for whom —
@@ -125,6 +190,7 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
         product_id: product.id,
         buyer_email: email,
         product_slug: product.slug,
+        ...(promoCodeId ? { promo_code_id: promoCodeId, discount_centavos: String(discountCentavos) } : {}),
       },
       // PayMongo cannot template the session id into these, so the browser
       // stashes it before redirecting (see Checkout.tsx).
@@ -135,9 +201,10 @@ export async function createSession(event: APIGatewayProxyEventV2): Promise<APIG
     return ok({
       sessionId: session.sessionId,
       checkoutUrl: session.checkoutUrl,
-      amountCentavos: product.price_centavos,
+      amountCentavos,
       currency: product.currency,
       productName: product.name,
+      discountCentavos,
     });
   } catch (err) {
     return serverError('checkout.createSession', err);

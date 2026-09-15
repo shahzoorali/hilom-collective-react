@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { createCheckoutSession, getProduct, type ProductDetail } from '../lib/api';
+import { createCheckoutSession, getProduct, previewPromoCode, type ProductDetail } from '../lib/api';
 import { currentUser, login, logout } from '../lib/auth';
 import { money } from '../components/Layout';
 
@@ -33,6 +33,15 @@ export default function Checkout() {
   const [error, setError] = useState<string | null>(null);
   const [ownedAccessUrl, setOwnedAccessUrl] = useState<string | null>(null);
 
+  const [showPromoField, setShowPromoField] = useState(false);
+  const [promoInput, setPromoInput] = useState('');
+  const [promoBusy, setPromoBusy] = useState(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  // The applied code and the discount it produced, kept separate from
+  // `promoInput` so editing the box after applying doesn't silently change
+  // what's already been validated and shown in the summary.
+  const [appliedPromo, setAppliedPromo] = useState<{ code: string; discountCentavos: number } | null>(null);
+
   useEffect(() => {
     getProduct(slug).then(setProduct).catch((e: Error) => setError(e.message));
   }, [slug]);
@@ -42,6 +51,27 @@ export default function Checkout() {
   // readers. Let the submit through and answer with a specific message.
   const canSubmit = Boolean(product) && !busy;
 
+  async function onApplyPromo() {
+    const code = promoInput.trim();
+    if (!code) return;
+    setPromoError(null);
+    setPromoBusy(true);
+    try {
+      const result = await previewPromoCode(slug, code);
+      if (!result.valid) {
+        setAppliedPromo(null);
+        setPromoError(result.error);
+        return;
+      }
+      setAppliedPromo({ code: result.code, discountCentavos: result.discountCentavos });
+    } catch (err) {
+      setAppliedPromo(null);
+      setPromoError(err instanceof Error ? err.message : 'Could not check that code.');
+    } finally {
+      setPromoBusy(false);
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -50,8 +80,9 @@ export default function Checkout() {
     try {
       // Neither the amount nor the email is sent from here: the backend reads
       // the price from the database and the buyer from the id_token, so
-      // neither can be tampered with.
-      const session = await createCheckoutSession(slug, name.trim() || undefined);
+      // neither can be tampered with. The promo code is re-validated and
+      // re-priced server-side too — appliedPromo only drives what's shown here.
+      const session = await createCheckoutSession(slug, name.trim() || undefined, appliedPromo?.code);
 
       // Already owns this (or an overlapping course, e.g. bought the bundle
       // already) — nothing to pay for. Tell them rather than silently
@@ -90,6 +121,30 @@ export default function Checkout() {
         <strong>{product.name}</strong>
         <strong>{money(product.price_centavos, product.currency)}</strong>
       </div>
+      {appliedPromo && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: '1rem',
+            marginTop: '0.4rem',
+            color: 'var(--accent, #2a8f5f)',
+          }}
+        >
+          <span className="small">Promo {appliedPromo.code}</span>
+          <span className="small">
+            &minus;{money(appliedPromo.discountCentavos, product.currency)}
+          </span>
+        </div>
+      )}
+      {appliedPromo && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: '0.4rem' }}>
+          <strong>Total</strong>
+          <strong>
+            {money(Math.max(0, product.price_centavos - appliedPromo.discountCentavos), product.currency)}
+          </strong>
+        </div>
+      )}
       <p className="small muted" style={{ margin: '0.4rem 0 0' }}>
         Permanent access · {product.moodle_course_ids.length}{' '}
         {product.moodle_course_ids.length === 1 ? 'course' : 'courses'} · no subscription
@@ -183,6 +238,57 @@ export default function Checkout() {
             <input id="name" value={name} autoComplete="name" onChange={(e) => setName(e.target.value)} />
           </div>
 
+          <div className="field">
+            {!showPromoField && !appliedPromo && (
+              <button type="button" className="linklike" onClick={() => setShowPromoField(true)}>
+                Have a promo code?
+              </button>
+            )}
+            {appliedPromo && (
+              <p className="small" style={{ margin: 0 }}>
+                Promo <strong>{appliedPromo.code}</strong> applied.{' '}
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => {
+                    setAppliedPromo(null);
+                    setPromoInput('');
+                    setPromoError(null);
+                  }}
+                >
+                  Remove
+                </button>
+              </p>
+            )}
+            {showPromoField && !appliedPromo && (
+              <>
+                <label htmlFor="promo">Promo code</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input
+                    id="promo"
+                    value={promoInput}
+                    onChange={(e) => setPromoInput(e.target.value)}
+                    placeholder="e.g. KUYA10"
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={promoBusy || !promoInput.trim()}
+                    onClick={onApplyPromo}
+                  >
+                    {promoBusy ? 'Checking…' : 'Apply'}
+                  </button>
+                </div>
+                {promoError && (
+                  <p className="small" style={{ margin: '0.35rem 0 0', color: 'var(--error, #c0392b)' }}>
+                    {promoError}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="alert alert-info" style={{ textAlign: 'left' }}>
             <strong>Paying with QR Ph.</strong>
             <p className="small" style={{ margin: '0.35rem 0 0' }}>
@@ -195,7 +301,12 @@ export default function Checkout() {
             {busy
               ? 'Starting checkout…'
               : product
-                ? `Continue to payment · ${money(product.price_centavos, product.currency)}`
+                ? `Continue to payment · ${money(
+                    appliedPromo
+                      ? Math.max(0, product.price_centavos - appliedPromo.discountCentavos)
+                      : product.price_centavos,
+                    product.currency,
+                  )}`
                 : 'Loading…'}
           </button>
 

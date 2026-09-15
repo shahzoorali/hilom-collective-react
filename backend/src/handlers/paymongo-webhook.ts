@@ -172,6 +172,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     // Insert-or-ignore on the dedupe key, then read back whichever row exists
     // (freshly inserted, or the one from a prior delivery of this same event).
+    const discountCentavos = metadata.discount_centavos ? Number(metadata.discount_centavos) : 0;
+
     const { error: insertError } = await supabase.from('orders').insert({
       paymongo_payment_id: paymentId,
       product_id: productId,
@@ -179,6 +181,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       amount_centavos: amountCentavos,
       currency: currency,
       status: 'paid_pending_enrollment',
+      ...(metadata.promo_code_id ? { promo_code_id: metadata.promo_code_id } : {}),
+      ...(Number.isFinite(discountCentavos) && discountCentavos > 0 ? { discount_centavos: discountCentavos } : {}),
     });
     // Unique violation on paymongo_payment_id is the expected redelivery
     // case, not an error — every other insert failure is real.

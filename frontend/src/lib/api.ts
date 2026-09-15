@@ -113,7 +113,20 @@ export interface CheckoutSession {
   amountCentavos: number;
   currency: string;
   productName: string;
+  discountCentavos: number;
 }
+
+export type PromoPreview =
+  | { valid: true; code: string; discountCentavos: number; finalAmountCentavos: number; currency: string }
+  | { valid: false; error: string };
+
+/** Live preview of a promo code's discount before the buyer commits to paying. */
+export const previewPromoCode = (slug: string, promoCode: string) =>
+  apiFetch<PromoPreview>('/checkout/preview-promo', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slug, promoCode }),
+  });
 
 /**
  * Returned instead of a CheckoutSession when the buyer's account already has a
@@ -129,15 +142,17 @@ export interface AlreadyOwned {
 /**
  * Note there is no `email` parameter: the backend takes the buyer's address
  * from the verified id_token, so the browser cannot name who is being enrolled.
- * `name` is cosmetic — it only labels the PayMongo receipt.
+ * `name` is cosmetic — it only labels the PayMongo receipt. `promoCode` is
+ * re-validated and re-priced server-side — this is a convenience, not the
+ * source of truth for the amount charged.
  */
-export const createCheckoutSession = (slug: string, name?: string) => {
+export const createCheckoutSession = (slug: string, name?: string, promoCode?: string) => {
   const token = idToken();
   if (!token) throw new Error('Sign in to continue');
   return apiFetch<CheckoutSession | AlreadyOwned>('/checkout/create-session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ slug, name }),
+    body: JSON.stringify({ slug, name, promoCode }),
   });
 };
 
@@ -250,6 +265,57 @@ export const adminUpdateProduct = (
 export const adminRevokeAccess = (adminKey: string, orderId: string) =>
   apiFetch<RevokeResult>(`/admin/revoke-access/${orderId}`, {
     method: 'POST',
+    headers: { 'x-admin-key': adminKey },
+  });
+
+export interface AdminPromoCode {
+  id: string;
+  code: string;
+  label: string | null;
+  discount_type: 'percent' | 'fixed';
+  discount_value: number;
+  is_active: boolean;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const adminListPromoCodes = (adminKey: string) =>
+  apiFetch<{ promoCodes: AdminPromoCode[] }>('/admin/promo-codes', {
+    headers: { 'x-admin-key': adminKey },
+  }).then((r) => r.promoCodes);
+
+export const adminCreatePromoCode = (
+  adminKey: string,
+  body: { code: string; label?: string; discount_type: 'percent' | 'fixed'; discount_value: number; expires_at?: string | null },
+) =>
+  apiFetch<{ promoCode: AdminPromoCode }>('/admin/promo-codes', {
+    method: 'POST',
+    headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.promoCode);
+
+export const adminUpdatePromoCode = (
+  adminKey: string,
+  promoCodeId: string,
+  patch: Partial<{
+    code: string;
+    label: string | null;
+    discount_type: 'percent' | 'fixed';
+    discount_value: number;
+    is_active: boolean;
+    expires_at: string | null;
+  }>,
+) =>
+  apiFetch<{ promoCode: AdminPromoCode }>(`/admin/promo-codes/${promoCodeId}`, {
+    method: 'PATCH',
+    headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => r.promoCode);
+
+export const adminDeletePromoCode = (adminKey: string, promoCodeId: string) =>
+  apiFetch<{ deleted: true }>(`/admin/promo-codes/${promoCodeId}`, {
+    method: 'DELETE',
     headers: { 'x-admin-key': adminKey },
   });
 

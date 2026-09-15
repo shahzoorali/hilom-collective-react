@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useParams, Link } fr
 import { adminListPages, ADMIN_ACTOR_STORAGE } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import CommerceTab from './admin/CommerceTab';
+import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
 import FacilitatorEditor from './admin/FacilitatorEditor';
 import PayoutsTab from './admin/PayoutsTab';
@@ -59,6 +60,7 @@ const NAV_GROUPS = [
     label: 'Commerce',
     items: [
       { label: 'Commerce', path: 'commerce', icon: '💳' },
+      { label: 'Promo Codes', path: 'promo-codes', icon: '🏷️' },
       { label: 'Payouts', path: 'payouts', icon: '🏦' },
     ],
   },
@@ -361,6 +363,7 @@ export default function Admin() {
           <Route path="footer" element={<FooterTab adminKey={adminKey} />} />
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
           <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
+          <Route path="promo-codes" element={<PromoCodesTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
           <Route
             path="facilitators/:facilitatorId"

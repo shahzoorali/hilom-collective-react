@@ -329,6 +329,8 @@ export class HilomCoreStack extends cdk.Stack {
     const adminOrderPayment = makeFn('AdminOrderPaymentFn', 'handlers/orders.ts', 'adminPayment');
     const adminProductsList = makeFn('AdminProductsListFn', 'handlers/admin-products.ts', 'list');
     const adminProductsUpdate = makeFn('AdminProductsUpdateFn', 'handlers/admin-products.ts', 'update');
+    const adminPromoCodes = makeFn('AdminPromoCodesFn', 'handlers/admin-promo-codes.ts', 'handler');
+    const checkoutPreviewPromo = makeFn('CheckoutPreviewPromoFn', 'handlers/checkout.ts', 'previewPromo');
     const enrollmentRetryConsumer = makeFn(
       'EnrollmentRetryConsumerFn',
       'handlers/enrollment-retry-consumer.ts',
@@ -424,7 +426,7 @@ export class HilomCoreStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate, meOwnedCourses]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate, meOwnedCourses, adminPromoCodes, checkoutPreviewPromo]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -450,6 +452,7 @@ export class HilomCoreStack extends cdk.Stack {
     adminKeySecret.grantRead(adminOrderPayment);
     adminKeySecret.grantRead(adminProductsList);
     adminKeySecret.grantRead(adminProductsUpdate);
+    adminKeySecret.grantRead(adminPromoCodes);
 
     // reCAPTCHA verification for the one public submission path that lives in
     // this stack. The CMS stack's form endpoint has the same grant.
@@ -563,6 +566,11 @@ export class HilomCoreStack extends cdk.Stack {
     route('/admin/orders/{orderId}/payment', apigw.HttpMethod.GET, adminOrderPayment, 'AdminOrderPaymentInt');
     route('/admin/products', apigw.HttpMethod.GET, adminProductsList, 'AdminProductsListInt');
     route('/admin/products/{productId}', apigw.HttpMethod.PATCH, adminProductsUpdate, 'AdminProductsUpdateInt');
+    route('/admin/promo-codes', apigw.HttpMethod.GET, adminPromoCodes, 'AdminPromoCodesListInt');
+    route('/admin/promo-codes', apigw.HttpMethod.POST, adminPromoCodes, 'AdminPromoCodesCreateInt');
+    route('/admin/promo-codes/{promoCodeId}', apigw.HttpMethod.PATCH, adminPromoCodes, 'AdminPromoCodesUpdateInt');
+    route('/admin/promo-codes/{promoCodeId}', apigw.HttpMethod.DELETE, adminPromoCodes, 'AdminPromoCodesDeleteInt');
+    route('/checkout/preview-promo', apigw.HttpMethod.POST, checkoutPreviewPromo, 'CheckoutPreviewPromoInt');
     route('/community/submit', apigw.HttpMethod.POST, communitySubmit, 'CommunitySubmitInt');
 
     // ---------------------------------------------------------------------
