@@ -16,6 +16,12 @@
  * Route-split stylesheets (e.g. `Admin-*.css`, loaded only under /admin) are
  * left alone: they are not on the initial paint path.
  *
+ * The physical CSS file is kept on disk (not deleted) even after inlining:
+ * lazy-loaded JS chunks still declare it as a dependency for Vite's runtime
+ * CSS preload, and deleting it made those chunks 404 on the preload with an
+ * empty Content-Type, which browsers reject as an unsupported stylesheet MIME
+ * type.
+ *
  * Runs as the last step of `npm run build`, before `npm run prerender` copies
  * dist/index.html per route — so every prerendered page inherits the inlined
  * CSS too.
@@ -51,10 +57,6 @@ async function main(): Promise<void> {
 
   html = html.replace(match[0], `<style>${css}</style>`);
   await fs.writeFile(indexPath, html, 'utf8');
-
-  // Drop the now-unreferenced file so it is not shipped as a dead artifact.
-  await fs.rm(cssPath, { force: true });
-  await fs.rm(`${cssPath}.map`, { force: true });
 
   console.log(
     `[inline-critical] Inlined ${href} (${(css.length / 1024).toFixed(1)} KiB) into dist/index.html.`,
