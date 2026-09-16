@@ -11,7 +11,6 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import ScrollToTop from './components/ScrollToTop';
 import CmsOrFallback from './components/CmsOrFallback';
-import Home from './pages/Home';
 import Courses from './pages/Courses';
 import ProductDetail from './pages/ProductDetail';
 import Checkout from './pages/Checkout';
@@ -89,7 +88,9 @@ export default function App() {
           element={
             <Layout>
               <Routes>
-                <Route path="/" element={<CmsOrFallback slug="home" fallback={<Home />} />} />
+                {/* The home page's CMS content has been live long enough to trust —
+                    no fallback-then-swap; see CmsPage's `slug` prop. */}
+                <Route path="/" element={<CmsPage slug="home" />} />
                 <Route path="/about" element={<CmsOrFallback slug="about" fallback={<About />} />} />
                 <Route path="/services" element={<CmsOrFallback slug="services" fallback={<Services />} />} />
                 <Route path="/events" element={<CmsOrFallback slug="events" fallback={<Events />} />} />

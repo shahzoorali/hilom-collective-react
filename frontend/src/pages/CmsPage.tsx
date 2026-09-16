@@ -9,8 +9,12 @@ import BlockRenderer from '../cms/BlockRenderer';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 import { useDocumentHead } from '../lib/useDocumentHead';
 
-export default function CmsPage() {
-  const { slug = '' } = useParams();
+export default function CmsPage({ slug: slugProp }: { slug?: string } = {}) {
+  const { slug: slugParam = '' } = useParams();
+  // `slug` is a prop for the one caller that isn't a route param — the "/"
+  // route pins it to "home" directly rather than going through CmsOrFallback's
+  // fallback-then-swap dance, now that the home page is trusted to be live.
+  const slug = slugProp ?? slugParam;
   const [page, setPage] = useState<Page | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'missing'>('loading');
 
