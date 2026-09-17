@@ -333,7 +333,10 @@ export class HilomMarketplaceStack extends cdk.Stack {
       // `/facilitators/apply` must out-specify `/facilitators/{slug}` or an
       // application POST would be read as a facilitator whose slug is "apply".
       // API Gateway prefers the exact match; listing it first is convention.
-      ['/facilitators/apply', [POST]],
+      // GET is the applicant's own status, and like POST it is open to any
+      // signed-in user — the statuses it exists to report (applied, rejected,
+      // suspended) are precisely the ones with no `facilitator` group.
+      ['/facilitators/apply', [GET, POST]],
       ['/facilitator/me', [GET, PUT]],
       ['/facilitator/services', [GET, POST]],
       ['/facilitator/services/{serviceId}', [PUT, DELETE]],

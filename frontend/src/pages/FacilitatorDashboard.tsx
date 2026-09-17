@@ -14,6 +14,22 @@
  * A newly approved facilitator still holds a group-less token until they sign
  * in again — Cognito stamps groups at token issue — which is why the
  * "no access" branch offers a re-sign-in rather than only an explanation.
+ *
+ * ## Why the group alone can't drive this screen
+ *
+ * The group answers "can you open the tabs". It does not answer "where is my
+ * application", and for everyone outside the group those differ: a person
+ * three days into review, a person turned down, a person suspended and a total
+ * stranger are four situations with one Cognito answer. They used to get one
+ * message too — the stranger's — which told an applicant mid-review to go and
+ * apply. So the group-less branch fetches `getMyFacilitatorStatus` (open to
+ * any signed-in user, precisely because these statuses carry no group) and
+ * renders per status.
+ *
+ * Inside the group there is a second gap, between `approved` and `published`:
+ * real dashboard access, no public listing, and two separate emails with a
+ * human review sitting between them. The topbar pill says "Not yet listed";
+ * the banner is what says why and what closes it.
  */
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -43,6 +59,8 @@ import {
   type EarningsTotals,
   type OwnProfile,
   type Payout,
+  getMyFacilitatorStatus,
+  type MyFacilitatorStatus,
 } from '../lib/booking';
 
 const ServicesTab = lazy(() => import('./facilitator/ServicesTab'));
@@ -84,25 +102,32 @@ export default function FacilitatorDashboard() {
   const navigate = useNavigate();
 
   const [profile, setProfile] = useState<OwnProfile | null>(null);
+  const [application, setApplication] = useState<MyFacilitatorStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const signedIn = Boolean(user);
   const isFacilitator = user?.groups.includes('facilitator') ?? false;
 
   useEffect(() => {
-    if (!isFacilitator) {
+    if (!signedIn) {
       setLoading(false);
       return;
     }
     let live = true;
-    getMyFacilitatorProfile()
-      .then((p) => live && setProfile(p))
+    // In the group, the profile already carries `status`, so the status probe
+    // would be a second call for something we are about to be handed. Outside
+    // it, the probe is the only way to tell four situations apart.
+    const load = isFacilitator
+      ? getMyFacilitatorProfile().then((p) => live && setProfile(p))
+      : getMyFacilitatorStatus().then((s) => live && setApplication(s));
+    load
       .catch((err: Error) => live && setError(err.message))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
-  }, [isFacilitator]);
+  }, [signedIn, isFacilitator]);
 
   if (!user) {
     return (
@@ -115,32 +140,16 @@ export default function FacilitatorDashboard() {
     );
   }
 
-  if (!isFacilitator) {
-    return (
-      <Gate title="Facilitator dashboard">
-        <p style={{ marginTop: 0 }}>
-          This account ({user.email}) isn't set up as a facilitator yet.
-        </p>
-        <p className="small muted">
-          If you've just been approved, sign in again — your access is attached to a fresh sign-in.
-        </p>
-        <button className="btn btn-accent btn-block" type="button" onClick={() => { logout(); void login('/facilitator'); }}>
-          Sign in again
-        </button>
-        <p className="small muted" style={{ marginBottom: 0 }}>
-          Not a facilitator yet? <Link to="/facilitators/apply">Apply to facilitate</Link>, or{' '}
-          <Link to="/facilitators">see who's already on Hilom</Link>.
-        </p>
-      </Gate>
-    );
-  }
-
   if (loading) {
     return (
       <div className="admin-shell">
         <div className="spinner" aria-label="Loading" />
       </div>
     );
+  }
+
+  if (!isFacilitator) {
+    return <NoAccessGate email={user.email} application={application} />;
   }
 
   if (error || !profile) {
@@ -187,6 +196,21 @@ export default function FacilitatorDashboard() {
       </nav>
 
       <main className="admin-content">
+        {profile.status === 'approved' && (
+          <div className="alert alert-warning">
+            <strong>You're approved, but not listed yet.</strong> Finish your{' '}
+            <Link to="/facilitator/profile">profile</Link> and add at least one{' '}
+            <Link to="/facilitator/services">service</Link> — we'll review and publish you, and
+            you'll get an email when your profile goes live.
+          </div>
+        )}
+        {profile.status === 'suspended' && (
+          <div className="alert alert-warning">
+            <strong>Your listing is paused.</strong> Your profile is hidden and you can't take new
+            bookings. Email <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>{' '}
+            to restore it.
+          </div>
+        )}
         <Suspense fallback={<div className="spinner" aria-label="Loading" />}>
           <Routes>
             <Route index element={<Navigate to="overview" replace />} />
@@ -204,6 +228,125 @@ export default function FacilitatorDashboard() {
         </Suspense>
       </main>
     </div>
+  );
+}
+
+/**
+ * What a signed-in user outside the `facilitator` group sees.
+ *
+ * Five outcomes, and the point of the component is that they are five. The
+ * status probe can also fail — a network blip, an expired token — and `null`
+ * then means "we don't know" rather than "you never applied". Both land on the
+ * neutral branch, which is the only one of the five that is safe to show
+ * someone whose real status we couldn't read: it states no status and offers
+ * both doors.
+ */
+function NoAccessGate({
+  email,
+  application,
+}: {
+  email: string;
+  application: MyFacilitatorStatus | null;
+}) {
+  const reSignIn = () => {
+    logout();
+    void login('/facilitator');
+  };
+
+  // Approved or published, but the token predates the grant. Cognito stamps
+  // groups at issue time, so the access exists and only a fresh sign-in will
+  // carry it.
+  if (application?.status === 'approved' || application?.status === 'published') {
+    return (
+      <Gate title="Facilitator dashboard">
+        <div className="alert alert-warning">
+          You're approved — this browser is still using an older sign-in.
+        </div>
+        <p className="small muted">
+          Your access is attached to a fresh sign-in. Signing in again picks it up.
+        </p>
+        <button className="btn btn-accent btn-block" type="button" onClick={reSignIn}>
+          Sign in again
+        </button>
+      </Gate>
+    );
+  }
+
+  if (application?.status === 'applied') {
+    return (
+      <Gate title="Facilitator dashboard">
+        <div className="alert alert-warning">Your application is under review.</div>
+        <p style={{ marginTop: 0 }}>
+          We've got everything we need for now. A member of the Hilom team reads every
+          application, so this takes a few days rather than a few minutes.
+        </p>
+        <p className="small muted">
+          You'll get an email when you're approved — and another when your profile goes live.
+          Nothing to do until then.
+        </p>
+        <Link className="btn btn-ghost btn-block" to="/facilitators">
+          See who's already on Hilom
+        </Link>
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          Approved already? <button className="btn-link" type="button" onClick={reSignIn}>Sign in again</button> —
+          access is attached to a fresh sign-in.
+        </p>
+      </Gate>
+    );
+  }
+
+  if (application?.status === 'suspended') {
+    return (
+      <Gate title="Facilitator dashboard">
+        <div className="alert alert-warning">Your facilitator listing is paused.</div>
+        <p style={{ marginTop: 0 }}>
+          Your profile isn't visible and you can't take new bookings while it's paused.
+          Existing sessions aren't affected.
+        </p>
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          Get in touch at <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>{' '}
+          and we'll sort it out.
+        </p>
+      </Gate>
+    );
+  }
+
+  // Rejected. No re-apply button: the backend still accepts one
+  // (facilitator-portal.ts documents why the door stays open), but that is for
+  // someone Hilom has asked back, not a prompt to try again immediately.
+  if (application?.status === 'rejected') {
+    return (
+      <Gate title="Facilitator dashboard">
+        <p style={{ marginTop: 0 }}>
+          We weren't able to approve this application.
+        </p>
+        <p className="small muted" style={{ marginBottom: 0 }}>
+          If you'd like to know more, email{' '}
+          <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>. You can also{' '}
+          <Link to="/facilitators">see who's already on Hilom</Link>.
+        </p>
+      </Gate>
+    );
+  }
+
+  return (
+    <Gate title="Facilitator dashboard">
+      <p style={{ marginTop: 0 }}>This account ({email}) isn't set up as a facilitator yet.</p>
+      <Link className="btn btn-accent btn-block" to="/facilitators/apply">
+        Complete the facilitator intake form
+      </Link>
+      <p className="small muted">
+        Once it's approved you'll get an email, and another when your profile goes live — then you
+        can set up your services.
+      </p>
+      <p className="small muted" style={{ marginBottom: 0 }}>
+        Already applied or approved?{' '}
+        <button className="btn-link" type="button" onClick={reSignIn}>
+          Sign in again
+        </button>
+        , or <Link to="/facilitators">see who's already on Hilom</Link>.
+      </p>
+    </Gate>
   );
 }
 

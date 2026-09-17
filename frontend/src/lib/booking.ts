@@ -460,6 +460,25 @@ export async function uploadFacilitatorFile(
   };
 }
 
+export interface MyFacilitatorStatus {
+  /** `null` means no application has ever been submitted from this account. */
+  status: FacilitatorStatus | null;
+  slug?: string;
+  display_name?: string;
+  applied_at?: string | null;
+  approved_at?: string | null;
+}
+
+/**
+ * The signed-in user's facilitator status, group or no group.
+ *
+ * The dashboard's group check answers "can you open the tabs", which is not
+ * the same question as "where is your application", and for everyone waiting
+ * on review the two answers differ.
+ */
+export const getMyFacilitatorStatus = () =>
+  apiFetch<MyFacilitatorStatus>('/facilitators/apply', { headers: authHeaders() });
+
 export const getMyFacilitatorProfile = () =>
   apiFetch<{ facilitator: OwnProfile }>('/facilitator/me', { headers: authHeaders() }).then(
     (r) => r.facilitator,

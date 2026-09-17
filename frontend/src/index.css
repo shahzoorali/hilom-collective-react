@@ -153,6 +153,13 @@ img { max-width: 100%; }
 .btn-ghost:hover { border-color: var(--forest); color: var(--forest); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .btn-block { display: block; width: 100%; }
+/* An action that reads as a link mid-sentence. A real <button>, so it keeps
+   keyboard and screen-reader semantics — an <a> without an href has neither. */
+.btn-link {
+  background: none; border: 0; padding: 0; font: inherit; color: var(--forest);
+  text-decoration: underline; cursor: pointer;
+}
+.btn-link:hover { color: var(--forest-dark); }
 
 /* hero */
 .hero { background: linear-gradient(160deg, var(--cream), #fff 72%); padding: 4rem 0 3.25rem; }

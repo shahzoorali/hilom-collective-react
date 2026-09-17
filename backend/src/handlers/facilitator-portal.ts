@@ -1,6 +1,7 @@
 /**
  * The facilitator's own dashboard API.
  *
+ *   GET    /facilitators/apply                     (any signed-in user)
  *   POST   /facilitators/apply                     (any signed-in user)
  *   GET    /facilitator/me                         (facilitator group)
  *   PUT    /facilitator/me
@@ -92,6 +93,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // by definition the applicant is not yet in the facilitator group.
     if (path.endsWith('/facilitators/apply')) {
       const user = await requireUser(event);
+      if (method === 'GET') return await applicationStatus(user);
       return await apply(user, parseBody(event));
     }
 
@@ -312,6 +314,45 @@ async function apply(
 
   if (error) throw error;
   return ok({ facilitator: data, status: 'applied' });
+}
+
+/**
+ * The caller's own facilitator status, for any signed-in user.
+ *
+ * Every other read in this file sits behind the `facilitator` group, which is
+ * exactly the population this one has to serve: an `applied` row has no group
+ * yet, and neither does a `rejected` or `suspended` one. Without this the
+ * dashboard could only distinguish "in the group" from "not", so someone three
+ * days into review saw the same dead end as a stranger — and was invited to
+ * apply again.
+ *
+ * Deliberately not the `me()` helper above: that one claims an unlinked row by
+ * writing `cognito_sub`, and a status probe must not have side effects. The
+ * email arm of the lookup still matters, because an admin-entered row has a
+ * null `cognito_sub` until its owner's first portal call.
+ *
+ * Returns `status: null` rather than a 404 for "never applied" — that is a real
+ * answer to this question, and the dashboard renders it as one more state.
+ */
+async function applicationStatus(user: {
+  email: string;
+  sub: string;
+}): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data, error } = await supabase
+    .from('facilitators')
+    .select('status, slug, display_name, applied_at, approved_at')
+    .or(`cognito_sub.eq.${user.sub},email.eq.${user.email}`)
+    .maybeSingle<{
+      status: string;
+      slug: string;
+      display_name: string;
+      applied_at: string | null;
+      approved_at: string | null;
+    }>();
+  if (error) throw error;
+  if (!data) return ok({ status: null });
+  return ok(data);
 }
 
 /**
