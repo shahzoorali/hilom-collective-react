@@ -51,6 +51,10 @@ import {
  *
  * The thumbnails are a 4:3 `object-fit: cover` crop; this shows the whole
  * frame instead, which is the actual point of enlarging a photo of a room.
+ *
+ * Nothing here listens for the native `close` event — see AgreementDialog for
+ * why that was closing these dialogs milliseconds after they opened. The
+ * "belt and braces" this used to have was catching its own teardown.
  */
 function GalleryLightbox({
   images,
@@ -64,10 +68,6 @@ function GalleryLightbox({
   onMove: (delta: number) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  // Read through a ref so the mount-only effect below never captures a stale
-  // callback.
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
 
   useEffect(() => {
     const el = ref.current;
@@ -76,13 +76,7 @@ function GalleryLightbox({
     // showModal() does not reliably stop the page behind from scrolling.
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    // Belt and braces: whatever closes the dialog — the keydown handler, the
-    // backdrop, or the browser itself — unmounting is what releases the scroll
-    // lock, so any close that did not come through React is routed back into it.
-    const onNativeClose = () => closeRef.current();
-    el.addEventListener('close', onNativeClose);
     return () => {
-      el.removeEventListener('close', onNativeClose);
       document.body.style.overflow = previous;
       if (el.open) el.close();
     };
@@ -96,7 +90,6 @@ function GalleryLightbox({
       ref={ref}
       className="lightbox"
       aria-label="Venue photographs"
-      onClose={onClose}
       onCancel={onClose}
       // The dialog box fills the viewport, so anything that lands on the
       // dialog itself rather than the figure inside it is a click outside.
@@ -176,8 +169,17 @@ function GalleryLightbox({
  * which is also what lets the tick that follows it mean something.
  *
  * Same native <dialog> mechanics as GalleryLightbox — showModal() handles
- * focus trapping, Escape and top-layer stacking; the body scroll lock and
- * routing a native close back into React are done by hand.
+ * focus trapping, Escape and top-layer stacking; the body scroll lock is done
+ * by hand.
+ *
+ * Nothing listens for the native `close` event, by either route: it is
+ * dispatched as a queued task, so the one fired by this effect's own teardown
+ * landed *after* the effect had re-run — and under StrictMode's
+ * mount/unmount/mount that closed the dialog a few milliseconds after it
+ * opened. Removing the manual listener is not enough on its own, because the
+ * `onClose` prop React was also carrying is a binding for that same event and
+ * survives the remount. Every real way out of here — Escape via `onCancel`,
+ * the ✕, a click on the backdrop margin — calls `onClose` directly.
  */
 function AgreementDialog({
   title,
@@ -189,8 +191,6 @@ function AgreementDialog({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
 
   useEffect(() => {
     const el = ref.current;
@@ -198,10 +198,7 @@ function AgreementDialog({
     if (!el.open) el.showModal();
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const onNativeClose = () => closeRef.current();
-    el.addEventListener('close', onNativeClose);
     return () => {
-      el.removeEventListener('close', onNativeClose);
       document.body.style.overflow = previous;
       if (el.open) el.close();
     };
@@ -212,7 +209,6 @@ function AgreementDialog({
       ref={ref}
       className="agreement-modal"
       aria-label={title}
-      onClose={onClose}
       onCancel={onClose}
       // The dialog is not full-viewport, but a click that lands on the element
       // itself rather than its content is still a click on the backdrop margin.
