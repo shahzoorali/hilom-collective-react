@@ -32,7 +32,11 @@ function parseSignatureHeader(header: string): { timestamp: string; test?: strin
  */
 export function verifyWebhookSignature(rawBody: string, signatureHeader: string, webhookSecret: string): void {
   const { timestamp, test, live } = parseSignatureHeader(signatureHeader);
-  const candidate = test ?? live;
+  // Both fields are always present in the header, but only the one matching
+  // the webhook's mode is non-empty — the other is `te=` or `li=` with
+  // nothing after the `=`. `??` only falls back on null/undefined, so it
+  // must not be used here: an empty `test` would win over a populated `live`.
+  const candidate = live || test;
   if (!candidate) throw new SignatureVerificationError('Neither te= nor li= present in signature header');
 
   const signedPayload = `${timestamp}.${rawBody}`;
