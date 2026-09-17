@@ -12,7 +12,7 @@ import { getSupabase } from './supabase.js';
 import { getMoodleSecret } from './secrets.js';
 import { MoodleClient } from './moodle.js';
 import { ensureCognitoUser } from './cognito.js';
-import { sendEnrollmentEmail } from './enrollment-email.js';
+import { sendEnrollmentEmail, sendEnrollmentAdminAlert } from './enrollment-email.js';
 import { accessUrl } from './access-url.js';
 
 export interface FulfillResult {
@@ -157,6 +157,11 @@ export async function fulfillOrder(orderId: string, billingName?: string | null)
       buyerEmail: order.buyer_email,
       productName: product?.name ?? 'your course',
       accessUrl: accessUrl(courseIds),
+    });
+    await sendEnrollmentAdminAlert({
+      orderId,
+      buyerEmail: order.buyer_email,
+      productName: product?.name ?? 'a course',
     });
 
     return { orderId, status: 'fulfilled', moodleUserId: moodleUser.id, cognitoUserSub, courseIds };

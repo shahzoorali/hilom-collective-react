@@ -721,6 +721,59 @@ export async function sendCancellationRequestedAdminAlert(input: {
 }
 
 /**
+ * Tells admin a seat was just paid for and confirmed.
+ *
+ * Sent once per registration, from the same place the buyer's own
+ * confirmation goes out — the two are the only signal admin gets that a sale
+ * happened; there is no polling of the dashboard. Not sent for later
+ * instalments on the same registration: "someone bought a place" is the event
+ * worth a ping, and repeating it for every instalment would just teach admin
+ * to ignore it.
+ */
+export async function sendRegistrationPaidAdminAlert(input: {
+  to: string;
+  registrationId: string;
+  registrantName: string;
+  buyerEmail: string;
+  eventTitle: string;
+  planName: string;
+  amountCentavos: number;
+  currency: string;
+  receiptNo: string;
+}): Promise<void> {
+  const { to, registrationId, registrantName, buyerEmail, eventTitle, planName, amountCentavos, currency, receiptNo } =
+    input;
+  const heading = `Paid: ${eventTitle}`;
+
+  const rows = [
+    { label: 'Registrant', value: escapeHtml(registrantName) },
+    { label: 'Email', value: escapeHtml(buyerEmail) },
+    { label: 'Plan', value: escapeHtml(planName) },
+    { label: 'Paid', value: escapeHtml(peso(amountCentavos, currency)) },
+    { label: 'Receipt', value: escapeHtml(receiptNo) },
+  ];
+
+  const body =
+    p(`${escapeHtml(registrantName)} just paid for a place at ${escapeHtml(eventTitle)}.`) +
+    details(rows) +
+    button('Review in admin', `${SITE}/admin/registrations`);
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `${registrantName} (${buyerEmail}) just paid for a place at ${eventTitle}.`,
+      `Plan: ${planName}`,
+      `Paid: ${peso(amountCentavos, currency)} (receipt ${receiptNo})`,
+      '',
+      `${SITE}/admin/registrations`,
+      `(registration ${registrationId})`,
+    ]),
+    renderEmail({ heading, body }),
+  );
+}
+
+/**
  * Tells a registrant their cancellation request was not approved.
  *
  * Says plainly that the place is still theirs and still due, because the

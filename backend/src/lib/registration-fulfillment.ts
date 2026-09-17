@@ -20,7 +20,11 @@ import {
   sendRegistrationConfirmed,
   sendPaymentReceipt,
   sendFullySettled,
+  sendRegistrationPaidAdminAlert,
 } from './registration-email.js';
+
+/** Where the "someone paid" ping goes — same inbox as every other admin alert. */
+const ADMIN_ALERT_EMAIL = 'kumusta@hilomcollective.com';
 import { AGREEMENT_PDF_FILENAME, agreementPdfForEvent } from './participant-agreement.js';
 
 export interface ChargeResult {
@@ -359,6 +363,17 @@ async function notify(
       charge,
       receiptNo,
       agreement: pdf ? { filename: AGREEMENT_PDF_FILENAME, pdf } : null,
+    });
+    await sendRegistrationPaidAdminAlert({
+      to: ADMIN_ALERT_EMAIL,
+      registrationId: registration.id,
+      registrantName: registration.registrant_name,
+      buyerEmail: registration.buyer_email,
+      eventTitle: event.title,
+      planName: registration.plan_name,
+      amountCentavos: charge.amount_centavos,
+      currency: charge.currency,
+      receiptNo,
     });
   } else {
     await sendPaymentReceipt({ ...context, charge, receiptNo });

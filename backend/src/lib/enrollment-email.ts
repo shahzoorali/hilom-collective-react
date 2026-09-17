@@ -40,6 +40,9 @@ export interface EnrollmentEmailInput {
   accessUrl: string;
 }
 
+/** Where the "someone paid" ping goes — same inbox as the event-registration alert. */
+const ADMIN_ALERT_EMAIL = 'kumusta@hilomcollective.com';
+
 /**
  * Best-effort — resolves on both success and failure. Callers should not
  * `await` this expecting a rejection to mean anything actionable; check logs
@@ -106,6 +109,58 @@ export async function sendEnrollmentEmail(input: EnrollmentEmailInput): Promise<
   } catch (err) {
     console.warn('[enrollment-email] send failed — enrollment itself is unaffected', {
       buyerEmail,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Tells admin a course was just bought and enrolled.
+ *
+ * Sent once per order, right alongside the buyer's own "your course is ready"
+ * email — the only other place admin would see this is the orders dashboard,
+ * and nothing polls that. Same reasoning as sendRegistrationPaidAdminAlert.
+ */
+export async function sendEnrollmentAdminAlert(input: {
+  orderId: string;
+  buyerEmail: string;
+  productName: string;
+}): Promise<void> {
+  const { orderId, buyerEmail, productName } = input;
+  const heading = `Paid: ${productName}`;
+
+  const textBody = renderText(heading, [
+    `${buyerEmail} just bought ${productName} and has been enrolled.`,
+    '',
+    `(order ${orderId})`,
+  ]);
+
+  const htmlBody = renderEmail({
+    heading,
+    body:
+      p(`${escapeHtml(buyerEmail)} just bought <strong>${escapeHtml(productName)}</strong> and has been enrolled.`) +
+      details([
+        { label: 'Course', value: escapeHtml(productName) },
+        { label: 'Buyer', value: escapeHtml(buyerEmail) },
+      ]),
+  });
+
+  try {
+    await sesClient.send(
+      new SendEmailCommand({
+        FromEmailAddress: SENDER,
+        Destination: { ToAddresses: [ADMIN_ALERT_EMAIL] },
+        Content: {
+          Simple: {
+            Subject: { Data: heading },
+            Body: { Text: { Data: textBody }, Html: { Data: htmlBody } },
+          },
+        },
+      }),
+    );
+  } catch (err) {
+    console.warn('[enrollment-email] admin alert send failed — enrollment itself is unaffected', {
+      orderId,
       message: err instanceof Error ? err.message : String(err),
     });
   }
