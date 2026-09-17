@@ -190,17 +190,34 @@ export default function Facilitators() {
   );
 }
 
+/**
+ * One person in the directory.
+ *
+ * The whole card is the link, not just the "View profile" line at the bottom of
+ * it. Every element on here — the portrait, the name, the specialties — is
+ * about one person and leads exactly one place, so a 300px-tall card with a
+ * 100px hit target at its foot was making people aim at the one bit of text
+ * that said what the rest of the card already implied. The line stays as the
+ * affordance, marked `aria-hidden` because the anchor around it is already
+ * labelled.
+ */
 function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) {
   const { slug, display_name, headline, photo_url, specialties, location, hasFreeCall, fromCentavos, rating } =
     facilitator;
-  const cardRef = useRef<HTMLElement>(null);
+  const cardRef = useRef<HTMLAnchorElement>(null);
 
   // Shortening can collapse two specialties onto the same label, and a card
   // showing the same chip twice reads as a bug.
   const chips = [...new Set(specialties.map(specialtyLabel))].slice(0, 3);
 
   return (
-    <article className="cv-person" ref={cardRef}>
+    <Link
+      className="cv-person"
+      to={`/facilitators/${slug}`}
+      ref={cardRef}
+      onClick={() => captureFlip(cardRef.current)}
+      aria-label={`View ${display_name}'s profile`}
+    >
       <div className="cv-person__photo">
         {photo_url ? (
           <img src={photo_url} alt="" data-flip-id={`facilitator-photo-${slug}`} loading="lazy" />
@@ -250,14 +267,10 @@ function FacilitatorCardView({ facilitator }: { facilitator: FacilitatorCard }) 
           {hasFreeCall ? ' · Free intro call' : fromCentavos !== null ? ` · from ${displayPrice(fromCentavos)}` : ''}
         </p>
 
-        <Link
-          className="cv-person__link"
-          to={`/facilitators/${slug}`}
-          onClick={() => captureFlip(cardRef.current)}
-        >
+        <span className="cv-person__link" aria-hidden="true">
           View profile &rarr;
-        </Link>
+        </span>
       </div>
-    </article>
+    </Link>
   );
 }

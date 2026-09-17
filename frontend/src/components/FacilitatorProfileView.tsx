@@ -13,7 +13,7 @@
  * neutralises the booking buttons — inside the editor they would lead a
  * *client* booking flow off an unsaved draft.
  */
-import type { ReactNode, RefObject } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { displayPrice } from './Layout';
 import {
@@ -243,6 +243,12 @@ export default function FacilitatorProfileView({
 }) {
   const f = facilitator;
   const slug = f.slug;
+  // The session whose full description is open in the modal. See TierCard: the
+  // cards show an opening paragraph, and the rest is read here.
+  const [openService, setOpenService] = useState<FacilitatorService | null>(null);
+  // The intro call expands in place rather than into the modal: it has no
+  // price ladder or terms to carry across, so a modal would be ceremony.
+  const [introOpen, setIntroOpen] = useState(false);
   const freeCall = services.find((s) => s.kind === 'exploratory');
   // Cheapest first, so the tiers read as the ladder they are rather than in
   // whatever order they happened to be created in.
@@ -542,8 +548,12 @@ export default function FacilitatorProfileView({
                       when they wrote one — "Let's get to know each other!",
                       "Discover which session/s suit their needs most" — which
                       the generic sentence below was overwriting. The fallback
-                      stays for the facilitators who left the field empty. */}
-                  <p>
+                      stays for the facilitators who left the field empty.
+
+                      Clamped, for the same reason the tiers below are: one
+                      facilitator's is now nine lines, and a banner that tall
+                      pushed the actual ladder of sessions off the screen. */}
+                  <p className={introOpen ? undefined : 'fac-intro__clamp'}>
                     {freeCall.description?.trim() || (
                       <>
                         A short conversation to understand what you're looking for and see whether{' '}
@@ -554,6 +564,15 @@ export default function FacilitatorProfileView({
                       {formatDuration(freeCall.duration_minutes)}, one per person.
                     </span>
                   </p>
+                  {(freeCall.description?.trim().length ?? 0) > 220 && (
+                    <button
+                      type="button"
+                      className="fac-tier__more"
+                      onClick={() => setIntroOpen((v) => !v)}
+                    >
+                      {introOpen ? 'Show less' : 'Read more'} <span aria-hidden="true">{introOpen ? '↑' : '→'}</span>
+                    </button>
+                  )}
                 </div>
                 <BookAction className="btn btn-accent" to={`/book/${f.slug}/${freeCall.id}`} preview={preview}>
                   Book an intro call
@@ -568,77 +587,263 @@ export default function FacilitatorProfileView({
             )}
 
             <div className="fac-tiers">
-              {paid.map((s) => {
-                const isPackage = s.kind === 'package' && s.sessions_count > 1;
-                const offer = s.description ? parseOffer(s.description) : null;
-                return (
-                  <article key={s.id} className="fac-tier">
-                    {offer?.eyebrow && <p className="cv-eyebrow">{offer.eyebrow}</p>}
-                    <h3 className="fac-tier__name">{s.title}</h3>
-                    <p className="fac-tier__meta">
-                      {isPackage
-                        ? `${s.sessions_count} sessions · ${formatDuration(s.duration_minutes)} each`
-                        : formatDuration(s.duration_minutes)}
-                    </p>
-
-                    {offer ? (
-                      <>
-                        {offer.lede.map((line, i) => (
-                          <p className="fac-tier__lede" key={i}>
-                            {line}
-                          </p>
-                        ))}
-                        <ul className="cv-checks fac-tier__points">
-                          {offer.points.map((point, i) => (
-                            <li key={i}>{point}</li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : (
-                      s.description && <Prose className="fac-prose small" text={s.description} />
-                    )}
-
-                    {/* Everything below is pinned to the bottom of the card, so
-                        price and button line up across tiers of unequal length
-                        instead of stepping down the row. */}
-                    <div className="fac-tier__foot">
-                      {/* Both branches emit the second line, so the price rows
-                          sit on one baseline across the ladder — a single
-                          session has no per-session figure to show, but it
-                          still needs the space the packages take. */}
-                      <p className="fac-tier__price">
-                        {displayPrice(s.price_centavos, s.currency)}
-                        <span className="fac-tier__unit">
-                          {isPackage
-                            ? `${displayPrice(Math.round(s.price_centavos / s.sessions_count), s.currency)} a session`
-                            : 'a single session'}
-                        </span>
-                      </p>
-
-                      {/* A package is bought once and scheduled afterwards, so
-                          "Choose a time" would be a lie — there are N times to
-                          choose, and none of them are chosen here (0035). */}
-                      <BookAction className="btn btn-primary btn-block" to={`/book/${f.slug}/${s.id}`} preview={preview}>
-                        {isPackage ? `Buy ${s.sessions_count} sessions` : 'Choose a time'}
-                      </BookAction>
-
-                      {/* Folded away by default. Four tiers each showing three
-                          lines of refund terms put more visual weight on the
-                          cancellation rules than on the price. */}
-                      <details className="fac-tier__terms">
-                        <summary>Booking &amp; refund terms</summary>
-                        {isPackage && <p>You book each session as you go, whenever suits you.</p>}
-                        <p>{describeRefundPolicy(s)}</p>
-                        {s.cancellation_policy && <p>{s.cancellation_policy}</p>}
-                      </details>
-                    </div>
-                  </article>
-                );
-              })}
+              {paid.map((s) => (
+                <TierCard
+                  key={s.id}
+                  service={s}
+                  slug={slug}
+                  preview={preview}
+                  onReadMore={() => setOpenService(s)}
+                />
+              ))}
             </div>
           </div>
+
+          {openService && (
+            <ServiceDialog
+              service={openService}
+              slug={slug}
+              preview={preview}
+              onClose={() => setOpenService(null)}
+            />
+          )}
         </section>
       )}
     </article>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The session ladder
+// ---------------------------------------------------------------------------
+
+/** The two derived facts every rendering of a service needs. */
+function readService(s: FacilitatorService) {
+  const isPackage = s.kind === 'package' && s.sessions_count > 1;
+  return {
+    isPackage,
+    offer: s.description ? parseOffer(s.description) : null,
+    meta: isPackage
+      ? `${s.sessions_count} sessions · ${formatDuration(s.duration_minutes)} each`
+      : formatDuration(s.duration_minutes),
+  };
+}
+
+/** Price, book button and the folded refund terms — identical on card and modal. */
+function TierFoot({
+  service: s,
+  slug,
+  preview,
+}: {
+  service: FacilitatorService;
+  slug: string;
+  preview: boolean;
+}) {
+  const { isPackage } = readService(s);
+  return (
+    <div className="fac-tier__foot">
+      {/* Both branches emit the second line, so the price rows sit on one
+          baseline across the ladder — a single session has no per-session
+          figure to show, but it still needs the space the packages take. */}
+      <p className="fac-tier__price">
+        {displayPrice(s.price_centavos, s.currency)}
+        <span className="fac-tier__unit">
+          {isPackage
+            ? `${displayPrice(Math.round(s.price_centavos / s.sessions_count), s.currency)} a session`
+            : 'a single session'}
+        </span>
+      </p>
+
+      {/* A package is bought once and scheduled afterwards, so "Choose a time"
+          would be a lie — there are N times to choose, and none of them are
+          chosen here (0035). */}
+      <BookAction className="btn btn-primary btn-block" to={`/book/${slug}/${s.id}`} preview={preview}>
+        {isPackage ? `Buy ${s.sessions_count} sessions` : 'Choose a time'}
+      </BookAction>
+
+      {/* Folded away by default. Four tiers each showing three lines of refund
+          terms put more visual weight on the cancellation rules than on the
+          price. */}
+      <details className="fac-tier__terms">
+        <summary>Booking &amp; refund terms</summary>
+        {isPackage && <p>You book each session as you go, whenever suits you.</p>}
+        <p>{describeRefundPolicy(s)}</p>
+        {s.cancellation_policy && <p>{s.cancellation_policy}</p>}
+      </details>
+    </div>
+  );
+}
+
+/**
+ * One tier in the ladder, deliberately not showing all of itself.
+ *
+ * Facilitators have been writing longer and longer offers — one of them now
+ * runs an opening paragraph, a second on who it is for, and eight bullets. Four
+ * of those side by side turned the booking band into several screens of dense
+ * body copy with the prices pushed far apart, and comparing tiers is the only
+ * thing this section is for.
+ *
+ * So a card commits to roughly one paragraph: the opening line of prose, or the
+ * first two bullets where the facilitator wrote no prose at all. "Read more"
+ * opens the whole thing in a modal, which is a better place to read three
+ * paragraphs than a 20rem column is. Everything a decision needs — duration,
+ * price, the button — stays on the card, so the modal is genuinely optional.
+ */
+function TierCard({
+  service: s,
+  slug,
+  preview,
+  onReadMore,
+}: {
+  service: FacilitatorService;
+  slug: string;
+  preview: boolean;
+  onReadMore: () => void;
+}) {
+  const { offer, meta } = readService(s);
+
+  // Without a parsed offer there is only free text, and the cheap, reliable cut
+  // is the first paragraph — `Prose` splits on blank lines the same way.
+  const paragraphs =
+    !offer && s.description && !HAS_MARKUP.test(s.description)
+      ? s.description.split(/\n{2,}/).map((t) => t.trim()).filter(Boolean)
+      : null;
+
+  const lede = offer ? offer.lede : (paragraphs ?? []);
+  const points = offer?.points ?? [];
+  // Bullets stand in for the preview only when there is no prose to show one.
+  const previewPoints = lede.length === 0 ? points.slice(0, 2) : [];
+  const hasMore =
+    lede.length > 1 ||
+    points.length > previewPoints.length ||
+    (!offer && !paragraphs && !!s.description);
+
+  return (
+    <article className="fac-tier">
+      {offer?.eyebrow && <p className="cv-eyebrow">{offer.eyebrow}</p>}
+      <h3 className="fac-tier__name">{s.title}</h3>
+      <p className="fac-tier__meta">{meta}</p>
+
+      <div className="fac-tier__summary">
+        {lede.slice(0, 1).map((line, i) => (
+          <p className="fac-tier__lede" key={i}>
+            {line}
+          </p>
+        ))}
+        {previewPoints.length > 0 && (
+          <ul className="cv-checks fac-tier__points">
+            {previewPoints.map((point, i) => (
+              <li key={i}>{point}</li>
+            ))}
+          </ul>
+        )}
+        {/* Markup from the rich-text editor is the one shape we cannot cut
+            safely, so it stays behind the modal entirely rather than risking a
+            half-rendered fragment. */}
+        {lede.length === 0 && previewPoints.length === 0 && s.description && (
+          <p className="fac-tier__lede muted">Full details of what this session includes.</p>
+        )}
+      </div>
+
+      {hasMore && (
+        <button type="button" className="fac-tier__more" onClick={onReadMore}>
+          Read more <span aria-hidden="true">→</span>
+        </button>
+      )}
+
+      {/* Everything below is pinned to the bottom of the card, so price and
+          button line up across tiers of unequal length instead of stepping
+          down the row. */}
+      <TierFoot service={s} slug={slug} preview={preview} />
+    </article>
+  );
+}
+
+/**
+ * A session's full description, in a native `<dialog>`.
+ *
+ * Native rather than a hand-rolled overlay for the same reasons the participant
+ * agreement uses one: the top layer, the backdrop, Escape and the focus trap
+ * are all free and all correct. The booking button comes along, because someone
+ * who has just read the whole offer should not have to close this to act on it.
+ */
+function ServiceDialog({
+  service: s,
+  slug,
+  preview,
+  onClose,
+}: {
+  service: FacilitatorService;
+  slug: string;
+  preview: boolean;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const { offer, meta } = readService(s);
+
+  // Opens the dialog and holds the page still behind it.
+  //
+  // Deliberately *not* listening for the native `close` event, which the
+  // agreement modal does: `close` is dispatched as a queued task, so the one
+  // fired by this effect's own teardown lands after the next effect has re-armed
+  // the listener — and under StrictMode's mount/unmount/mount that closed the
+  // dialog roughly 12ms after it opened. Escape is already handled by
+  // `onCancel`, and every other way out of here goes through `onClose`
+  // directly, so there is nothing left for the listener to catch.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (!el.open) el.showModal();
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+      if (el.open) el.close();
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={ref}
+      className="agreement-modal fac-tier-modal"
+      aria-label={s.title}
+      onCancel={onClose}
+      // The dialog is not full-viewport, but a click that lands on the element
+      // itself rather than its content is still a click on the backdrop margin.
+      onClick={(e) => {
+        if (e.target === ref.current) onClose();
+      }}
+    >
+      <div className="agreement-modal-head">
+        <strong>{s.title}</strong>
+        <button type="button" className="agreement-modal-close" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+
+      <div className="agreement-modal-body fac-tier-modal__body">
+        {offer?.eyebrow && <p className="cv-eyebrow">{offer.eyebrow}</p>}
+        <p className="fac-tier__meta">{meta}</p>
+
+        {offer ? (
+          <>
+            {offer.lede.map((line, i) => (
+              <p className="fac-tier__lede" key={i}>
+                {line}
+              </p>
+            ))}
+            <ul className="cv-checks fac-tier__points">
+              {offer.points.map((point, i) => (
+                <li key={i}>{point}</li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          s.description && <Prose className="fac-prose" text={s.description} />
+        )}
+
+        <TierFoot service={s} slug={slug} preview={preview} />
+      </div>
+    </dialog>
   );
 }

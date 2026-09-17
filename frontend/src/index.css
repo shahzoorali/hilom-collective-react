@@ -2703,15 +2703,21 @@ div[class*="_PuckCanvas-root_"],
   flex: none;
 }
 
-/* The tier ladder. auto-fit rather than a fixed column count: a facilitator
-   with two offers gets two wide cards, one with five gets five narrow ones,
-   and neither needs a breakpoint. */
+/* The tier ladder, three across.
+   It was auto-fit, which let a facilitator with five offers get five columns
+   of about 15rem each — and once they started writing real copy into those
+   offers, five 15rem columns of body text was a wall. Three is the widest a
+   card can be while a row still reads as a comparison, and a fourth tier
+   wrapping onto a second row is fine: the cards are short now (see TierCard),
+   so the row below is not a scroll away. */
 .fac-tiers {
   display: grid;
   gap: 1.25rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(15.5rem, 100%), 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
 }
+@media (max-width: 960px) { .fac-tiers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .fac-tiers { grid-template-columns: minmax(0, 1fr); } }
 .fac-tier {
   display: flex;
   flex-direction: column;
@@ -2806,6 +2812,62 @@ div[class*="_PuckCanvas-root_"],
 .fac-tier__terms p {
   margin: 0.6rem 0 0;
   line-height: 1.55;
+}
+
+/* The truncated preview on a card. Capped as well as cut to one paragraph:
+   a facilitator can write a single 90-word sentence, and "first paragraph"
+   would then be the whole wall again. */
+.fac-tier__summary {
+  margin-bottom: 0.9rem;
+}
+.fac-tier__summary .fac-tier__lede {
+  margin-bottom: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.fac-tier__summary .fac-tier__points {
+  margin: 0.7rem 0 0;
+}
+
+/* A text button, not a second CTA — the primary action on this card is still
+   "Choose a time", and two filled buttons would compete. */
+.fac-tier__more {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 0 0 1rem;
+  margin: 0;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--forest);
+  cursor: pointer;
+}
+.fac-tier__more:hover { text-decoration: underline; }
+.fac-intro__clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.fac-intro .fac-tier__more { padding-bottom: 0; }
+.fac-tier__more:focus-visible { outline: 2px solid var(--forest); outline-offset: 2px; }
+
+/* The read-more modal reuses .agreement-modal wholesale and only widens it:
+   these carry a bullet list and a price block, not a column of prose. */
+.fac-tier-modal {
+  width: min(560px, 92vw);
+}
+.fac-tier-modal__body .cv-eyebrow { margin: 0 0 0.35rem; }
+.fac-tier-modal__body .fac-tier__meta { margin-bottom: 1rem; }
+/* Inside the modal the price block is the closer, so it gets a rule above it
+   rather than the `margin-top: auto` it uses to align a row of cards. */
+.fac-tier-modal__body .fac-tier__foot {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
 }
 
 @media (max-width: 560px) {
@@ -3226,14 +3288,38 @@ div[class*="_PuckCanvas-root_"],
   font: inherit; font-size: 0.85rem; color: var(--forest); text-decoration: underline;
 }
 
+/* Three across, explicitly — not auto-fill. The roster is small enough that
+   auto-fill gave a different column count on nearly every viewport, and a
+   directory that reflows from four to three to two as the window moves reads
+   as unsettled rather than responsive. Two on a tablet, one on a phone. */
 .cv-people {
   display: grid; gap: 1.25rem;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+@media (max-width: 1100px) { .cv-people { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .cv-people { grid-template-columns: minmax(0, 1fr); } }
+
+/* The entire card is the anchor — see FacilitatorCardView. It therefore has to
+   undo the link defaults it inherits and carry the hover affordance itself. */
 .cv-person {
   display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: 12px; overflow: hidden;
+  color: inherit; text-decoration: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.cv-person:hover, .cv-person:focus-visible {
+  transform: translateY(-3px);
+  border-color: rgba(47, 94, 62, 0.45);
+  box-shadow: 0 10px 26px rgba(31, 66, 41, 0.13);
+}
+.cv-person:focus-visible { outline: 2px solid var(--forest); outline-offset: 3px; }
+/* The portrait is the one part big enough for the lift to read as a zoom. */
+.cv-person:hover .cv-person__photo img { transform: scale(1.04); }
+@media (prefers-reduced-motion: reduce) {
+  .cv-person, .cv-person__photo img { transition: none; }
+  .cv-person:hover, .cv-person:focus-visible { transform: none; }
+  .cv-person:hover .cv-person__photo img { transform: none; }
 }
 /* Square regardless of what was uploaded. `height: 100%` on the image would
    resolve against an auto height and let a 4480x6720 portrait stretch the box
@@ -3241,6 +3327,7 @@ div[class*="_PuckCanvas-root_"],
 .cv-person__photo { aspect-ratio: 1 / 1; background: var(--leaf); line-height: 0; overflow: hidden; }
 .cv-person__photo img {
   width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; display: block;
+  transition: transform 0.35s ease;
 }
 /* Initials stand in when there is no portrait, on the same leaf ground so the
    grid still reads as one system. */
@@ -3264,7 +3351,10 @@ div[class*="_PuckCanvas-root_"],
   margin-top: auto; padding-top: 0.9rem; font-weight: 700; font-size: 0.95rem;
   color: var(--forest); text-decoration: none;
 }
+/* Not itself a link any more — the card is. Kept as the visual cue that the
+   card leads somewhere, and underlined from the card's hover, not its own. */
 .cv-person__link:hover { text-decoration: underline; }
+.cv-person:hover .cv-person__link { text-decoration: underline; }
 
 /* Taxonomy chips. Ochre-tinted, never solid ochre: solid is reserved for the
    thing you click. */
