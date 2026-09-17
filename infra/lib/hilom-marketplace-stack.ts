@@ -336,7 +336,14 @@ export class HilomMarketplaceStack extends cdk.Stack {
       // GET is the applicant's own status, and like POST it is open to any
       // signed-in user — the statuses it exists to report (applied, rejected,
       // suspended) are precisely the ones with no `facilitator` group.
-      ['/facilitators/apply', [GET, POST]],
+      //
+      // POST listed first deliberately: routeAttacher's HttpLambdaIntegration
+      // is parented under whichever route binds it first, so putting GET
+      // ahead of the original POST would rename that shared integration and
+      // cascade a logical-id change across every other route on this same
+      // Lambda. Keeping POST first is a no-op diff; swap it and `cdk diff`
+      // shows 8+ unrelated routes "changing".
+      ['/facilitators/apply', [POST, GET]],
       ['/facilitator/me', [GET, PUT]],
       ['/facilitator/services', [GET, POST]],
       ['/facilitator/services/{serviceId}', [PUT, DELETE]],
