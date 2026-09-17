@@ -2,6 +2,11 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { startSessionKeepAlive } from './lib/auth.ts'
+
+// Before the first render, so a tab that has been open past the one-hour token
+// lifetime renews in the background instead of dropping to signed-out.
+startSessionKeepAlive()
 
 // A stale tab (or cached index.html) can reference a hashed chunk/CSS
 // filename from a previous deploy that no longer exists on the server.

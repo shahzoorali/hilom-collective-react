@@ -1,5 +1,5 @@
 import { API_BASE } from '../config';
-import { idToken } from './auth';
+import { ensureFreshSession, idToken } from './auth';
 
 export interface Product {
   id: string;
@@ -92,13 +92,48 @@ export const adminGetOrderPayment = (adminKey: string, orderId: string) =>
 /** Shared fetch wrapper: prefixes API_BASE and turns a non-2xx into the
  *  backend's `error` message rather than an opaque status code. Exported so the
  *  CMS client in cms.ts uses the same error handling. */
+/**
+ * Every call to our own API.
+ *
+ * A 401 on an authenticated call means the token we sent was rejected — most
+ * often because it aged out between being read and being received. Rather than
+ * surfacing that as "sign in to continue" to someone who *is* signed in, the
+ * session is renewed once and the request replayed with the new token. Only
+ * once, and only when a refresh genuinely produced one, so a request the
+ * backend rejects for any other reason still fails immediately.
+ */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, init);
+  let res = await fetch(`${API_BASE}${path}`, init);
+
+  if (res.status === 401 && authorizationOf(init) !== null && (await ensureFreshSession())) {
+    const token = idToken();
+    if (token) {
+      res = await fetch(`${API_BASE}${path}`, {
+        ...init,
+        headers: { ...headersOf(init), Authorization: `Bearer ${token}` },
+      });
+    }
+  }
+
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
+}
+
+/** `init.headers` as a plain object, whichever of the three shapes it came in as. */
+function headersOf(init?: RequestInit): Record<string, string> {
+  const h = init?.headers;
+  if (!h) return {};
+  if (h instanceof Headers) return Object.fromEntries(h.entries());
+  if (Array.isArray(h)) return Object.fromEntries(h);
+  return { ...h } as Record<string, string>;
+}
+
+function authorizationOf(init?: RequestInit): string | null {
+  const entry = Object.entries(headersOf(init)).find(([k]) => k.toLowerCase() === 'authorization');
+  return entry?.[1] ?? null;
 }
 
 export const listProducts = () => apiFetch<{ products: Product[] }>('/products').then((r) => r.products);

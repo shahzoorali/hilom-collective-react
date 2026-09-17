@@ -1,6 +1,7 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { currentUser, hasGroup, login, logout } from '../lib/auth';
+import { hasGroup, login, logout } from '../lib/auth';
+import { useCurrentUser } from '../lib/useCurrentUser';
 import { MOODLE_URL } from '../config';
 import hilomLogo from '../assets/hilom-logo.png';
 import { useMenus } from '../cms/useMenus';
@@ -128,7 +129,7 @@ function UserMenu({ email }: { email: string }) {
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const user = currentUser();
+  const user = useCurrentUser();
   const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
   const menus = useMenus();

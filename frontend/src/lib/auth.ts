@@ -8,6 +8,12 @@
  * Tokens live in sessionStorage, not localStorage — they are cleared when the
  * tab closes, which limits the window in which a stolen token is useful. They
  * are never sent anywhere except Cognito.
+ *
+ * The id/access tokens Cognito issues are good for one hour. The refresh token
+ * that comes back with them is good for thirty days, and `startSessionKeepAlive`
+ * spends it a few minutes before each expiry so a tab that is merely *open* —
+ * a facilitator with the dashboard up while they work — never silently drops
+ * to signed-out mid-session. The refresh token itself still dies with the tab.
  */
 import { COGNITO, redirectUri } from '../config';
 
@@ -17,9 +23,9 @@ const TOKENS_KEY = 'hilom.tokens';
 /**
  * A name the user has just changed, held over the top of the id_token claim.
  *
- * There is no refresh-token flow here (see the file header — the SPA holds only
- * what the code exchange returned), so a rename lands in Cognito but the token
- * in this tab keeps the old `given_name` until the next sign-in. Without this
+ * A refresh reissues the id_token from Cognito's *current* user record, so the
+ * new name does arrive eventually — but a rename lands in Cognito immediately
+ * and the token in this tab keeps the old `given_name` until then. Without this
  * override, saving your name appears to do nothing: the form reports success
  * and the page immediately re-renders the stale claim.
  *
@@ -48,7 +54,45 @@ export interface HilomUser {
 interface StoredTokens {
   idToken: string;
   accessToken: string;
+  /** Absent for a session established before refresh was implemented. */
+  refreshToken?: string;
   expiresAt: number;
+}
+
+/**
+ * How long before expiry a refresh is worth doing.
+ *
+ * Generous on purpose: `idToken()` is synchronous and has a dozen call sites,
+ * so the guarantee this module makes is that the *stored* token is kept fresh
+ * ahead of time rather than renewed at the moment of use. Five minutes covers
+ * a slow refresh, a throttled background timer and the clock skew between the
+ * browser and Cognito all at once.
+ */
+const REFRESH_SKEW_MS = 5 * 60 * 1000;
+
+/** Fired whenever the stored session appears or disappears, so the UI can re-read it. */
+export const AUTH_EVENT = 'hilom:auth';
+
+function readTokens(): StoredTokens | null {
+  const raw = sessionStorage.getItem(TOKENS_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as StoredTokens;
+  } catch {
+    sessionStorage.removeItem(TOKENS_KEY);
+    return null;
+  }
+}
+
+function writeTokens(tokens: StoredTokens): void {
+  sessionStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+function clearTokens(): void {
+  sessionStorage.removeItem(TOKENS_KEY);
+  sessionStorage.removeItem(NAME_OVERRIDE_KEY);
+  window.dispatchEvent(new Event(AUTH_EVENT));
 }
 
 function base64url(bytes: Uint8Array): string {
@@ -96,15 +140,16 @@ export async function handleCallback(code: string): Promise<string> {
   });
 
   if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-  const json = (await res.json()) as { id_token: string; access_token: string; expires_in: number };
+  const json = (await res.json()) as TokenResponse;
 
-  const tokens: StoredTokens = {
+  writeTokens({
     idToken: json.id_token,
     accessToken: json.access_token,
+    refreshToken: json.refresh_token,
     expiresAt: Date.now() + json.expires_in * 1000,
-  };
-  sessionStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+  });
   sessionStorage.removeItem(VERIFIER_KEY);
+  scheduleRefresh();
 
   const returnTo = sessionStorage.getItem('hilom.returnTo') ?? '/';
   sessionStorage.removeItem('hilom.returnTo');
@@ -118,15 +163,14 @@ export async function handleCallback(code: string): Promise<string> {
  * decided here — the backend validates tokens itself for anything that matters.
  */
 export function currentUser(): HilomUser | null {
-  const raw = sessionStorage.getItem(TOKENS_KEY);
-  if (!raw) return null;
+  const tokens = readTokens();
+  if (!tokens) return null;
+  if (Date.now() >= tokens.expiresAt) {
+    clearTokens();
+    return null;
+  }
 
   try {
-    const tokens = JSON.parse(raw) as StoredTokens;
-    if (Date.now() >= tokens.expiresAt) {
-      sessionStorage.removeItem(TOKENS_KEY);
-      return null;
-    }
     const payload = JSON.parse(atob(tokens.idToken.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/'))) as {
       email?: string;
       given_name?: string;
@@ -143,7 +187,7 @@ export function currentUser(): HilomUser | null {
       groups: Array.isArray(payload['cognito:groups']) ? payload['cognito:groups'] : [],
     };
   } catch {
-    sessionStorage.removeItem(TOKENS_KEY);
+    clearTokens();
     return null;
   }
 }
@@ -156,19 +200,18 @@ export function currentUser(): HilomUser | null {
  * expired, so a caller gets a clean "signed out" rather than a 401 round trip.
  */
 export function idToken(): string | null {
-  const raw = sessionStorage.getItem(TOKENS_KEY);
-  if (!raw) return null;
-  try {
-    const tokens = JSON.parse(raw) as StoredTokens;
-    if (Date.now() >= tokens.expiresAt) {
-      sessionStorage.removeItem(TOKENS_KEY);
-      return null;
-    }
-    return tokens.idToken;
-  } catch {
-    sessionStorage.removeItem(TOKENS_KEY);
+  const tokens = readTokens();
+  if (!tokens) return null;
+  if (Date.now() >= tokens.expiresAt) {
+    clearTokens();
     return null;
   }
+  // Belt and braces: the keep-alive timer normally gets here first, but a tab
+  // whose timers were throttled while backgrounded can come back with minutes
+  // left on the clock. This kicks off the renewal without blocking the caller,
+  // who still has a valid token to send right now.
+  if (tokens.expiresAt - Date.now() < REFRESH_SKEW_MS) void ensureFreshSession();
+  return tokens.idToken;
 }
 
 function readNameOverride(): { givenName: string; familyName: string } | null {
@@ -188,8 +231,9 @@ export function setNameOverride(givenName: string, familyName: string): void {
 }
 
 export function logout(): void {
-  sessionStorage.removeItem(TOKENS_KEY);
-  sessionStorage.removeItem(NAME_OVERRIDE_KEY);
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+  refreshTimer = null;
+  clearTokens();
   const params = new URLSearchParams({
     client_id: COGNITO.clientId,
     logout_uri: `${window.location.origin}/`,
@@ -203,4 +247,123 @@ export function logout(): void {
  */
 export function hasGroup(group: string): boolean {
   return currentUser()?.groups.includes(group) ?? false;
+}
+
+// ---------------------------------------------------------------------------
+// Keeping the session alive
+// ---------------------------------------------------------------------------
+
+interface TokenResponse {
+  id_token: string;
+  access_token: string;
+  /** Only the authorization-code exchange returns one; a refresh reuses it. */
+  refresh_token?: string;
+  expires_in: number;
+}
+
+let refreshTimer: number | null = null;
+/** The one in-flight refresh, shared so a burst of API calls makes one request. */
+let inFlight: Promise<boolean> | null = null;
+
+/**
+ * Trades the refresh token for a fresh id/access pair.
+ *
+ * Returns false when there is nothing to renew or the refresh token is no
+ * longer good — the second case is a real end of session (revoked, thirty days
+ * elapsed, password changed) and clears the tab so the UI stops pretending
+ * someone is signed in.
+ *
+ * A network failure is deliberately *not* treated that way: the token we hold
+ * is still valid for a few more minutes, and signing someone out because their
+ * wifi blinked is the exact bug this whole file is here to stop.
+ */
+async function refreshSession(): Promise<boolean> {
+  const tokens = readTokens();
+  if (!tokens?.refreshToken) return false;
+
+  let res: Response;
+  try {
+    res = await fetch(`https://${COGNITO.domain}/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: COGNITO.clientId,
+        refresh_token: tokens.refreshToken,
+      }),
+    });
+  } catch {
+    return false;
+  }
+
+  if (!res.ok) {
+    // 400 invalid_grant is Cognito saying the refresh token is dead. Anything
+    // else (429, 5xx) is transient and the next scheduled attempt can retry.
+    if (res.status === 400 || res.status === 401) clearTokens();
+    return false;
+  }
+
+  const json = (await res.json()) as TokenResponse;
+  writeTokens({
+    idToken: json.id_token,
+    accessToken: json.access_token,
+    // Cognito omits the refresh token on a refresh — keep the one we have, or
+    // the *next* renewal has nothing to spend.
+    refreshToken: json.refresh_token ?? tokens.refreshToken,
+    expiresAt: Date.now() + json.expires_in * 1000,
+  });
+  return true;
+}
+
+/**
+ * Renews the session if it is close to expiring, coalescing concurrent callers.
+ *
+ * Resolves true only when a refresh actually happened, which is what tells
+ * `apiFetch` a retry is worth attempting.
+ */
+export function ensureFreshSession(): Promise<boolean> {
+  const tokens = readTokens();
+  if (!tokens?.refreshToken) return Promise.resolve(false);
+  if (tokens.expiresAt - Date.now() > REFRESH_SKEW_MS) return Promise.resolve(false);
+  if (inFlight) return inFlight;
+
+  inFlight = refreshSession().finally(() => {
+    inFlight = null;
+    scheduleRefresh();
+  });
+  return inFlight;
+}
+
+/** Arms a single timer for the next renewal, replacing any already pending. */
+function scheduleRefresh(): void {
+  if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+  refreshTimer = null;
+
+  const tokens = readTokens();
+  if (!tokens?.refreshToken) return;
+
+  // Floored rather than clamped at zero: a due-now renewal that just failed
+  // transiently would otherwise respin the timer instantly and hammer Cognito.
+  const delay = Math.max(30_000, tokens.expiresAt - Date.now() - REFRESH_SKEW_MS);
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null;
+    void ensureFreshSession();
+  }, delay);
+}
+
+/**
+ * Starts keeping the tab signed in. Called once, from the app entry point.
+ *
+ * The timer alone is not enough. Browsers throttle (and on mobile, suspend)
+ * timers in a backgrounded tab, which is precisely the "I left it for a while
+ * and came back signed out" case that was reported — so returning to the tab,
+ * or the network coming back, also triggers a check.
+ */
+export function startSessionKeepAlive(): void {
+  scheduleRefresh();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void ensureFreshSession();
+  });
+  window.addEventListener('focus', () => void ensureFreshSession());
+  window.addEventListener('online', () => void ensureFreshSession());
 }
