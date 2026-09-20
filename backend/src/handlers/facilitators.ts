@@ -146,6 +146,25 @@ async function detail(slug: string): Promise<APIGatewayProxyResultV2> {
 
   if (reviewError) throw reviewError;
 
+  // Events this facilitator hosts, by events.facilitator_id (0045) — not by
+  // matching a name against the events.facilitators display roster, which is
+  // copy and not identity. Published only, and only the columns the profile
+  // card renders: `join_url` is emphatically not among them, for the same
+  // reason as meeting_url below.
+  const { data: hosting, error: hostingError } = await supabase
+    .from('events')
+    .select('id, title, excerpt, image_url, image_alt, location, starts_at, ends_at, ticketing_enabled')
+    .eq('facilitator_id', (facilitator as { id: string }).id)
+    .eq('status', 'published')
+    .order('starts_at', { ascending: true });
+
+  if (hostingError) throw hostingError;
+
+  const nowMs = Date.now();
+  const isUpcoming = (e: { starts_at: string; ends_at: string | null }) =>
+    Date.parse(e.ends_at ?? e.starts_at) >= nowMs;
+  const hosted = (hosting ?? []) as { starts_at: string; ends_at: string | null }[];
+
   // meeting_url is deliberately absent from SERVICE_PUBLIC_COLUMNS: a standing
   // Zoom room published on a public profile is an open door into every session
   // that facilitator runs. It reaches the client on their booking, after payment.
@@ -154,6 +173,14 @@ async function detail(slug: string): Promise<APIGatewayProxyResultV2> {
     services: services ?? [],
     rating: ratingSummary(facilitator as Record<string, number>),
     reviews: reviews ?? [],
+    // Split the same way GET /events splits its own list, and by the same rule
+    // — coalesce(ends_at, starts_at) — so a two-day retreat does not drop out
+    // of "Hosting" halfway through day one. Past is capped: a profile is a page
+    // someone reads before booking, not an archive.
+    events: {
+      upcoming: hosted.filter(isUpcoming),
+      past: hosted.filter((e) => !isUpcoming(e)).reverse().slice(0, 6),
+    },
   });
 }
 

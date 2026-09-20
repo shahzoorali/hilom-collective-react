@@ -3747,3 +3747,52 @@ div[class*="_PuckCanvas-root_"],
 .kb-results__snippet mark { background: var(--cream); padding: 0 0.15rem; border-radius: 3px; }
 .kb-empty { padding: 2rem 0; }
 .kb-empty p { margin: 0 0 0.5rem; }
+
+/* ---------------------------------------------------------------------------
+   Events a facilitator hosts, on their public profile.
+
+   A horizontal row, not a card grid: this sits above the review section in the
+   main column and next to the session tiers, and a second grid of image cards
+   would compete with the booking CTA rather than support it. The thumbnail is
+   fixed-width so a portrait and a landscape image produce the same row height.
+   --------------------------------------------------------------------------- */
+.fac-hosted {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.75rem;
+  text-decoration: none;
+  color: inherit;
+  max-width: 62ch;
+}
+a.fac-hosted:hover {
+  border-color: var(--forest);
+}
+.fac-hosted__img {
+  width: 84px;
+  height: 84px;
+  flex: 0 0 84px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.fac-hosted__text {
+  flex: 1;
+  min-width: 0;
+}
+.fac-hosted__cta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* Past events are context, not an offer — dimmed so the eye lands on what is
+   still open to book. */
+.fac-hosted--past {
+  opacity: 0.72;
+}
+@media (max-width: 560px) {
+  .fac-hosted {
+    flex-wrap: wrap;
+  }
+  .fac-hosted__cta {
+    width: 100%;
+  }
+}

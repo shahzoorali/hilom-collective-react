@@ -105,6 +105,7 @@ export default function FacilitatorProfile() {
       services={data.services}
       rating={data.rating}
       reviews={data.reviews}
+      events={data.events}
       rootRef={root}
       backLink={
         <div className="container">

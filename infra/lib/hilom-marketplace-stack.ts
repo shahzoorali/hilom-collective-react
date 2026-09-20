@@ -363,6 +363,14 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/bookings/{bookingId}/propose-time', [POST]],
       ['/facilitator/bookings/{bookingId}/withdraw-proposal', [POST]],
       ['/facilitator/earnings', [GET]],
+      // Events this facilitator hosts (0045's events.facilitator_id): their
+      // roster, and the joining link they hand out. Authorized the same way as
+      // every route above — by the facilitator row behind the token, never by
+      // the id in the path.
+      ['/facilitator/events', [GET]],
+      ['/facilitator/events/{eventId}/roster', [GET]],
+      ['/facilitator/events/{eventId}/join-link', [PUT]],
+      ['/facilitator/events/{eventId}/send-join-details', [POST]],
     ]);
 
     // A separate function from the portal above, following this stack's rule

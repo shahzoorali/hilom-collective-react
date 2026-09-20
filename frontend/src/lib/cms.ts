@@ -387,6 +387,12 @@ export interface AdminEvent extends CmsEvent {
   medical_disclaimer_html: string | null;
   liability_consent_html: string | null;
   registrant_fields: string[];
+  // The host and the joining link (migration 0045). `facilitator_id` is the
+  // marketplace facilitator running this, distinct from the `facilitators`
+  // display roster above; `join_url` is admin-visible here and nowhere public.
+  facilitator_id: string | null;
+  join_url: string | null;
+  join_instructions: string | null;
   // Derived, and only computed by the list endpoint — a single-event read does
   // not carry them. Present only on ticketed events, because "0 of 0 seats" is
   // a misleading thing to say about a listing.
@@ -481,6 +487,9 @@ export type AdminEventInput = {
   medical_disclaimer_html?: string | null;
   liability_consent_html?: string | null;
   registrant_fields?: string[];
+  facilitator_id?: string | null;
+  join_url?: string | null;
+  join_instructions?: string | null;
   facilitators?: EventFacilitator[];
   gallery?: EventGalleryImage[];
 };

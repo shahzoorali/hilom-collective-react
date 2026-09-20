@@ -55,6 +55,16 @@ export interface EmailEvent {
   location: string | null;
   venue_details: string | null;
   format: string | null;
+  /**
+   * Joining link for a virtual event, and any wording that goes with it.
+   *
+   * Optional on the interface rather than required because most callers of
+   * these templates (reminders, cancellations) have no business loading it —
+   * making it required would push a secret into every query that mentions an
+   * event. Only the sends that are supposed to release it fetch it.
+   */
+  join_url?: string | null;
+  join_instructions?: string | null;
 }
 
 export interface EmailRegistration {
@@ -152,6 +162,38 @@ const nextDue = (charges: EmailCharge[]): EmailCharge | undefined =>
     .filter((c) => isOutstanding(c.status))
     .sort((a, b) => a.seq - b.seq)[0];
 
+/**
+ * The joining details, as a block, or nothing.
+ *
+ * `button()` rather than a bare link so it survives the client that strips
+ * underlines, and the URL is repeated as text underneath because a Zoom link
+ * is the one thing people copy into a calendar entry by hand.
+ *
+ * The link is escaped like any other value. It is admin- or facilitator-typed,
+ * so it is not hostile input, but it lands in an href and there is no version
+ * of "trusted enough to skip escaping" worth defending here.
+ */
+function joinBlock(event: EmailEvent): string {
+  if (!event.join_url) return '';
+  return (
+    p('<strong>How to join</strong>') +
+    button('Join the session', event.join_url) +
+    p(`<a href="${escapeHtml(event.join_url)}">${escapeHtml(event.join_url)}</a>`) +
+    (event.join_instructions ? note(escapeHtml(event.join_instructions)) : '')
+  );
+}
+
+/** The same, for the plain-text part. */
+function joinLines(event: EmailEvent): string[] {
+  if (!event.join_url) return [];
+  return [
+    '',
+    'How to join:',
+    event.join_url,
+    ...(event.join_instructions ? [event.join_instructions] : []),
+  ];
+}
+
 async function send(
   to: string,
   subject: string,
@@ -237,6 +279,7 @@ export async function sendRegistrationConfirmed(
     details(rows);
 
   if (event.venue_details) body += p(escapeHtml(event.venue_details));
+  body += joinBlock(event);
 
   if (ctx.agreement) {
     body += note(
@@ -271,6 +314,7 @@ export async function sendRegistrationConfirmed(
     `When: ${whenEvent(event)}`,
     ...(event.location ? [`Where: ${event.location}`] : []),
     `Paid now: ${peso(charge.amount_centavos, currency)} (receipt ${receiptNo})`,
+    ...joinLines(event),
     ...(owing > 0
       ? [
           `Still to pay: ${peso(owing, currency)}`,
@@ -811,5 +855,64 @@ export async function sendCancellationDeclined(input: {
       'If this feels wrong, reply to this email — a person will read it.',
     ]),
     renderEmail({ heading, body }),
+  );
+}
+
+/**
+ * The joining details on their own, sent on demand.
+ *
+ * Exists because a Zoom link is the one detail that changes after people have
+ * already registered — the host reschedules the room, or the link was not
+ * ready when the first registrations came in. Re-sending the whole
+ * confirmation to say so would re-send a receipt for money that was taken
+ * weeks ago, which reads as a second charge.
+ *
+ * Addressed to the **registrant**, not the buyer: a parent who paid for their
+ * daughter's place is not the one who needs the link. Where the two are the
+ * same address — which is the common case — this is the same person anyway,
+ * and where they differ the caller is free to send twice.
+ */
+export async function sendJoinDetails(input: {
+  to: string;
+  registrantName: string;
+  registrationId: string;
+  event: EmailEvent;
+  /** Set when a link that had already been sent has since changed. */
+  updated?: boolean;
+}): Promise<void> {
+  const { event } = input;
+  if (!event.join_url) return;
+
+  const heading = input.updated
+    ? `Updated joining details for ${event.title}`
+    : `How to join ${event.title}`;
+
+  const lead = input.updated
+    ? `The joining link for ${escapeHtml(event.title)} has changed — please use the one below and ignore any earlier link.`
+    : `Here is how to join ${escapeHtml(event.title)}, ${escapeHtml(input.registrantName)}.`;
+
+  const body =
+    p(lead) +
+    details([
+      { label: 'Event', value: escapeHtml(event.title) },
+      { label: 'When', value: escapeHtml(whenEvent(event)) },
+    ]) +
+    joinBlock(event) +
+    note('Keep this email — the link is also on your registration page, linked below.') +
+    button('View your registration', registrationUrl(input.registrationId));
+
+  await send(
+    input.to,
+    heading,
+    renderText(heading, [
+      input.updated
+        ? `The joining link for ${event.title} has changed. Please use the one below and ignore any earlier link.`
+        : `How to join ${event.title}.`,
+      `When: ${whenEvent(event)}`,
+      ...joinLines(event),
+      '',
+      registrationUrl(input.registrationId),
+    ]),
+    renderEmail({ preheader: `Joining details for ${event.title}.`, heading, body }),
   );
 }

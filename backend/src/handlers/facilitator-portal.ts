@@ -18,6 +18,10 @@
  *   GET    /facilitator/earnings
  *   POST   /facilitator/bookings/{bookingId}/cancel
  *   POST   /facilitator/bookings/{bookingId}/no-show
+ *   GET    /facilitator/events
+ *   GET    /facilitator/events/{eventId}/roster
+ *   PUT    /facilitator/events/{eventId}/join-link
+ *   POST   /facilitator/events/{eventId}/send-join-details
  *
  * ## The one rule this file exists to enforce
  *
@@ -62,6 +66,10 @@ import {
   validateBlackout,
   FacilitatorInputError,
 } from '../lib/facilitator-input.js';
+import { buildRoster } from '../lib/event-roster.js';
+import { sendJoinDetails } from '../lib/registration-email.js';
+import { httpUrlOrNull } from '../lib/cms-events.js';
+import { BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 import { randomBytes } from 'node:crypto';
 
@@ -78,9 +86,9 @@ interface FacilitatorRow {
   platform_fee_bps: number;
 }
 
-export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
-  const method = event.requestContext.http.method;
-  const path = event.requestContext.http.path;
+export async function handler(ev: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  const method = ev.requestContext.http.method;
+  const path = ev.requestContext.http.path;
 
   // Every branch below is `await`ed deliberately, not just returned — a bare
   // `return asyncFn()` inside a try hands back a *pending* promise before it
@@ -92,12 +100,12 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // The application endpoint is the one route open to any signed-in user —
     // by definition the applicant is not yet in the facilitator group.
     if (path.endsWith('/facilitators/apply')) {
-      const user = await requireUser(event);
+      const user = await requireUser(ev);
       if (method === 'GET') return await applicationStatus(user);
-      return await apply(user, parseBody(event));
+      return await apply(user, parseBody(ev));
     }
 
-    const user = await requireGroup(event, 'facilitator');
+    const user = await requireGroup(ev, 'facilitator');
     const supabase = await getSupabase();
     const facilitator = await me(supabase, user);
     if (!facilitator) {
@@ -108,12 +116,12 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (path.endsWith('/facilitator/me')) {
       if (method === 'GET') return ok({ facilitator });
-      if (method === 'PUT') return await updateProfile(supabase, facilitator, parseBody(event));
+      if (method === 'PUT') return await updateProfile(supabase, facilitator, parseBody(ev));
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (path.includes('/facilitator/services')) {
-      return await services(supabase, facilitator, event, method);
+      return await services(supabase, facilitator, ev, method);
     }
 
     if (path.endsWith('/facilitator/calendar-feed')) {
@@ -121,18 +129,18 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     if (path.endsWith('/facilitator/slot-preview')) {
-      if (method === 'GET') return await slotPreview(supabase, facilitator, event);
+      if (method === 'GET') return await slotPreview(supabase, facilitator, ev);
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (path.includes('/facilitator/availability')) {
       if (method === 'GET') return await listAvailability(supabase, facilitator);
-      if (method === 'PUT') return await replaceAvailability(supabase, facilitator, parseBody(event));
+      if (method === 'PUT') return await replaceAvailability(supabase, facilitator, parseBody(ev));
       return badRequest(`Unsupported method ${method}`);
     }
 
     if (path.includes('/facilitator/blackouts')) {
-      return await blackouts(supabase, facilitator, event, method);
+      return await blackouts(supabase, facilitator, ev, method);
     }
 
     if (path.endsWith('/facilitator/messages')) {
@@ -141,11 +149,15 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
 
     if (path.includes('/facilitator/clients')) {
-      return await clients(supabase, facilitator, event, method);
+      return await clients(supabase, facilitator, ev, method);
     }
 
     if (path.includes('/facilitator/bookings')) {
-      return await bookings(supabase, facilitator, event, method, path);
+      return await bookings(supabase, facilitator, ev, method, path);
+    }
+
+    if (path.includes('/facilitator/events')) {
+      return await events(supabase, facilitator, ev, method, path);
     }
 
     if (path.endsWith('/facilitator/earnings')) {
@@ -158,6 +170,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (err instanceof FacilitatorInputError) return badRequest(err.message);
     if (err instanceof MessageError) return badRequest(err.message);
     if (err instanceof SlugError) return badRequest(err.message);
+    if (err instanceof BlockValidationError) return badRequest(err.message);
     return serverError('facilitatorPortal', err);
   }
 }
@@ -1639,4 +1652,253 @@ async function earnings(
     platformFeeBps: facilitator.platform_fee_bps,
     payouts: payoutRes.data ?? [],
   });
+}
+
+// ---------------------------------------------------------------------------
+// Events this facilitator hosts
+// ---------------------------------------------------------------------------
+
+/**
+ * The event columns the dashboard needs.
+ *
+ * `join_url` is here, unlike everywhere else it appears, because this is the
+ * one read whose whole purpose is to let the host see and edit it. The
+ * ownership check below is what makes that safe, and it is the same check every
+ * other function in this file makes: scope by the facilitator row resolved from
+ * the token, never by an id in the path.
+ */
+const HOSTED_EVENT_COLUMNS =
+  'id, title, subtitle, excerpt, image_url, image_alt, location, starts_at, ends_at, status, ' +
+  'ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions';
+
+interface HostedEventRow extends Record<string, unknown> {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string | null;
+  join_url: string | null;
+  join_instructions: string | null;
+}
+
+/**
+ * Loads one event, but only if this facilitator hosts it.
+ *
+ * Returns null for "no such event" and for "not yours" alike — deliberately
+ * indistinguishable, the same choice event-registrations.ts makes for a
+ * registration belonging to someone else. A 403 on the second case would turn
+ * this endpoint into a way to enumerate which event ids exist.
+ */
+async function ownedEvent(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+): Promise<HostedEventRow | null> {
+  const { data, error } = await supabase
+    .from('events')
+    .select(HOSTED_EVENT_COLUMNS)
+    .eq('id', eventId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<HostedEventRow>();
+  if (error) throw error;
+  return data ?? null;
+}
+
+async function events(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  ev: APIGatewayProxyEventV2,
+  method: string,
+  path: string,
+): Promise<APIGatewayProxyResultV2> {
+  const eventId = ev.pathParameters?.eventId;
+
+  if (!eventId) {
+    if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
+    return await listHostedEvents(supabase, facilitator);
+  }
+
+  if (method === 'GET' && path.endsWith('/roster')) {
+    return await hostedRoster(supabase, facilitator, eventId);
+  }
+  if (method === 'PUT' && path.endsWith('/join-link')) {
+    return await saveJoinLink(supabase, facilitator, eventId, parseBody(ev));
+  }
+  if (method === 'POST' && path.endsWith('/send-join-details')) {
+    return await resendJoinDetails(supabase, facilitator, eventId, parseBody(ev));
+  }
+  return badRequest(`Unsupported route ${method} ${path}`);
+}
+
+/**
+ * Every event this facilitator hosts, with a live head count.
+ *
+ * Drafts included: a host configuring their joining link before the event is
+ * published is exactly the case this was built for, and hiding unpublished
+ * events from the person running them would be a strange kind of secrecy.
+ */
+async function listHostedEvents(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('events')
+    .select(HOSTED_EVENT_COLUMNS)
+    .eq('facilitator_id', facilitator.id)
+    .order('starts_at', { ascending: false })
+    .returns<HostedEventRow[]>();
+  if (error) throw error;
+
+  const rows = data ?? [];
+  if (rows.length === 0) return ok({ events: [] });
+
+  // One count query across every event rather than one per event: the list is
+  // small, but a per-row query here is the shape that quietly becomes N+1 once
+  // somebody hosts twenty things.
+  const { data: registrations, error: countError } = await supabase
+    .from('event_registrations')
+    .select('event_id, status')
+    .in('event_id', rows.map((r) => r.id))
+    .returns<{ event_id: string; status: string }[]>();
+  if (countError) throw countError;
+
+  const counts = new Map<string, { confirmed: number; pending: number }>();
+  for (const r of registrations ?? []) {
+    const c = counts.get(r.event_id) ?? { confirmed: 0, pending: 0 };
+    if (r.status === 'confirmed' || r.status === 'completed') c.confirmed += 1;
+    else if (r.status === 'pending_payment') c.pending += 1;
+    counts.set(r.event_id, c);
+  }
+
+  return ok({
+    events: rows.map((r) => ({
+      ...r,
+      registrations: counts.get(r.id) ?? { confirmed: 0, pending: 0 },
+    })),
+  });
+}
+
+/** The same roster the admin screen shows, for an event this facilitator hosts. */
+async function hostedRoster(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+): Promise<APIGatewayProxyResultV2> {
+  const hosted = await ownedEvent(supabase, facilitator, eventId);
+  if (!hosted) return notFound('Event not found');
+
+  const built = await buildRoster(supabase, eventId);
+  if (!built) return notFound('Event not found');
+
+  // The joining link travels with the roster so the tab can show it, edit it
+  // and re-send it without a second round trip.
+  return ok({
+    ...built,
+    joinLink: {
+      join_url: hosted.join_url,
+      join_instructions: hosted.join_instructions,
+    },
+  });
+}
+
+/**
+ * The host sets or changes the joining link.
+ *
+ * Does **not** send anything by itself. Saving a link and telling 40 people
+ * about it are different decisions — a host fixing a typo in the dial-in note
+ * should not trigger 40 emails — so the send is its own explicit action below.
+ */
+async function saveJoinLink(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const hosted = await ownedEvent(supabase, facilitator, eventId);
+  if (!hosted) return notFound('Event not found');
+
+  const joinUrl = httpUrlOrNull(body.join_url, 'join_url');
+  const instructions =
+    body.join_instructions === undefined || body.join_instructions === null
+      ? null
+      : String(body.join_instructions).trim().slice(0, 1000) || null;
+
+  const { data, error } = await supabase
+    .from('events')
+    .update({ join_url: joinUrl, join_instructions: instructions })
+    .eq('id', eventId)
+    // Repeated in the UPDATE and not merely relied on from the SELECT above:
+    // the check and the write are two statements, and the one that matters for
+    // safety is the one that writes.
+    .eq('facilitator_id', facilitator.id)
+    .select('id, join_url, join_instructions')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return notFound('Event not found');
+
+  return ok({ joinLink: data, changed: joinUrl !== hosted.join_url });
+}
+
+/**
+ * Sends the joining details to everyone holding a confirmed place.
+ *
+ * Confirmed only, for the same reason the attendee's own registration page
+ * withholds the link until then: a pending_payment row is an unfinished
+ * checkout whose seat is about to lapse.
+ *
+ * Addressed to `registrant_email` — the attendee, who may not be the payer.
+ * Where a place was transferred, this reaches the person actually coming.
+ */
+async function resendJoinDetails(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const hosted = await ownedEvent(supabase, facilitator, eventId);
+  if (!hosted) return notFound('Event not found');
+  if (!hosted.join_url) return badRequest('Set a joining link before sending it out');
+
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select('id, registrant_name, registrant_email, buyer_email, status')
+    .eq('event_id', eventId)
+    .in('status', ['confirmed', 'completed'])
+    .returns<
+      {
+        id: string;
+        registrant_name: string;
+        registrant_email: string | null;
+        buyer_email: string;
+        status: string;
+      }[]
+    >();
+  if (error) throw error;
+
+  const recipients = data ?? [];
+  const emailEvent = {
+    title: hosted.title,
+    starts_at: hosted.starts_at,
+    ends_at: hosted.ends_at,
+    location: (hosted.location as string | null) ?? null,
+    venue_details: (hosted.venue_details as string | null) ?? null,
+    format: (hosted.format as string | null) ?? null,
+    join_url: hosted.join_url,
+    join_instructions: hosted.join_instructions,
+  };
+
+  // Sequential, not Promise.all: this is a handful of SES calls against a
+  // shared send rate, and a burst of forty is the one that gets throttled.
+  // sendJoinDetails swallows its own failures, so one bad address cannot stop
+  // the rest.
+  for (const r of recipients) {
+    await sendJoinDetails({
+      to: r.registrant_email || r.buyer_email,
+      registrantName: r.registrant_name,
+      registrationId: r.id,
+      event: emailEvent,
+      updated: body.updated === true,
+    });
+  }
+
+  return ok({ sent: recipients.length });
 }

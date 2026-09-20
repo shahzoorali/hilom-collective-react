@@ -191,6 +191,10 @@ export interface TicketingInput {
   medical_disclaimer_html: string | null;
   liability_consent_html: string | null;
   registrant_fields: string[];
+  /** The marketplace facilitator hosting this event, or null. See 0045. */
+  facilitator_id: string | null;
+  join_url: string | null;
+  join_instructions: string | null;
 }
 
 const TICKETING_KEYS = [
@@ -205,6 +209,9 @@ const TICKETING_KEYS = [
   'medical_disclaimer_html',
   'liability_consent_html',
   'registrant_fields',
+  'facilitator_id',
+  'join_url',
+  'join_instructions',
 ] as const;
 
 const FORMATS: EventFormat[] = ['residential', 'virtual', 'day'];
@@ -314,5 +321,45 @@ export function validateTicketing(body: Record<string, unknown>): TicketingInput
       ? sanitizeRichText(String(body.liability_consent_html).slice(0, 20000))
       : null,
     registrant_fields: registrantFields,
+    facilitator_id: uuidOrNull(body.facilitator_id, 'facilitator_id'),
+    // Validated as a URL rather than free text: it goes into an href in an
+    // email, and "zoom.us/j/123" typed without a scheme produces a link that
+    // resolves relative to the message and silently goes nowhere. Rejecting it
+    // at the edit is the only place anyone will notice.
+    join_url: httpUrlOrNull(body.join_url, 'join_url'),
+    join_instructions: optionalText(body.join_instructions, 1000),
   };
+}
+
+/** A UUID or null — for a foreign key arriving from a <select>. */
+function uuidOrNull(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = String(raw).trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    throw new BlockValidationError(`${field} is not a valid id`);
+  }
+  return value;
+}
+
+/**
+ * An http(s) URL or null.
+ *
+ * The scheme allowlist is the point: `javascript:` in an href that an email
+ * client or the account page renders is the whole reason this is not a plain
+ * text field, and a scheme-relative `//host` reads as a URL to URL() but not
+ * to a person.
+ */
+export function httpUrlOrNull(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+  const value = String(raw).trim().slice(0, 2000);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new BlockValidationError(`${field} must be a full link starting with https://`);
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new BlockValidationError(`${field} must be an http or https link`);
+  }
+  return parsed.toString();
 }

@@ -21,6 +21,11 @@ import type {
   SupportTrack,
   YearsExperience,
 } from './facilitator-intake';
+// The facilitator's roster of an event they host is, by construction, the same
+// payload the admin roster renders — same backend function, same derived money
+// figures. Importing the types rather than restating them is what keeps that
+// true. See backend/src/lib/event-roster.ts.
+import type { AdminRegistration, RosterMoney } from './cms';
 
 /** The bearer header, or a thrown error that reads as a prompt to sign in. */
 function authHeaders(): Record<string, string> {
@@ -233,12 +238,32 @@ export const listFacilitators = (specialty?: string) =>
     `/facilitators${specialty ? `?specialty=${encodeURIComponent(specialty)}` : ''}`,
   ).then((r) => r.facilitators);
 
+/**
+ * An event this facilitator hosts, as the public profile renders it.
+ *
+ * Note what is absent: `join_url`. The profile is a public page, and the
+ * joining link reaches a registrant by email and on their own registration
+ * page, never here. The backend does not send it; this type says so.
+ */
+export interface HostedEventCard {
+  id: string;
+  title: string;
+  excerpt: string | null;
+  image_url: string | null;
+  image_alt: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  ticketing_enabled: boolean;
+}
+
 export const getFacilitator = (slug: string) =>
   apiFetch<{
     facilitator: Facilitator;
     services: FacilitatorService[];
     rating: RatingSummary;
     reviews: PublicReview[];
+    events: { upcoming: HostedEventCard[]; past: HostedEventCard[] };
   }>(`/facilitators/${encodeURIComponent(slug)}`);
 
 export const getAvailability = (slug: string, serviceId: string, from: Date, to: Date) =>
@@ -1436,5 +1461,95 @@ export const adminSetReviewStatus = (
       method: 'PATCH',
       headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
+    },
+  );
+
+// ---------------------------------------------------------------------------
+// Events a facilitator hosts
+// ---------------------------------------------------------------------------
+
+/**
+ * One of this facilitator's own events, as their dashboard sees it.
+ *
+ * Unlike `HostedEventCard` above — the public profile's version — this one
+ * carries `join_url`, because the host is the person who sets it. The two types
+ * are kept separate rather than one type with an optional field, so that
+ * rendering the public card can never accidentally reach a link it should not
+ * have been given in the first place.
+ */
+export interface MyHostedEvent {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  excerpt: string | null;
+  image_url: string | null;
+  image_alt: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  status: 'draft' | 'published';
+  ticketing_enabled: boolean;
+  capacity: number | null;
+  currency: string;
+  venue_details: string | null;
+  format: string | null;
+  join_url: string | null;
+  join_instructions: string | null;
+  registrations: { confirmed: number; pending: number };
+}
+
+export interface HostedJoinLink {
+  join_url: string | null;
+  join_instructions: string | null;
+}
+
+export const listMyHostedEvents = () =>
+  apiFetch<{ events: MyHostedEvent[] }>('/facilitator/events', {
+    headers: authHeaders(),
+  }).then((r) => r.events);
+
+/**
+ * The roster for one hosted event.
+ *
+ * Intentionally the same shape the admin screen reads — it is literally the
+ * same backend function (lib/event-roster.ts) — so the two views cannot
+ * disagree about what someone still owes.
+ */
+export const getMyHostedRoster = (eventId: string) =>
+  apiFetch<{
+    event: { id: string; title: string; capacity: number | null; currency: string; starts_at: string };
+    registrations: AdminRegistration[];
+    money: RosterMoney;
+    joinLink: HostedJoinLink;
+  }>(`/facilitator/events/${encodeURIComponent(eventId)}/roster`, { headers: authHeaders() });
+
+export const saveMyHostedJoinLink = (
+  eventId: string,
+  joinUrl: string,
+  joinInstructions: string,
+) =>
+  apiFetch<{ joinLink: HostedJoinLink; changed: boolean }>(
+    `/facilitator/events/${encodeURIComponent(eventId)}/join-link`,
+    {
+      method: 'PUT',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify({ join_url: joinUrl, join_instructions: joinInstructions }),
+    },
+  );
+
+/**
+ * Email the joining details to every confirmed registrant.
+ *
+ * `updated` changes the wording to "this link has changed — ignore the earlier
+ * one", which is the difference between a helpful email and a confusing one
+ * when someone already has a link in their inbox.
+ */
+export const sendMyHostedJoinDetails = (eventId: string, updated: boolean) =>
+  apiFetch<{ sent: number }>(
+    `/facilitator/events/${encodeURIComponent(eventId)}/send-join-details`,
+    {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify({ updated }),
     },
   );

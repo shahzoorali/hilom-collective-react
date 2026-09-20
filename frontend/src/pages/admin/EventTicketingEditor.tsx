@@ -30,6 +30,7 @@ import {
   type AdminInstallment,
   type EventFormat,
 } from '../../lib/cms';
+import { adminListFacilitators, type AdminFacilitator } from '../../lib/booking';
 import { money } from '../../components/Layout';
 
 // ---------------------------------------------------------------------------
@@ -47,6 +48,10 @@ export interface TicketingDraft {
   medical_disclaimer_html: string;
   liability_consent_html: string;
   registrant_fields: string[];
+  /** The marketplace facilitator hosting this, or '' for none. See 0045. */
+  facilitator_id: string;
+  join_url: string;
+  join_instructions: string;
 }
 
 export const blankTicketing: TicketingDraft = {
@@ -60,6 +65,9 @@ export const blankTicketing: TicketingDraft = {
   medical_disclaimer_html: '',
   liability_consent_html: '',
   registrant_fields: [],
+  facilitator_id: '',
+  join_url: '',
+  join_instructions: '',
 };
 
 /** An ISO instant back to the Manila calendar day it falls on. */
@@ -81,6 +89,9 @@ export function ticketingToDraft(event: AdminEvent): TicketingDraft {
     medical_disclaimer_html: event.medical_disclaimer_html ?? '',
     liability_consent_html: event.liability_consent_html ?? '',
     registrant_fields: event.registrant_fields ?? [],
+    facilitator_id: event.facilitator_id ?? '',
+    join_url: event.join_url ?? '',
+    join_instructions: event.join_instructions ?? '',
   };
 }
 
@@ -104,6 +115,9 @@ export function ticketingToInput(draft: TicketingDraft): Partial<AdminEventInput
     medical_disclaimer_html: draft.medical_disclaimer_html.trim() || null,
     liability_consent_html: draft.liability_consent_html.trim() || null,
     registrant_fields: draft.registrant_fields,
+    facilitator_id: draft.facilitator_id || null,
+    join_url: draft.join_url.trim() || null,
+    join_instructions: draft.join_instructions.trim() || null,
   };
 }
 
@@ -246,6 +260,19 @@ export default function EventTicketingEditor({
   const set = <K extends keyof TicketingDraft>(key: K, next: TicketingDraft[K]) =>
     onChange({ ...value, [key]: next });
 
+  // Who can be named as host. Published only: an applicant with no approved
+  // profile has no page for the event to appear on and no dashboard to read
+  // the roster in, so offering them here would set up a dead link.
+  const [facilitators, setFacilitators] = useState<AdminFacilitator[]>([]);
+  useEffect(() => {
+    adminListFacilitators(adminKey, 'published')
+      // A failure here costs the picker, not the screen: everything else on
+      // this editor still saves, and the current host is preserved because the
+      // draft carries its id whether or not the list loaded.
+      .then(setFacilitators)
+      .catch(() => setFacilitators([]));
+  }, [adminKey]);
+
   const toggleField = (field: string) =>
     set(
       'registrant_fields',
@@ -351,6 +378,55 @@ export default function EventTicketingEditor({
               placeholder="Shared rooms, all meals included. Transport not provided."
             />
             <span className="small muted">Shown on the registration page and in the confirmation email.</span>
+          </label>
+
+          {/* The host, and the link they hand out.
+              Separate from the "Facilitators" roster on the event itself
+              (0018), which is display copy — a guest speaker with no account
+              still belongs there. This is the one account that gets the
+              roster and the joining link in their own dashboard, which is why
+              it is a picker over real facilitators and not a name. */}
+          <label className="field">
+            <span>Hosted by</span>
+            <select
+              value={value.facilitator_id}
+              onChange={(e) => set('facilitator_id', e.target.value)}
+            >
+              <option value="">Nobody — admin-run</option>
+              {facilitators.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.display_name}
+                </option>
+              ))}
+            </select>
+            <span className="small muted">
+              They get this event on their public profile, and its registrations and joining link
+              in their own dashboard.
+            </span>
+          </label>
+
+          <label className="field">
+            <span>Joining link</span>
+            <input
+              type="url"
+              value={value.join_url}
+              onChange={(e) => set('join_url', e.target.value)}
+              placeholder="https://us05web.zoom.us/j/..."
+            />
+            <span className="small muted">
+              Never shown publicly. Sent in the confirmation email and on the registrant's own
+              page once their place is paid for. The host can also change this themselves.
+            </span>
+          </label>
+
+          <label className="field">
+            <span>Joining instructions</span>
+            <textarea
+              rows={2}
+              value={value.join_instructions}
+              onChange={(e) => set('join_instructions', e.target.value)}
+              placeholder="Waiting room opens 15 minutes early."
+            />
           </label>
 
           <label className="field">

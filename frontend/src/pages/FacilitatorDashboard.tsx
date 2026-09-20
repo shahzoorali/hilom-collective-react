@@ -69,6 +69,7 @@ const ProfileTab = lazy(() => import('./facilitator/ProfileTab'));
 const ConnectionsTab = lazy(() => import('./facilitator/ConnectionsTab'));
 const ClientsTab = lazy(() => import('./facilitator/ClientsTab'));
 const MessagesTab = lazy(() => import('./facilitator/MessagesTab'));
+const EventsTab = lazy(() => import('./facilitator/EventsTab'));
 
 /**
  * Is this confirmed session inside the facilitator's vacation window?
@@ -89,6 +90,10 @@ const TABS = [
   { label: 'Bookings', path: 'bookings', icon: '📅' },
   { label: 'Clients', path: 'clients', icon: '🫂' },
   { label: 'Messages', path: 'messages', icon: '💬' },
+  // Only meaningful for a facilitator hosting an event, and the tab says so
+  // when they are not. A tab that appears and disappears with the data is
+  // worse: the dashboard's shape would change under someone between visits.
+  { label: 'Events', path: 'events', icon: '🎟️' },
   { label: 'Services', path: 'services', icon: '🌿' },
   { label: 'Availability', path: 'availability', icon: '🕰️' },
   { label: 'Earnings', path: 'earnings', icon: '💰' },
@@ -218,6 +223,8 @@ export default function FacilitatorDashboard() {
             <Route path="bookings" element={<BookingsTab profile={profile} />} />
             <Route path="clients" element={<ClientsTab />} />
             <Route path="messages" element={<MessagesTab />} />
+            <Route path="events" element={<EventsTab />} />
+            <Route path="events/:eventId" element={<EventsTab />} />
             <Route path="services" element={<ServicesTab />} />
             <Route path="availability" element={<AvailabilityTab timezone={profile.timezone} />} />
             <Route path="earnings" element={<EarningsTab />} />

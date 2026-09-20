@@ -466,7 +466,10 @@ async function detail(registrationId: string, email: string): Promise<APIGateway
 
   const { data, error } = await supabase
     .from('event_registrations')
-    .select(`${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, image_url, venue_details, registrant_fields)`)
+    .select(
+      `${OWN_REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location, image_url, ` +
+        `venue_details, registrant_fields, join_url, join_instructions)`,
+    )
     .eq('id', registrationId)
     .maybeSingle<OwnedRegistration>();
   if (error) throw error;
@@ -485,6 +488,20 @@ async function detail(registrationId: string, email: string): Promise<APIGateway
     .order('seq', { ascending: true })
     .returns<ChargeRow[]>();
   if (chargeError) throw chargeError;
+
+  // The joining link is released on confirmation, not on registration. A
+  // `pending_payment` row is someone who has started a checkout and not
+  // finished it — the hold expires and the seat goes back — so handing over the
+  // link at that point would mean anyone could open a registration, never pay,
+  // and keep the link. Stripped from the payload entirely rather than sent with
+  // a flag, because a field that is only sometimes secret gets rendered by
+  // accident eventually.
+  const withheld = data.status !== 'confirmed' && data.status !== 'completed';
+  if (withheld && data.events && typeof data.events === 'object') {
+    const ev = data.events as Record<string, unknown>;
+    ev.join_url = null;
+    ev.join_instructions = null;
+  }
 
   return ok({ registration: withTotals(data, charges ?? []) });
 }

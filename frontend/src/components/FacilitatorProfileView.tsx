@@ -23,6 +23,7 @@ import {
   type FacilitatorService,
   type PublicReview,
   type RatingSummary,
+  type HostedEventCard,
 } from '../lib/booking';
 import { Stars } from './Stars';
 import { YEARS_EXPERIENCE, labelFor } from '../lib/facilitator-intake';
@@ -228,6 +229,7 @@ export default function FacilitatorProfileView({
   services,
   rating,
   reviews,
+  events,
   rootRef,
   backLink = null,
   preview = false,
@@ -236,6 +238,12 @@ export default function FacilitatorProfileView({
   services: FacilitatorService[];
   rating: RatingSummary;
   reviews: PublicReview[];
+  /**
+   * Events this facilitator hosts. Optional because the admin editor renders
+   * this same view as a live preview of a profile being typed, and has no
+   * event list to hand it — the absent case is "not loaded", not "hosts none".
+   */
+  events?: { upcoming: HostedEventCard[]; past: HostedEventCard[] };
   /** The page passes its flip-animation ref through; the editor does not. */
   rootRef?: RefObject<HTMLElement | null>;
   backLink?: ReactNode;
@@ -256,6 +264,8 @@ export default function FacilitatorProfileView({
     .filter((s) => s.kind !== 'exploratory')
     .sort((a, b) => a.price_centavos - b.price_centavos);
   const firstName = shortName(f.display_name, f.short_name);
+  const upcomingEvents = events?.upcoming ?? [];
+  const pastEvents = events?.past ?? [];
 
   // The application form accepts a bare "@handle" as well as a URL, so a value
   // here is not necessarily linkable — an un-linkable one renders as plain text
@@ -424,6 +434,30 @@ export default function FacilitatorProfileView({
                   </div>
                 ))}
               </dl>
+            </section>
+          )}
+
+          {/* Group work, alongside the 1:1 sessions in the sidebar. A
+              facilitator who runs retreats and workshops has a second thing to
+              offer and, until now, no way to say so on their own page —
+              someone would have to find the event separately and never learn
+              the two were connected. Upcoming first and past only if there are
+              any: an empty "Past events" heading reads as a shortcoming. */}
+          {upcomingEvents.length > 0 && (
+            <section className="fac-section">
+              <h2>{firstName} is hosting</h2>
+              {upcomingEvents.map((e) => (
+                <HostedEvent key={e.id} event={e} preview={preview} />
+              ))}
+            </section>
+          )}
+
+          {pastEvents.length > 0 && (
+            <section className="fac-section">
+              <h2>Previously hosted</h2>
+              {pastEvents.map((e) => (
+                <HostedEvent key={e.id} event={e} preview={preview} past />
+              ))}
             </section>
           )}
 
@@ -845,5 +879,89 @@ function ServiceDialog({
         <TierFoot service={s} slug={slug} preview={preview} />
       </div>
     </dialog>
+  );
+}
+
+/**
+ * One event on a facilitator's profile.
+ *
+ * A row rather than a full event card: this is a cross-reference on someone
+ * else's page, and a second full-bleed card layout competing with the session
+ * tiers below would read as two calls to action of equal weight. The event
+ * page is where the real pitch lives; this exists to get someone there.
+ *
+ * In the admin editor's live preview the links are inert — `preview` is the
+ * same flag the rest of this view uses to keep a half-typed profile from
+ * navigating away mid-edit.
+ */
+function HostedEvent({
+  event,
+  preview = false,
+  past = false,
+}: {
+  event: HostedEventCard;
+  preview?: boolean;
+  past?: boolean;
+}) {
+  // A date range, collapsed when it is one day — the same rule the event list
+  // and the confirmation email both use, so the three never disagree about how
+  // a two-day retreat is written.
+  const fmt = (iso: string) =>
+    new Intl.DateTimeFormat('en-PH', {
+      timeZone: 'Asia/Manila',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    }).format(new Date(iso));
+  const start = fmt(event.starts_at);
+  const end = event.ends_at ? fmt(event.ends_at) : null;
+  const when = !end || end === start ? start : `${start} — ${end}`;
+
+  const body = (
+    <>
+      {event.image_url && (
+        <img
+          className="fac-hosted__img"
+          src={event.image_url}
+          alt={event.image_alt ?? ''}
+          loading="lazy"
+        />
+      )}
+      <div className="fac-hosted__text">
+        <strong>{event.title}</strong>
+        <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
+          {when}
+          {event.location ? ` · ${event.location}` : ''}
+        </p>
+        {event.excerpt && (
+          <p className="small" style={{ margin: '0.35rem 0 0' }}>
+            {event.excerpt}
+          </p>
+        )}
+      </div>
+      {!past && event.ticketing_enabled && (
+        <span className="small linklike fac-hosted__cta">Register →</span>
+      )}
+    </>
+  );
+
+  const className = `card fac-hosted${past ? ' fac-hosted--past' : ''}`;
+
+  if (preview) {
+    return (
+      <div className={className} style={{ marginBottom: '0.6rem' }}>
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      className={className}
+      to={`/events/${event.id}${!past && event.ticketing_enabled ? '/register' : ''}`}
+      style={{ marginBottom: '0.6rem' }}
+    >
+      {body}
+    </Link>
   );
 }

@@ -33,7 +33,10 @@ const COLUMNS =
   'link_url, link_label, note, status, created_at, updated_at, ' +
   'ticketing_enabled, format, capacity, currency, registration_opens_at, registration_closes_at, ' +
   'hold_minutes, venue_details, terms_html, medical_disclaimer_html, liability_consent_html, ' +
-  'registrant_fields, facilitators, gallery';
+  'registrant_fields, facilitators, gallery, ' +
+  // 0045. Admin-visible because an admin sets the host and can fix a bad
+  // joining link without going through the facilitator's own dashboard.
+  'facilitator_id, join_url, join_instructions';
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +

@@ -259,6 +259,13 @@ export interface MyRegistration {
     location: string | null;
     image_url: string | null;
     venue_details?: string | null;
+    /**
+     * Released only once the place is confirmed — the backend strips it to
+     * null on a `pending_payment` row rather than sending it with a flag. So
+     * "present" here already means "this person is allowed to see it".
+     */
+    join_url?: string | null;
+    join_instructions?: string | null;
   } | null;
 }
 

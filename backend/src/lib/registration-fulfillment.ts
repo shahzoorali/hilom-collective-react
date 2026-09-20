@@ -315,7 +315,11 @@ async function notify(
 ): Promise<void> {
   const { data: event } = await supabase
     .from('events')
-    .select('title, starts_at, ends_at, location, venue_details, format')
+    // join_url is loaded here, and only here among the payment emails, because
+    // the confirmation is the one send that releases it (see joinBlock in
+    // registration-email.ts). A later instalment receipt carries the same event
+    // object and simply never renders it.
+    .select('title, starts_at, ends_at, location, venue_details, format, join_url, join_instructions')
     .eq('id', registration.event_id)
     .maybeSingle<{
       title: string;
@@ -324,6 +328,8 @@ async function notify(
       location: string | null;
       venue_details: string | null;
       format: string | null;
+      join_url: string | null;
+      join_instructions: string | null;
     }>();
 
   const { data: charges } = await supabase

@@ -144,6 +144,33 @@ export default function RegistrationDetail() {
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
 
+      {/* The joining link, above the money.
+          It only arrives here at all once the place is confirmed — the backend
+          strips it from the payload otherwise — so there is no status check to
+          repeat on this side. It goes above the payment schedule deliberately:
+          on the morning of the event this is the only thing on the page anyone
+          is looking for, and making them scroll past an instalment table to
+          find it is the whole reason people email asking for the link. */}
+      {ev?.join_url && (
+        <div className="panel" style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
+          <div className="small muted">How to join</div>
+          <a className="btn" href={ev.join_url} target="_blank" rel="noopener noreferrer">
+            Join the session
+          </a>
+          {/* The URL in full as well as the button: people copy this into a
+              calendar entry by hand, and a button cannot be copied. */}
+          <a className="small" href={ev.join_url} target="_blank" rel="noopener noreferrer"
+             style={{ wordBreak: 'break-all' }}>
+            {ev.join_url}
+          </a>
+          {ev.join_instructions && (
+            <p className="small muted" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+              {ev.join_instructions}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="panel" style={{ display: 'grid', gap: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <div>
