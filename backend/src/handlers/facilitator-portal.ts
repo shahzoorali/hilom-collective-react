@@ -66,8 +66,7 @@ import {
   validateBlackout,
   FacilitatorInputError,
 } from '../lib/facilitator-input.js';
-import { buildRoster } from '../lib/event-roster.js';
-import { sendJoinDetails } from '../lib/registration-email.js';
+import { buildRoster, sendJoinDetailsToRegistrants } from '../lib/event-roster.js';
 import { httpUrlOrNull } from '../lib/cms-events.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
@@ -1724,7 +1723,7 @@ async function events(
     return await saveJoinLink(supabase, facilitator, eventId, parseBody(ev));
   }
   if (method === 'POST' && path.endsWith('/send-join-details')) {
-    return await resendJoinDetails(supabase, facilitator, eventId, parseBody(ev));
+    return await resendJoinDetails(supabase, facilitator, eventId);
   }
   return badRequest(`Unsupported route ${method} ${path}`);
 }
@@ -1841,64 +1840,22 @@ async function saveJoinLink(
 /**
  * Sends the joining details to everyone holding a confirmed place.
  *
- * Confirmed only, for the same reason the attendee's own registration page
- * withholds the link until then: a pending_payment row is an unfinished
- * checkout whose seat is about to lapse.
- *
- * Addressed to `registrant_email` — the attendee, who may not be the payer.
- * Where a place was transferred, this reaches the person actually coming.
+ * The rule for who gets told, and which of the two wordings they get, lives in
+ * lib/event-roster.ts and is shared with admin — see the note there. This
+ * function is the ownership check and nothing else.
  */
 async function resendJoinDetails(
   supabase: SupabaseClient,
   facilitator: FacilitatorRow,
   eventId: string,
-  body: Record<string, unknown>,
 ): Promise<APIGatewayProxyResultV2> {
   const hosted = await ownedEvent(supabase, facilitator, eventId);
   if (!hosted) return notFound('Event not found');
   if (!hosted.join_url) return badRequest('Set a joining link before sending it out');
 
-  const { data, error } = await supabase
-    .from('event_registrations')
-    .select('id, registrant_name, registrant_email, buyer_email, status')
-    .eq('event_id', eventId)
-    .in('status', ['confirmed', 'completed'])
-    .returns<
-      {
-        id: string;
-        registrant_name: string;
-        registrant_email: string | null;
-        buyer_email: string;
-        status: string;
-      }[]
-    >();
-  if (error) throw error;
-
-  const recipients = data ?? [];
-  const emailEvent = {
-    title: hosted.title,
-    starts_at: hosted.starts_at,
-    ends_at: hosted.ends_at,
-    location: (hosted.location as string | null) ?? null,
-    venue_details: (hosted.venue_details as string | null) ?? null,
-    format: (hosted.format as string | null) ?? null,
-    join_url: hosted.join_url,
-    join_instructions: hosted.join_instructions,
-  };
-
-  // Sequential, not Promise.all: this is a handful of SES calls against a
-  // shared send rate, and a burst of forty is the one that gets throttled.
-  // sendJoinDetails swallows its own failures, so one bad address cannot stop
-  // the rest.
-  for (const r of recipients) {
-    await sendJoinDetails({
-      to: r.registrant_email || r.buyer_email,
-      registrantName: r.registrant_name,
-      registrationId: r.id,
-      event: emailEvent,
-      updated: body.updated === true,
-    });
-  }
-
-  return ok({ sent: recipients.length });
+  const result = await sendJoinDetailsToRegistrants(supabase, {
+    ...hosted,
+    id: eventId,
+  });
+  return ok(result);
 }

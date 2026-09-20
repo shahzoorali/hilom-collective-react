@@ -3,6 +3,7 @@
  *
  *   GET  /admin/events/{eventId}/roster
  *   GET  /admin/events/{eventId}/roster.csv
+ *   POST /admin/events/{eventId}/send-join-details
  *   GET  /admin/registrations                     ?flagged=1 ?eventId= ?status=
  *   GET  /admin/registrations/{registrationId}
  *   POST /admin/registrations/{registrationId}/cancel
@@ -52,6 +53,7 @@ import {
 // dashboard. See lib/event-roster.ts for why there is only one copy.
 import {
   buildRoster,
+  sendJoinDetailsToRegistrants,
   chargesFor,
   decorate,
   REGISTRATION_COLUMNS,
@@ -79,6 +81,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // Every branch awaited, never bare-returned: a returned pending promise
     // escapes this try before rejecting and becomes an uncaught Lambda
     // rejection instead of a 400.
+    if (eventId && method === 'POST' && path.endsWith('/send-join-details')) {
+      return await sendJoinDetailsAsAdmin(eventId, actor);
+    }
     if (eventId && method === 'GET' && path.endsWith('/roster.csv')) {
       return await rosterCsv(eventId, actor);
     }
@@ -139,6 +144,52 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 // Reading
 // ---------------------------------------------------------------------------
+
+/**
+ * Admin sends the joining details for an event.
+ *
+ * The facilitator hosting an event can already do this from their own
+ * dashboard. This exists because not every event has a host — `facilitator_id`
+ * is nullable and an admin-run event has nobody else to press the button — and
+ * because an admin who corrects a bad link should not have to find the
+ * facilitator to get anyone told about it.
+ *
+ * Audited, unlike the facilitator's own send: the shared admin key identifies
+ * an office rather than a person (see lib/audit.ts), so "who mailed the roster
+ * and when" is only answerable if it is written down.
+ */
+async function sendJoinDetailsAsAdmin(
+  eventId: string,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data: eventRow, error } = await supabase
+    .from('events')
+    .select('id, title, starts_at, ends_at, location, venue_details, format, join_url, join_instructions')
+    .eq('id', eventId)
+    .maybeSingle<{ id: string; title: string; join_url: string | null } & Record<string, unknown>>();
+  if (error) throw error;
+  if (!eventRow) return notFound('Event not found');
+  if (!eventRow.join_url) return badRequest('Set a joining link before sending it out');
+
+  const result = await sendJoinDetailsToRegistrants(supabase, {
+    ...eventRow,
+    id: eventId,
+  } as Parameters<typeof sendJoinDetailsToRegistrants>[1]);
+
+  await recordAudit(actor, {
+    action: 'event.join_details_sent',
+    targetTable: 'events',
+    targetId: eventId,
+    eventId,
+    note:
+      `${result.sent} registrant${result.sent === 1 ? '' : 's'} ` +
+      `(${result.firstTime} first-time, ${result.resent} link-changed)`,
+  });
+
+  return ok(result);
+}
 
 async function roster(eventId: string): Promise<APIGatewayProxyResultV2> {
   const built = await buildRoster(await getSupabase(), eventId);

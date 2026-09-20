@@ -439,6 +439,10 @@ export class HilomMarketplaceStack extends cdk.Stack {
       // out-specify it and win on match specificity, across stacks.
       ['/admin/events/{eventId}/roster', [GET]],
       ['/admin/events/{eventId}/roster.csv', [GET]],
+      // Admin's own copy of the facilitator dashboard's send. Needed because
+      // events.facilitator_id is nullable — an admin-run event has no host to
+      // press the button.
+      ['/admin/events/{eventId}/send-join-details', [POST]],
       ['/admin/audit-log', [GET]],
       ['/admin/registrations', [GET]],
       ['/admin/registrations/{registrationId}/cancel', [POST]],

@@ -1537,19 +1537,25 @@ export const saveMyHostedJoinLink = (
     },
   );
 
+/** What a joining-details send did, split by which wording each person got. */
+export interface JoinDetailsResult {
+  sent: number;
+  /** Never told before — "Here is how to join X". */
+  firstTime: number;
+  /** Told before — "the link has changed, ignore the earlier one". */
+  resent: number;
+}
+
 /**
  * Email the joining details to every confirmed registrant.
  *
- * `updated` changes the wording to "this link has changed — ignore the earlier
- * one", which is the difference between a helpful email and a confusing one
- * when someone already has a link in their inbox.
+ * Takes no "is this an update?" flag any more. The server decides that per
+ * person from what each of them has actually been sent, because one answer for
+ * the whole roster is wrong as soon as the roster holds both kinds of person —
+ * which it does the moment anyone registers between two sends.
  */
-export const sendMyHostedJoinDetails = (eventId: string, updated: boolean) =>
-  apiFetch<{ sent: number }>(
+export const sendMyHostedJoinDetails = (eventId: string) =>
+  apiFetch<JoinDetailsResult>(
     `/facilitator/events/${encodeURIComponent(eventId)}/send-join-details`,
-    {
-      method: 'POST',
-      headers: jsonAuthHeaders(),
-      body: JSON.stringify({ updated }),
-    },
+    { method: 'POST', headers: jsonAuthHeaders() },
   );

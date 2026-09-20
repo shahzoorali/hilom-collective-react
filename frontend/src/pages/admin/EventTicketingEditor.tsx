@@ -22,6 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   adminGetEventPlans,
   adminReplaceEventPlans,
+  adminSendJoinDetails,
   REGISTRANT_FIELDS,
   REGISTRANT_FIELD_LABELS,
   type AdminEvent,
@@ -264,6 +265,43 @@ export default function EventTicketingEditor({
   // profile has no page for the event to appear on and no dashboard to read
   // the roster in, so offering them here would set up a dead link.
   const [facilitators, setFacilitators] = useState<AdminFacilitator[]>([]);
+  // The joining-details send. Its own state, kept out of the event save: this
+  // acts on what is already stored, not on what is in the form.
+  const [sending, setSending] = useState(false);
+  const [sendNote, setSendNote] = useState<string | null>(null);
+
+  async function sendJoinDetails() {
+    if (!eventId) return;
+    if (
+      !window.confirm(
+        'Email the joining details to every confirmed registrant for this event?\n\n' +
+          'This sends the link as it is currently SAVED, not what is typed in the box. ' +
+          'Save first if you have just changed it.',
+      )
+    ) {
+      return;
+    }
+    setSending(true);
+    setSendNote(null);
+    try {
+      const res = await adminSendJoinDetails(adminKey, eventId);
+      const parts = [
+        res.firstTime > 0 && `${res.firstTime} told for the first time`,
+        res.resent > 0 && `${res.resent} told the link changed`,
+      ].filter(Boolean);
+      setSendNote(
+        res.sent === 0
+          ? 'Nobody to send to — no confirmed registrations yet.'
+          : `Sent to ${res.sent} ${res.sent === 1 ? 'person' : 'people'}${
+              parts.length > 0 ? ` — ${parts.join(', ')}.` : '.'
+            }`,
+      );
+    } catch (err) {
+      setSendNote(`Could not send: ${(err as Error).message}`);
+    } finally {
+      setSending(false);
+    }
+  }
   useEffect(() => {
     adminListFacilitators(adminKey, 'published')
       // A failure here costs the picker, not the screen: everything else on
@@ -418,6 +456,28 @@ export default function EventTicketingEditor({
               page once their place is paid for. The host can also change this themselves.
             </span>
           </label>
+
+          {/* Saving the link and telling people about it are separate actions,
+              the same split the facilitator's dashboard makes: correcting a
+              typo in the instructions should not email the whole roster.
+              Disabled on an unsaved event, which has no registrants yet. */}
+          {eventId && (
+            <div className="field">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={sending}
+                onClick={() => void sendJoinDetails()}
+              >
+                {sending ? 'Sending…' : 'Email the joining details to confirmed registrants'}
+              </button>
+              {sendNote && (
+                <span className="small muted" style={{ display: 'block', marginTop: 6 }}>
+                  {sendNote}
+                </span>
+              )}
+            </div>
+          )}
 
           <label className="field">
             <span>Joining instructions</span>

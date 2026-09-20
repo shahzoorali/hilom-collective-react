@@ -13,6 +13,7 @@
  * module assumes the question has already been answered.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sendJoinDetails } from './registration-email.js';
 import {
   isOutstanding,
   outstandingCentavos,
@@ -188,4 +189,126 @@ export async function buildRoster(
         .reduce((acc, r) => acc + Number(r.refund_centavos ?? 0), 0),
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Joining details
+// ---------------------------------------------------------------------------
+
+/** The event fields a joining-details send needs. */
+export interface JoinDetailsEvent extends Record<string, unknown> {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string | null;
+  location?: string | null;
+  venue_details?: string | null;
+  format?: string | null;
+  join_url: string | null;
+  join_instructions: string | null;
+}
+
+export interface JoinDetailsResult {
+  sent: number;
+  /** Told for the first time — they get "Here is how to join X". */
+  firstTime: number;
+  /** Told before — they get "the link has changed, ignore the earlier one". */
+  resent: number;
+}
+
+/**
+ * Emails the joining details to everyone holding a confirmed place.
+ *
+ * Shared by the facilitator's own dashboard and by admin, because "who gets
+ * told, and which wording do they get" is one rule and two copies of it would
+ * drift. Authorization is the caller's job and has already happened by here:
+ * the portal matches events.facilitator_id against the caller's own row, admin
+ * holds the shared key.
+ *
+ * **Confirmed only.** A `pending_payment` row is an unfinished checkout whose
+ * seat is about to lapse, and the registrant's own page withholds the link for
+ * the same reason.
+ *
+ * **Addressed to the registrant, not the buyer.** A parent who paid for their
+ * daughter's place is not the one who needs to join. Where the two are the same
+ * address, which is the common case, this is the same person anyway.
+ *
+ * **The wording is decided per person**, from `join_details_sent_at` (0046):
+ * someone who has never been told gets "here is how to join", someone who has
+ * gets "the link has changed". One answer for the whole roster is wrong as soon
+ * as a roster contains both kinds of person, which it does the moment anyone
+ * registers between two sends.
+ */
+export async function sendJoinDetailsToRegistrants(
+  supabase: SupabaseClient,
+  event: JoinDetailsEvent,
+): Promise<JoinDetailsResult> {
+  if (!event.join_url) return { sent: 0, firstTime: 0, resent: 0 };
+
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select('id, registrant_name, registrant_email, buyer_email, join_details_sent_at')
+    .eq('event_id', event.id)
+    .in('status', ['confirmed', 'completed'])
+    .returns<
+      {
+        id: string;
+        registrant_name: string;
+        registrant_email: string | null;
+        buyer_email: string;
+        join_details_sent_at: string | null;
+      }[]
+    >();
+  if (error) throw error;
+
+  const recipients = data ?? [];
+  const emailEvent = {
+    title: event.title,
+    starts_at: event.starts_at,
+    ends_at: event.ends_at,
+    location: event.location ?? null,
+    venue_details: event.venue_details ?? null,
+    format: event.format ?? null,
+    join_url: event.join_url,
+    join_instructions: event.join_instructions,
+  };
+
+  let firstTime = 0;
+  let resent = 0;
+  const stamped: string[] = [];
+
+  // Sequential, not Promise.all: this is a handful of SES calls against a
+  // shared send rate, and a burst of forty is the one that gets throttled.
+  // sendJoinDetails swallows its own failures, so one bad address cannot stop
+  // the rest.
+  for (const r of recipients) {
+    const previouslyTold = r.join_details_sent_at !== null;
+    await sendJoinDetails({
+      to: r.registrant_email || r.buyer_email,
+      registrantName: r.registrant_name,
+      registrationId: r.id,
+      event: emailEvent,
+      updated: previouslyTold,
+    });
+    if (previouslyTold) resent += 1;
+    else firstTime += 1;
+    stamped.push(r.id);
+  }
+
+  if (stamped.length > 0) {
+    // Stamped after the fact, in one write. sendJoinDetails does not report
+    // failure — it logs and swallows, so that a bad address cannot break a
+    // payment flow — so this cannot distinguish sent from attempted. Recording
+    // the attempt is the safer of the two errors: the cost of over-recording is
+    // that someone who never got the first email is told a link "changed", and
+    // the cost of under-recording is telling someone who did get it that this
+    // is their first. Both are mild; only one of them is silent.
+    const { error: stampError } = await supabase
+      .from('event_registrations')
+      .update({ join_details_sent_at: new Date().toISOString() })
+      .in('id', stamped);
+    if (stampError) throw stampError;
+  }
+
+  return { sent: recipients.length, firstTime, resent };
 }

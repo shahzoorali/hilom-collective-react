@@ -138,8 +138,9 @@ function EventDetail({
   const [error, setError] = useState<string | null>(null);
 
   // The link as it is on the server, and the link as it is in the box. Kept
-  // apart so "has this changed?" is answerable without a second fetch — the
-  // resend wording depends on it.
+  // apart so the Send button can be disabled while there are unsaved edits —
+  // the send reads the link from the server, so offering it while the box says
+  // something else would email a link nobody saved.
   const [savedUrl, setSavedUrl] = useState('');
   const [url, setUrl] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -183,7 +184,7 @@ function EventDetail({
     }
   }
 
-  async function send(updated: boolean) {
+  async function send() {
     const who = confirmedCount;
     if (
       !window.confirm(
@@ -196,8 +197,20 @@ function EventDetail({
     setError(null);
     setNotice(null);
     try {
-      const res = await sendMyHostedJoinDetails(eventId, updated);
-      setNotice(`Sent to ${res.sent} ${res.sent === 1 ? 'person' : 'people'}.`);
+      const res = await sendMyHostedJoinDetails(eventId);
+      // Reported split, because the two groups got materially different emails
+      // and the sender should know that rather than infer it.
+      const parts = [
+        res.firstTime > 0 && `${res.firstTime} told for the first time`,
+        res.resent > 0 && `${res.resent} told the link changed`,
+      ].filter(Boolean);
+      setNotice(
+        res.sent === 0
+          ? 'Nobody to send to — no confirmed registrations yet.'
+          : `Sent to ${res.sent} ${res.sent === 1 ? 'person' : 'people'}${
+              parts.length > 0 ? ` — ${parts.join(', ')}.` : '.'
+            }`,
+      );
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -259,7 +272,7 @@ function EventDetail({
             type="button"
             className="btn btn-secondary"
             disabled={busy || dirty || !savedUrl || confirmedCount === 0}
-            onClick={() => void send(true)}
+            onClick={() => void send()}
           >
             Send to {confirmedCount} confirmed
           </button>

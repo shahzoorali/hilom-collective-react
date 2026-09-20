@@ -817,6 +817,23 @@ export const adminGetRoster = (adminKey: string, eventId: string) =>
     adminInit(adminKey),
   );
 
+/**
+ * Admin emails the joining details for an event.
+ *
+ * The same send the facilitator's dashboard offers. It exists here too because
+ * `events.facilitator_id` is nullable — an admin-run event has no host to press
+ * the button — and because an admin who corrects a bad link should not have to
+ * go and find the facilitator to get anyone told about it.
+ *
+ * No "is this an update?" flag: the server decides that per registrant from
+ * what each of them has actually been sent.
+ */
+export const adminSendJoinDetails = (adminKey: string, eventId: string) =>
+  apiFetch<{ sent: number; firstTime: number; resent: number }>(
+    `/admin/events/${encodeURIComponent(eventId)}/send-join-details`,
+    adminInit(adminKey, 'POST', {}),
+  );
+
 export const adminListRegistrations = (adminKey: string, params: Record<string, string> = {}) => {
   const qs = new URLSearchParams(params).toString();
   return apiFetch<{ registrations: AdminRegistration[] }>(
