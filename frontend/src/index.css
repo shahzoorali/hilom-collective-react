@@ -3758,7 +3758,11 @@ div[class*="_PuckCanvas-root_"],
    --------------------------------------------------------------------------- */
 .fac-hosted {
   display: flex;
+  /* `.card` is a column by default. Restated rather than relied on, because
+     that default is what made this render as a stacked, centred poster. */
+  flex-direction: row;
   align-items: center;
+  text-align: left;
   gap: 0.9rem;
   padding: 0.75rem;
   text-decoration: none;
