@@ -33,6 +33,8 @@ import {
   depositClearedLate,
   assessRefund,
   TicketingValidationError,
+  AmountError,
+  resolveChosenAmount,
   type PaymentPlan,
   type PlanInstallment,
   type Charge,
@@ -261,7 +263,7 @@ describe('buildSchedule — materializing the retreat plan', () => {
     );
     assert.throws(
       () => buildSchedule({ plan: installmentPlan, installments: wrong, now: SEPT, holdMinutes: 60 }),
-      /sum to 2999999 but the plan total is 3000000/,
+      /sum to 2999999 but the expected total is 3000000/,
     );
   });
 
@@ -653,5 +655,114 @@ describe('paying in order — the rule payCharge enforces', () => {
     assert.equal(outstandingCentavos(paidOff), 0);
     assert.equal(paidCentavos(paidOff), 3_000_000, 'the voided rows must not be double-counted');
     assert.equal(isFullySettled(paidOff), true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pay what you want (0047)
+// ---------------------------------------------------------------------------
+
+const pwywPlan: PaymentPlan = {
+  id: 'plan-pwyw',
+  name: 'Pay What Feels Right',
+  kind: 'full',
+  // A suggestion only. The whole point of these tests is that this number is
+  // never what gets charged.
+  total_centavos: 100,
+  currency: 'PHP',
+  available_from: null,
+  available_until: null,
+  is_active: true,
+  sort_order: 0,
+  is_pay_what_you_want: true,
+  min_centavos: 100,
+  suggested_centavos: [10_000, 25_000, 50_000],
+};
+
+const pwywInstallment: PlanInstallment = {
+  seq: 1,
+  label: 'Paid in full today',
+  amount_centavos: 100,
+  due_at: null,
+  due_offset_days: null,
+  is_deposit: true,
+};
+
+describe('resolveChosenAmount — what the registrant typed', () => {
+  it('ignores the client entirely for a fixed-price plan', () => {
+    // The important half of this feature: a browser cannot talk a fixed-price
+    // plan down by sending an amount it was never asked for.
+    assert.equal(resolveChosenAmount(earlyBirdFull, 1), null);
+    assert.equal(resolveChosenAmount(earlyBirdFull, 999_999_999), null);
+    assert.equal(resolveChosenAmount(earlyBirdFull, undefined), null);
+  });
+
+  it('accepts an amount at or above the floor', () => {
+    assert.equal(resolveChosenAmount(pwywPlan, 100), 100);
+    assert.equal(resolveChosenAmount(pwywPlan, 50_000), 50_000);
+    assert.equal(resolveChosenAmount(pwywPlan, '250'), 250);
+  });
+
+  it('refuses free, in every spelling of it', () => {
+    for (const nothing of [0, -1, -50_000, '0', '-0']) {
+      assert.throws(() => resolveChosenAmount(pwywPlan, nothing), AmountError, `accepted ${nothing}`);
+    }
+  });
+
+  it('refuses a missing amount rather than defaulting to the floor', () => {
+    // Defaulting would turn "I did not decide" into "I chose the minimum",
+    // which is a donation nobody made.
+    for (const missing of [undefined, null, '']) {
+      assert.throws(() => resolveChosenAmount(pwywPlan, missing), AmountError);
+    }
+  });
+
+  it('refuses below the floor, and names it in pesos', () => {
+    assert.throws(() => resolveChosenAmount(pwywPlan, 99), /₱1\.00/);
+  });
+
+  it('refuses nonsense and fractional centavos', () => {
+    for (const bad of ['abc', '1e', {}, [], NaN, Infinity, 10.5]) {
+      assert.throws(() => resolveChosenAmount(pwywPlan, bad), AmountError, `accepted ${String(bad)}`);
+    }
+  });
+
+  it('refuses an implausibly large amount, which is a typo not a gift', () => {
+    assert.throws(() => resolveChosenAmount(pwywPlan, 100_000_001), AmountError);
+    assert.equal(resolveChosenAmount(pwywPlan, 100_000_000), 100_000_000);
+  });
+
+  it('holds the floor even if a plan somehow has no minimum', () => {
+    const noFloor: PaymentPlan = { ...pwywPlan, min_centavos: null };
+    assert.throws(() => resolveChosenAmount(noFloor, 0), AmountError);
+    assert.equal(resolveChosenAmount(noFloor, 1), 1);
+  });
+});
+
+describe('buildSchedule — pay what you want', () => {
+  it('charges the chosen amount, not the plan total', () => {
+    const seeds = buildSchedule({
+      plan: pwywPlan,
+      installments: [pwywInstallment],
+      now: SEPT,
+      holdMinutes: 60,
+      chosenAmountCentavos: 75_000,
+    });
+    assert.equal(seeds.length, 1);
+    assert.equal(seeds[0]!.amount_centavos, 75_000);
+    assert.equal(seeds[0]!.is_deposit, true);
+  });
+
+  it('leaves a fixed-price plan alone even if an amount is passed', () => {
+    const seeds = buildSchedule({
+      plan: earlyBirdFull,
+      installments: [
+        { seq: 1, label: 'Full', amount_centavos: earlyBirdFull.total_centavos, due_at: null, due_offset_days: null, is_deposit: true },
+      ],
+      now: SEPT,
+      holdMinutes: 60,
+      chosenAmountCentavos: 1,
+    });
+    assert.equal(seeds[0]!.amount_centavos, earlyBirdFull.total_centavos);
   });
 });

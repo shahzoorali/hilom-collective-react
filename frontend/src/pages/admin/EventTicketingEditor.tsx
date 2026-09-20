@@ -137,8 +137,11 @@ function splitEvenly(totalCentavos: number, parts: number): number[] {
   return out;
 }
 
-interface PlanDraft extends Omit<AdminPlan, 'total_centavos' | 'installments'> {
+interface PlanDraft extends Omit<AdminPlan, 'total_centavos' | 'installments' | 'suggested_centavos'> {
   totalPesos: string;
+  minPesos: string;
+  /** Presets as the admin types them: a comma-separated list of pesos. */
+  suggestedPesos: string;
   installments: (Omit<AdminInstallment, 'amount_centavos' | 'due_at'> & {
     amountPesos: string;
     dueDate: string;
@@ -149,6 +152,8 @@ function planToDraft(plan: AdminPlan): PlanDraft {
   return {
     ...plan,
     totalPesos: toPesos(plan.total_centavos),
+    minPesos: plan.min_centavos == null ? '' : toPesos(plan.min_centavos),
+    suggestedPesos: (plan.suggested_centavos ?? []).map((c) => toPesos(c)).join(', '),
     available_from: manilaDay(plan.available_from),
     available_until: manilaDay(plan.available_until),
     installments: plan.installments.map((i) => ({
@@ -171,6 +176,18 @@ function draftToPlan(draft: PlanDraft): AdminPlan {
     available_until: draft.available_until || null,
     is_active: draft.is_active,
     sort_order: draft.sort_order,
+    is_pay_what_you_want: draft.is_pay_what_you_want ?? false,
+    // Sent only when the toggle is on, so turning it off clears the floor
+    // rather than leaving a stale one behind a false flag.
+    min_centavos: draft.is_pay_what_you_want ? toCentavos(draft.minPesos) : null,
+    suggested_centavos: draft.is_pay_what_you_want
+      ? draft.suggestedPesos
+          .split(',')
+          .map((part) => part.trim())
+          .filter((part) => part !== '')
+          .map((part) => toCentavos(part))
+          .filter((c) => c > 0)
+      : [],
     installments: draft.installments.map((i, idx) => ({
       seq: idx + 1,
       label: i.label,
@@ -187,6 +204,9 @@ const newPlan = (sortOrder: number): PlanDraft => ({
   description: null,
   kind: 'full',
   totalPesos: '',
+  minPesos: '',
+  suggestedPesos: '',
+  is_pay_what_you_want: false,
   currency: 'PHP',
   available_from: '',
   available_until: '',
@@ -807,8 +827,81 @@ function PlanCard({
             }}
             placeholder="30000.00"
           />
+          {plan.is_pay_what_you_want && (
+            <span className="small muted">
+              Not charged. Kept only as a suggestion — the registrant names the amount.
+            </span>
+          )}
         </label>
       </div>
+
+      {/* Pay what you want (0047). Single-payment only: a variable total across
+          an instalment schedule means re-deriving every instalment from the
+          chosen figure, which the database refuses by constraint rather than
+          allow half-working. */}
+      {plan.kind === 'full' && (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <label className="field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="checkbox"
+              checked={plan.is_pay_what_you_want ?? false}
+              disabled={locked}
+              onChange={(e) =>
+                onChange({
+                  ...plan,
+                  is_pay_what_you_want: e.target.checked,
+                  // A sensible floor the moment it is switched on, so the plan
+                  // is never briefly in the state the database refuses.
+                  minPesos: e.target.checked && !plan.minPesos ? '1.00' : plan.minPesos,
+                })
+              }
+              style={{ width: 'auto' }}
+            />
+            <span>
+              <strong>Let the registrant choose the amount</strong>
+              <br />
+              <span className="small muted">
+                For donation-based events. They type what they want to pay; the price above is
+                not charged.
+              </span>
+            </span>
+          </label>
+
+          {plan.is_pay_what_you_want && (
+            <div className="row">
+              <label className="field">
+                <span>Minimum (₱)</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={plan.minPesos}
+                  disabled={locked}
+                  onChange={(e) => onChange({ ...plan, minPesos: e.target.value })}
+                  placeholder="1.00"
+                />
+                <span className="small muted">
+                  Must be more than zero — free registration is not this feature.
+                </span>
+              </label>
+
+              <label className="field">
+                <span>Suggested amounts (₱)</span>
+                <input
+                  value={plan.suggestedPesos}
+                  disabled={locked}
+                  onChange={(e) => onChange({ ...plan, suggestedPesos: e.target.value })}
+                  placeholder="100, 250, 500"
+                />
+                <span className="small muted">
+                  Comma-separated. Shown as buttons beside the box; they can still type anything
+                  above the minimum.
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="row">
         <label className="field">

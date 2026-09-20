@@ -36,6 +36,8 @@ import {
   validateRegistrant,
   registrationOpen,
   TicketingValidationError,
+  AmountError,
+  resolveChosenAmount,
   isOutstanding,
   nextDueCharge,
   outstandingCentavos,
@@ -75,6 +77,15 @@ const CLAIM_ERRORS: Record<string, { status: number; message: string }> = {
   charge_total_mismatch: {
     status: 409,
     message: 'The price changed while you were filling this in. Please start again.',
+  },
+  // Both raised by claim_event_seat for a pay-what-you-want plan (0047). The
+  // handler validates the amount before it gets this far, so reaching these
+  // means the plan changed under the request — or that something bypassed the
+  // handler's own check, which is exactly why the database repeats it.
+  amount_required: { status: 400, message: 'Enter how much you would like to pay.' },
+  amount_below_minimum: {
+    status: 400,
+    message: 'That amount is below the minimum for this event.',
   },
   event_not_found: { status: 404, message: 'Event not found' },
 };
@@ -209,13 +220,22 @@ async function register(
 
   const { data: plans, error: planError } = await supabase
     .from('event_payment_plans')
-    .select('id, name, kind, total_centavos, currency, available_from, available_until, is_active, sort_order')
+    .select(
+      'id, name, kind, total_centavos, currency, available_from, available_until, is_active, ' +
+        'sort_order, is_pay_what_you_want, min_centavos, suggested_centavos',
+    )
     .eq('event_id', eventId)
     .returns<PaymentPlan[]>();
   if (planError) throw planError;
 
   const plan = activePlans(plans ?? [], now).find((candidate) => candidate.id === planId);
   if (!plan) return conflict('That payment option is no longer available. Please choose another.');
+
+  // For a fixed-price plan this returns null and whatever the browser sent is
+  // discarded: the only plan whose price the client may influence is the one
+  // that says it may. Throws AmountError, mapped to a 400 below, for anything
+  // missing, unparseable, fractional, below the floor or implausibly large.
+  const chosenAmountCentavos = resolveChosenAmount(plan, body.amountCentavos, plan.currency);
 
   const { data: installments, error: instError } = await supabase
     .from('event_plan_installments')
@@ -233,6 +253,7 @@ async function register(
     installments: installments ?? [],
     now,
     holdMinutes: eventRow.hold_minutes ?? 60,
+    chosenAmountCentavos,
   });
 
   const { data: registrationId, error: claimError } = await supabase.rpc('claim_event_seat', {
@@ -248,6 +269,9 @@ async function register(
     },
     p_charges: charges,
     p_hold_minutes: eventRow.hold_minutes ?? 60,
+    // Null for a fixed-price plan, which is what makes the function take its
+    // original path and re-check against the plan's own total.
+    p_total_centavos: chosenAmountCentavos,
   });
 
   if (claimError) {

@@ -379,6 +379,11 @@ export default function EventRegister() {
 
   const [data, setData] = useState<TicketingResponse | null>(null);
   const [planId, setPlanId] = useState<string>('');
+  // What the registrant typed into a pay-what-you-want box, in PESOS as typed.
+  // Kept as the raw string rather than a number so that a half-typed "1." or an
+  // empty box stays exactly what the person sees; it is converted to centavos
+  // once, at submit.
+  const [amount, setAmount] = useState<string>('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -499,6 +504,18 @@ export default function EventRegister() {
 
   const soldOut = placesRemaining <= 0;
 
+  const chosenPlan = plans.find((p) => p.id === planId) ?? null;
+  const pwyw = chosenPlan?.is_pay_what_you_want === true;
+  // Centavos, rounded rather than truncated: 100.999 typed into a peso box is a
+  // person meaning ₱101, and Math.trunc would quietly take a centavo off them.
+  const amountCentavos = amount.trim() === '' ? null : Math.round(Number(amount) * 100);
+  const floorCentavos = Math.max(chosenPlan?.min_centavos ?? 0, 1);
+  const amountValid =
+    !pwyw ||
+    (amountCentavos !== null &&
+      Number.isFinite(amountCentavos) &&
+      amountCentavos >= floorCentavos);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!eventId || !planId) return;
@@ -508,6 +525,10 @@ export default function EventRegister() {
     try {
       const result = await registerForEvent(eventId, {
         planId,
+        // Only for a pay-what-you-want plan. The server ignores it otherwise,
+        // and re-validates it in either case — this is a convenience, not a
+        // source of truth.
+        ...(pwyw && amountCentavos !== null ? { amountCentavos } : {}),
         registrant: {
           name: name.trim(),
           email: email.trim(),
@@ -569,6 +590,16 @@ export default function EventRegister() {
                   />
                 ))}
               </fieldset>
+
+              {pwyw && chosenPlan && (
+                <AmountChooser
+                  plan={chosenPlan}
+                  value={amount}
+                  onChange={setAmount}
+                  floorCentavos={floorCentavos}
+                  valid={amountValid}
+                />
+              )}
 
               <div className="row">
                 <label className="field">
@@ -698,12 +729,15 @@ export default function EventRegister() {
                 disabled={
                   submitting ||
                   !planId ||
+                  !amountValid ||
                   !agreed ||
                   (!!event.medical_disclaimer_html && !medicalAck) ||
                   (!!event.liability_consent_html && !consentAck)
                 }
               >
-                {submitting ? 'Reserving your place…' : selectedLabel(plans, planId)}
+                {submitting
+                  ? 'Reserving your place…'
+                  : selectedLabel(plans, planId, pwyw ? amountCentavos : null)}
               </button>
 
               <p className="small muted" style={{ margin: 0, textAlign: 'center' }}>
@@ -731,9 +765,21 @@ export default function EventRegister() {
   );
 }
 
-function selectedLabel(plans: EventPlan[], planId: string): string {
+function selectedLabel(
+  plans: EventPlan[],
+  planId: string,
+  chosenCentavos: number | null,
+): string {
   const plan = plans.find((p) => p.id === planId);
   if (!plan) return 'Choose how to pay';
+  if (plan.is_pay_what_you_want) {
+    // Until they have typed something the button cannot name a figure, and
+    // inventing one — the minimum, say — would read as a price.
+    if (chosenCentavos === null || !Number.isFinite(chosenCentavos)) {
+      return 'Enter an amount to continue';
+    }
+    return `Reserve my place — pay ${money(chosenCentavos, plan.currency)} now`;
+  }
   return `Reserve my place — pay ${money(dueNow(plan), plan.currency)} now`;
 }
 
@@ -782,7 +828,15 @@ function PlanOption({
         )}
         <span style={{ flex: 1 }}>
           <strong>{plan.name}</strong>
-          <span style={{ float: 'right' }}>{money(plan.total_centavos, plan.currency)}</span>
+          {/* A pay-what-you-want plan has no price to show. Rendering
+              total_centavos here is what made a donation-based class advertise
+              itself as costing ₱1.00 — the column is a stored suggestion, not
+              a figure anyone is being asked for. */}
+          <span style={{ float: 'right' }}>
+            {plan.is_pay_what_you_want
+              ? 'You choose'
+              : money(plan.total_centavos, plan.currency)}
+          </span>
           {plan.description && (
             <>
               <br />
@@ -818,7 +872,12 @@ function PlanOption({
             </span>
           ) : (
             <span className="small muted" style={{ display: 'block', marginTop: 6 }}>
-              Paid in full today.
+              {plan.is_pay_what_you_want
+                ? `Donation-based — you decide the amount. Minimum ${money(
+                    Math.max(plan.min_centavos ?? 0, 1),
+                    plan.currency,
+                  )}.`
+                : 'Paid in full today.'}
             </span>
           )}
 
@@ -830,5 +889,97 @@ function PlanOption({
         </span>
       </span>
     </label>
+  );
+}
+
+/**
+ * The amount box for a pay-what-you-want plan.
+ *
+ * Presets and a free-entry field together, rather than either alone. The
+ * buttons are what most people use and are the only reason an average donation
+ * is more than the minimum; the box is what makes the offer honest, since a
+ * grid of fixed buttons is just a price list with extra steps.
+ *
+ * The minimum is stated up front rather than enforced silently on submit.
+ * Someone who types ₱20 into a ₱50 event should be told while they are looking
+ * at the box, not after they press the button.
+ *
+ * Nothing here is authoritative. The server validates the amount against the
+ * plan's own floor and the database re-checks it inside the row lock; this is
+ * for the person's benefit, not the system's.
+ */
+function AmountChooser({
+  plan,
+  value,
+  onChange,
+  floorCentavos,
+  valid,
+}: {
+  plan: EventPlan;
+  value: string;
+  onChange: (next: string) => void;
+  floorCentavos: number;
+  valid: boolean;
+}) {
+  const presets = (plan.suggested_centavos ?? []).filter((c) => c >= floorCentavos);
+  // Pesos, as the box wants them. Whole amounts lose the ".00" so a preset
+  // click leaves "100" in the field rather than "100.00".
+  const toPesoString = (centavos: number) =>
+    centavos % 100 === 0 ? String(centavos / 100) : (centavos / 100).toFixed(2);
+
+  const typed = value.trim();
+  const touched = typed !== '';
+  const showError = touched && !valid;
+
+  return (
+    <div className="field" style={{ display: 'grid', gap: 8 }}>
+      <span style={{ fontWeight: 600 }}>How much would you like to pay?</span>
+      <span className="small muted" style={{ marginTop: -4 }}>
+        This class is donation-based — you choose the amount. Minimum{' '}
+        {money(floorCentavos, plan.currency)}.
+      </span>
+
+      {presets.length > 0 && (
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          {presets.map((centavos) => {
+            const asString = toPesoString(centavos);
+            const active = typed === asString;
+            return (
+              <button
+                key={centavos}
+                type="button"
+                className={active ? 'btn btn-small' : 'btn btn-secondary btn-small'}
+                onClick={() => onChange(asString)}
+              >
+                {money(centavos, plan.currency)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <label style={{ display: 'grid', gap: 4 }}>
+        <span className="small muted">Or enter your own amount</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          // `min` and `step` make a phone show a numeric keypad and let the
+          // browser catch the obvious cases; neither is relied on.
+          min={floorCentavos / 100}
+          step="0.01"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={toPesoString(floorCentavos)}
+          aria-label={`Amount in ${plan.currency}`}
+          aria-invalid={showError || undefined}
+        />
+      </label>
+
+      {showError && (
+        <span className="small" style={{ color: 'var(--error, #a33)' }}>
+          Please enter at least {money(floorCentavos, plan.currency)}.
+        </span>
+      )}
+    </div>
   );
 }

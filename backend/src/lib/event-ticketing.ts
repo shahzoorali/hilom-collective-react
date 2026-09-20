@@ -131,6 +131,71 @@ export interface PaymentPlan {
   available_until: string | null;
   is_active: boolean;
   sort_order: number;
+  /**
+   * The registrant names the amount (0047).
+   *
+   * When true, `total_centavos` is a suggestion the UI may show and is *not*
+   * what gets charged — the chosen figure is, and it is what lands on
+   * event_registrations.total_centavos.
+   */
+  is_pay_what_you_want?: boolean;
+  /** Floor in centavos, always positive. Meaningful only when PWYW. */
+  min_centavos?: number | null;
+  /** Preset amounts offered as buttons. Prompts, not limits. */
+  suggested_centavos?: number[] | null;
+}
+
+/** Raised when a pay-what-you-want amount is missing, unparseable or too low. */
+export class AmountError extends TicketingValidationError {}
+
+/**
+ * Validates the amount a registrant typed into a pay-what-you-want box.
+ *
+ * Returns the amount in centavos for a PWYW plan, or null for a fixed-price
+ * one — where whatever the client sent is simply ignored rather than trusted.
+ * That asymmetry is the point: the only plan whose price the browser may
+ * influence is the plan that says so.
+ *
+ * Free is not reachable here. The floor is the plan's own `min_centavos`, and
+ * an absolute `> 0` is asserted regardless, so a plan whose minimum was
+ * somehow left null still cannot produce a zero-peso seat. The database
+ * repeats both checks inside the row lock; this exists for the error message.
+ */
+export function resolveChosenAmount(
+  plan: PaymentPlan,
+  raw: unknown,
+  currency = 'PHP',
+): number | null {
+  if (!plan.is_pay_what_you_want) return null;
+
+  if (raw === undefined || raw === null || raw === '') {
+    throw new AmountError('Enter how much you would like to pay.');
+  }
+  const centavos = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(centavos)) {
+    throw new AmountError('That amount is not a number.');
+  }
+  // Centavos are indivisible; a fractional one is a rounding bug upstream, not
+  // a price, and accepting it would put a non-integer into an int column.
+  if (!Number.isInteger(centavos)) {
+    throw new AmountError('That amount is not a whole number of centavos.');
+  }
+  const floor = Math.max(plan.min_centavos ?? 0, 1);
+  if (centavos < floor) {
+    const pesos = new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+    }).format(floor / 100);
+    throw new AmountError(`The smallest amount for this is ${pesos}.`);
+  }
+  // A ceiling, not because anyone objects to generosity, but because a typo
+  // that adds two zeroes should not reach a card. ₱1,000,000 is far above any
+  // plausible donation and far below anything that would round badly.
+  if (centavos > 100_000_000) {
+    throw new AmountError('That amount is larger than this form accepts.');
+  }
+  return centavos;
 }
 
 export interface PlanInstallment {
@@ -195,8 +260,16 @@ export function buildSchedule(input: {
   installments: PlanInstallment[];
   now: Date;
   holdMinutes: number;
+  /**
+   * What the registrant chose, for a pay-what-you-want plan. Null elsewhere.
+   *
+   * Only ever applied to a single-instalment plan, which is all a PWYW plan can
+   * be — 0047 refuses the combination by constraint — so "spread the chosen
+   * figure across the schedule" never arises and is not attempted here.
+   */
+  chosenAmountCentavos?: number | null;
 }): ChargeSeed[] {
-  const { plan, installments, now, holdMinutes } = input;
+  const { plan, installments, now, holdMinutes, chosenAmountCentavos } = input;
 
   if (installments.length === 0) {
     throw new TicketingValidationError(`Plan "${plan.name}" has no payment schedule`);
@@ -225,18 +298,27 @@ export function buildSchedule(input: {
       seq: inst.seq,
       label: inst.label,
       is_deposit: inst.is_deposit,
-      amount_centavos: inst.amount_centavos,
+      amount_centavos:
+        plan.is_pay_what_you_want && chosenAmountCentavos != null
+          ? chosenAmountCentavos
+          : inst.amount_centavos,
       due_at: dueAt,
     };
   });
 
   // The same invariant the deferred trigger enforces in the database, checked
   // here so the caller gets a readable error instead of a constraint violation
-  // at commit.
+  // at commit. For a pay-what-you-want plan the target is the chosen figure
+  // rather than the plan's own total — the invariant changes shape, it does not
+  // go away, and claim_event_seat re-checks the identical thing under the lock.
+  const expected =
+    plan.is_pay_what_you_want && chosenAmountCentavos != null
+      ? chosenAmountCentavos
+      : plan.total_centavos;
   const sum = seeds.reduce((acc, s) => acc + s.amount_centavos, 0);
-  if (sum !== plan.total_centavos) {
+  if (sum !== expected) {
     throw new TicketingValidationError(
-      `Plan "${plan.name}" instalments sum to ${sum} but the plan total is ${plan.total_centavos}`,
+      `Plan "${plan.name}" instalments sum to ${sum} but the expected total is ${expected}`,
     );
   }
   if (seeds.filter((s) => s.is_deposit).length !== 1) {
@@ -639,6 +721,9 @@ export interface PlanInput {
   is_active: boolean;
   sort_order: number;
   installments: InstallmentInput[];
+  is_pay_what_you_want: boolean;
+  min_centavos: number | null;
+  suggested_centavos: number[];
 }
 
 /**
@@ -785,12 +870,45 @@ export function validatePlan(raw: unknown, index: number): PlanInput {
     );
   }
 
+  // Pay what you want (0047). Validated here as well as by the table
+  // constraint, so an admin gets a sentence rather than a constraint name.
+  const pwyw = Boolean(body.is_pay_what_you_want);
+  let minCentavos: number | null = null;
+  let suggested: number[] = [];
+
+  if (pwyw) {
+    if (kind !== 'full') {
+      throw new TicketingValidationError(
+        `${where} ("${name}") lets the registrant choose the amount, so it cannot be an instalment plan.`,
+      );
+    }
+    minCentavos = wholeCentavos(body.min_centavos, `${where} ("${name}") minimum`);
+    if (minCentavos <= 0) {
+      throw new TicketingValidationError(
+        `${where} ("${name}") needs a minimum of more than zero — a free place is not a pay-what-you-want plan.`,
+      );
+    }
+    const rawSuggested = Array.isArray(body.suggested_centavos) ? body.suggested_centavos : [];
+    suggested = rawSuggested.map((v, i) => {
+      const amount = wholeCentavos(v, `${where} ("${name}") suggested amount ${i + 1}`);
+      if (amount <= 0) {
+        throw new TicketingValidationError(
+          `${where} ("${name}") has a suggested amount of zero.`,
+        );
+      }
+      return amount;
+    });
+  }
+
   return {
     ...(typeof body.id === 'string' && body.id ? { id: body.id } : {}),
     name,
     description: text(body.description, 1000),
     kind,
     total_centavos: total,
+    is_pay_what_you_want: pwyw,
+    min_centavos: minCentavos,
+    suggested_centavos: suggested,
     currency: String(body.currency ?? 'PHP').slice(0, 3).toUpperCase(),
     available_from: availableFrom,
     available_until: availableUntil,

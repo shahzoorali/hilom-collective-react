@@ -117,7 +117,13 @@ export async function ticketing(event: APIGatewayProxyEventV2): Promise<APIGatew
 
     const { data: plans, error: planError } = await supabase
       .from('event_payment_plans')
-      .select('id, name, description, kind, total_centavos, currency, available_from, available_until, is_active, sort_order')
+      // The pay-what-you-want fields are public by the same reasoning as the
+      // price: a floor and a set of suggested amounts are what the registration
+      // page has to render, and a price is public by nature (0016's RLS note).
+      .select(
+        'id, name, description, kind, total_centavos, currency, available_from, available_until, ' +
+          'is_active, sort_order, is_pay_what_you_want, min_centavos, suggested_centavos',
+      )
       .eq('event_id', eventId)
       .returns<(PaymentPlan & { description: string | null })[]>();
     if (planError) throw planError;

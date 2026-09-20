@@ -451,6 +451,12 @@ export interface AdminPlan {
   is_active: boolean;
   sort_order: number;
   installments: AdminInstallment[];
+  /** The registrant names the amount (migration 0047). Single-payment only. */
+  is_pay_what_you_want?: boolean;
+  /** Floor in centavos. Required and positive when PWYW — free is not an option. */
+  min_centavos?: number | null;
+  /** Preset amounts offered as buttons on the registration page. */
+  suggested_centavos?: number[] | null;
   /** Read-only, returned by the API: how many people are on this plan. */
   registration_count?: number;
   /** True once anyone has registered — money and schedule become immutable. */

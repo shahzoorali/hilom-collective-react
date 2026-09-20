@@ -60,6 +60,18 @@ export interface EventPlan {
   available_until: string | null;
   sort_order: number;
   installments: PlanInstallment[];
+  /**
+   * The registrant names the amount (migration 0047).
+   *
+   * When true, `total_centavos` is a suggestion the card may show and is NOT
+   * what gets charged — what the person types is, and the server is what
+   * decides whether it is acceptable.
+   */
+  is_pay_what_you_want?: boolean;
+  /** Floor in centavos. Always positive: free is not reachable here. */
+  min_centavos?: number | null;
+  /** Preset amounts offered as buttons. Prompts, not limits. */
+  suggested_centavos?: number[] | null;
 }
 
 export interface EventFacilitator {
@@ -115,6 +127,15 @@ export const getEventTicketing = (eventId: string) =>
 
 export interface RegisterInput {
   planId: string;
+  /**
+   * Centavos, for a pay-what-you-want plan only.
+   *
+   * Ignored by the server for any other plan — deliberately, so that a client
+   * cannot name its own price on a fixed one. Validated server-side against the
+   * plan's floor and re-checked in the database under the row lock; nothing
+   * here is trusted.
+   */
+  amountCentavos?: number;
   registrant: {
     name: string;
     email: string;
