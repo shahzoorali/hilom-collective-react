@@ -25,6 +25,7 @@ import {
   escapeHtml,
 } from './email-layout.js';
 import { isOutstanding, type ChargeStatus } from './event-ticketing.js';
+import { renderInvite } from './ical.js';
 import { buildRawEmail, type RawEmailAttachment } from './mime.js';
 
 // ap-south-1 is where the verified SES identity with production access lives;
@@ -32,6 +33,9 @@ import { buildRawEmail, type RawEmailAttachment } from './mime.js';
 const sesClient = new SESv2Client({ region: 'ap-south-1' });
 
 const SENDER = 'Hilom Collective <kumusta@hilomcollective.com>';
+/** The same identity as SENDER, bare, for the invite's ORGANIZER line. */
+const SENDER_EMAIL = 'kumusta@hilomcollective.com';
+const SENDER_NAME = 'Hilom Collective';
 const SITE = 'https://www.hilomcollective.com';
 
 const registrationUrl = (registrationId: string) => `${SITE}/account/registrations/${registrationId}`;
@@ -194,6 +198,83 @@ function joinLines(event: EmailEvent): string[] {
   ];
 }
 
+/**
+ * A calendar invite for one registration, as an attachable .ics.
+ *
+ * Bookings have carried one since 0012; ticketed events never did, so someone
+ * who paid for a retreat got a confirmation they had to transcribe into their
+ * own calendar by hand. Same renderInvite() the booking emails use, so the two
+ * behave identically in Gmail and Outlook rather than one of them being subtly
+ * different.
+ *
+ * `METHOD:REQUEST` is what makes a client draw an invite card instead of
+ * showing a file to download. It travels as an ordinary attachment part rather
+ * than through email-mime.ts's dedicated invite sender, because this email may
+ * *also* carry the participant agreement PDF and that sender takes exactly one
+ * calendar part and nothing else. The Content-Type still says
+ * `method=REQUEST`, which is what the clients actually read.
+ *
+ * ORGANIZER is Hilom rather than the facilitator: an event is run by the
+ * collective, the roster is ours, and replies belong in an inbox somebody
+ * reads. That differs from a 1:1 booking deliberately.
+ */
+export function registrationInvite(input: {
+  registrationId: string;
+  event: EmailEvent;
+  attendeeEmail: string;
+  attendeeName: string;
+  /**
+   * Must increase for the same UID or a calendar will ignore the update. The
+   * confirmation sends 0; anything re-issuing the invite later passes seconds
+   * since the epoch, which is monotonic and needs no column to track.
+   */
+  sequence: number;
+}): RawEmailAttachment | null {
+  const { event } = input;
+  if (!event.starts_at) return null;
+
+  // Every published event has an end time today, and the column is nullable,
+  // so a missing one gets an hour rather than a zero-length entry that some
+  // clients drop silently.
+  const endsAt = event.ends_at ?? new Date(Date.parse(event.starts_at) + 3_600_000).toISOString();
+
+  // What someone opening the calendar entry a month later needs: where to
+  // join, and where to find everything else.
+  const description = [
+    event.join_url ? `Join: ${event.join_url}` : null,
+    event.join_instructions ?? null,
+    event.venue_details ?? null,
+    `Your registration: ${registrationUrl(input.registrationId)}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const ics = renderInvite({
+    method: 'REQUEST',
+    // Per registration, not per event: two people at the same retreat hold two
+    // separate calendar entries, and one person's decline must not touch the
+    // other's.
+    uid: `event-registration-${input.registrationId}@hilomcollective.com`,
+    sequence: input.sequence,
+    startsAt: event.starts_at,
+    endsAt,
+    summary: event.title,
+    description,
+    location: event.join_url || event.location || null,
+    organizer: { email: SENDER_EMAIL, name: SENDER_NAME },
+    attendee: { email: input.attendeeEmail, name: input.attendeeName },
+  });
+
+  return {
+    filename: 'invite.ics',
+    // `method=REQUEST` on the Content-Type, not only inside the body, is what
+    // Gmail and Outlook key off to render invite controls. See email-mime.ts,
+    // which makes the same point about the dedicated invite sender.
+    contentType: 'text/calendar; charset="UTF-8"; method=REQUEST',
+    content: new TextEncoder().encode(ics),
+  };
+}
+
 async function send(
   to: string,
   subject: string,
@@ -332,12 +413,19 @@ export async function sendRegistrationConfirmed(
     registrationUrl(ctx.registrationId),
   ];
 
-  await send(
-    ctx.buyerEmail,
-    `You're going to ${event.title}`,
-    renderText(heading, textLines),
-    renderEmail({ preheader: `Your place at ${event.title} is confirmed.`, heading, body }),
-    ctx.agreement
+  // The calendar invite rides along with the confirmation rather than as a
+  // second email: this is the message people keep, and the entry belongs in the
+  // same place as the receipt. Sequence 0 — this is the first issue of it.
+  const invite = registrationInvite({
+    registrationId: ctx.registrationId,
+    event,
+    attendeeEmail: ctx.buyerEmail,
+    attendeeName: ctx.registrantName,
+    sequence: 0,
+  });
+
+  const attachments: RawEmailAttachment[] = [
+    ...(ctx.agreement
       ? [
           {
             filename: ctx.agreement.filename,
@@ -345,7 +433,16 @@ export async function sendRegistrationConfirmed(
             content: ctx.agreement.pdf,
           },
         ]
-      : undefined,
+      : []),
+    ...(invite ? [invite] : []),
+  ];
+
+  await send(
+    ctx.buyerEmail,
+    `You're going to ${event.title}`,
+    renderText(heading, textLines),
+    renderEmail({ preheader: `Your place at ${event.title} is confirmed.`, heading, body }),
+    attachments.length > 0 ? attachments : undefined,
   );
 }
 
@@ -901,6 +998,18 @@ export async function sendJoinDetails(input: {
     note('Keep this email — the link is also on your registration page, linked below.') +
     button('View your registration', registrationUrl(input.registrationId));
 
+  // Re-issued with the same UID, so a calendar that already holds this event
+  // updates the entry in place — new link in LOCATION and URL — instead of
+  // producing a duplicate. The sequence must simply be larger than last time;
+  // epoch seconds guarantees that without a column to count issues in.
+  const invite = registrationInvite({
+    registrationId: input.registrationId,
+    event,
+    attendeeEmail: input.to,
+    attendeeName: input.registrantName,
+    sequence: Math.floor(Date.now() / 1000),
+  });
+
   await send(
     input.to,
     heading,
@@ -914,5 +1023,6 @@ export async function sendJoinDetails(input: {
       registrationUrl(input.registrationId),
     ]),
     renderEmail({ preheader: `Joining details for ${event.title}.`, heading, body }),
+    invite ? [invite] : undefined,
   );
 }
