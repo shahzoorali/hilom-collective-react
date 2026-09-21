@@ -8,6 +8,8 @@
  *   GET    /admin/bookings
  *   POST   /admin/bookings/{bookingId}/cancel
  *   POST   /admin/bookings/{bookingId}/refund
+ *   GET    /admin/class-registrations              (?owed=true for the refund queue)
+ *   POST   /admin/class-registrations/{id}/refund
  *   GET    /admin/payouts
  *   POST   /admin/payouts
  *   PATCH  /admin/payouts/{payoutId}
@@ -82,6 +84,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     if (path.includes('/admin/reviews')) return await reviews(supabase, event, method);
     if (path.includes('/admin/payouts')) return await payouts(supabase, event, method);
+    if (path.includes('/admin/class-registrations')) {
+      return await classRegistrations(supabase, event, method, path);
+    }
     if (path.includes('/admin/bookings')) {
       const bookingId = event.pathParameters?.bookingId;
       if (bookingId && path.endsWith('/cancel')) {
@@ -674,6 +679,21 @@ async function markRefundSent(
   return ok({ bookingId, refundedAt: marked.refunded_at, reference: marked.refund_reference });
 }
 
+/**
+ * One piece of payable work, from either source.
+ *
+ * Bookings and class registrations carry identical money columns by design
+ * (0051), which is what lets the batch builder total them with one reducer
+ * instead of two that have to be kept in step.
+ */
+interface PayableRow {
+  id: string;
+  price_centavos: number;
+  platform_fee_centavos: number;
+  facilitator_net_centavos: number;
+  currency?: string;
+}
+
 const PAYOUT_COLUMNS =
   'id, facilitator_id, period_start, period_end, gross_centavos, platform_fee_centavos, processing_fee_centavos, net_centavos, currency, status, paid_at, reference, notes, created_at';
 
@@ -702,11 +722,19 @@ async function payouts(
 }
 
 /**
- * Builds a payout batch from every unpaid, delivered booking in a period.
+ * Builds a payout batch from every unpaid, delivered piece of work in a period.
  *
- * "Delivered" is `completed` or `no_show` — a no-show still earns, because the
- * facilitator held the time. `confirmed` is excluded: a session in the future
- * has not been delivered and must not be paid for in advance.
+ * Two sources since 0051: 1:1 bookings and group class seats. They are totalled
+ * together into one batch because a facilitator is one person owed one sum —
+ * splitting the payout by product would make them reconcile two transfers
+ * against one month's work.
+ *
+ * "Delivered" is `completed` or `no_show` for a booking — a no-show still
+ * earns, because the facilitator held the time. `confirmed` is excluded: a
+ * session in the future has not been delivered and must not be paid for in
+ * advance. For a class seat it is `completed`, which the booking sweep sets
+ * once the session has ended; a `cancelled` seat earns nothing, which is the
+ * whole point of cancelling it.
  *
  * The batch is created first and the bookings are stamped with its id second.
  * PostgREST cannot wrap the two in a transaction, so the ordering is chosen for
@@ -728,28 +756,65 @@ async function buildPayout(
   }
   if (periodEnd <= periodStart) return badRequest('period_end must be after period_start');
 
-  const { data: bookings, error } = await supabase
-    .from('bookings')
-    .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
-    .eq('facilitator_id', facilitatorId)
-    .in('status', ['completed', 'no_show'])
-    .is('payout_id', null)
-    .gte('ends_at', periodStart.toISOString())
-    .lt('ends_at', periodEnd.toISOString());
+  const [bookingRes, classRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
+      .eq('facilitator_id', facilitatorId)
+      .in('status', ['completed', 'no_show'])
+      .is('payout_id', null)
+      .gte('ends_at', periodStart.toISOString())
+      .lt('ends_at', periodEnd.toISOString()),
+    // Group class seats (0051). The period is filtered on the *session's*
+    // end, not the registration's — when the class happened is what decides
+    // which month it is paid in, and a seat sold in March for an April class
+    // is April's work. `!inner` is what makes that filter reach the embedded
+    // row at all; without it every registration comes back regardless of date.
+    supabase
+      .from('class_registrations')
+      .select(
+        'id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, ' +
+          'facilitator_class_sessions!inner(ends_at)',
+      )
+      .eq('facilitator_id', facilitatorId)
+      .eq('status', 'completed')
+      .is('payout_id', null)
+      .gte('facilitator_class_sessions.ends_at', periodStart.toISOString())
+      .lt('facilitator_class_sessions.ends_at', periodEnd.toISOString())
+      // The embedded relation defeats PostgREST's inferred row type, exactly
+      // as it does on every other joined read in this codebase.
+      .returns<PayableRow[]>(),
+  ]);
 
+  const error = bookingRes.error ?? classRes.error;
   if (error) throw error;
-  if (!bookings || bookings.length === 0) {
-    return badRequest('No unpaid sessions in that period');
+
+  const bookings = bookingRes.data ?? [];
+  const classSeats = classRes.data ?? [];
+  if (bookings.length === 0 && classSeats.length === 0) {
+    return badRequest('No unpaid sessions or classes in that period');
   }
 
-  const totals = bookings.reduce(
-    (acc, row) => ({
-      gross: acc.gross + Number(row.price_centavos ?? 0),
-      fees: acc.fees + Number(row.platform_fee_centavos ?? 0),
-      net: acc.net + Number(row.facilitator_net_centavos ?? 0),
-    }),
-    { gross: 0, fees: 0, net: 0 },
-  );
+  // One reducer over both sources — the column names are identical by design
+  // (0051), which is what lets this stay a single sum rather than two that
+  // have to be kept in step.
+  const sumOf = (rows: Pick<PayableRow, 'price_centavos' | 'platform_fee_centavos' | 'facilitator_net_centavos'>[]) =>
+    rows.reduce(
+      (acc, row) => ({
+        gross: acc.gross + Number(row.price_centavos ?? 0),
+        fees: acc.fees + Number(row.platform_fee_centavos ?? 0),
+        net: acc.net + Number(row.facilitator_net_centavos ?? 0),
+      }),
+      { gross: 0, fees: 0, net: 0 },
+    );
+
+  const bookingTotals = sumOf(bookings);
+  const classTotals = sumOf(classSeats);
+  const totals = {
+    gross: bookingTotals.gross + classTotals.gross,
+    fees: bookingTotals.fees + classTotals.fees,
+    net: bookingTotals.net + classTotals.net,
+  };
 
   const processingFee = Number(body.processing_fee_centavos ?? 0);
 
@@ -763,7 +828,7 @@ async function buildPayout(
       platform_fee_centavos: totals.fees,
       processing_fee_centavos: processingFee,
       net_centavos: totals.net - processingFee,
-      currency: (bookings[0]?.currency as string) ?? 'PHP',
+      currency: (bookings[0]?.currency as string) ?? (classSeats[0]?.currency as string) ?? 'PHP',
       status: 'draft',
       notes: typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null,
     })
@@ -773,45 +838,50 @@ async function buildPayout(
   if (insertError) throw insertError;
   if (!payout) throw new Error('Payout insert returned no row');
 
-  const { data: claimed, error: stampError } = await supabase
-    .from('bookings')
-    .update({ payout_id: payout.id })
-    .in('id', bookings.map((b) => b.id as string))
-    // Re-assert the unpaid condition: if a concurrent batch claimed some of
-    // these between the read and this write, they stay with that batch rather
-    // than being counted twice.
-    .is('payout_id', null)
-    // Read back what this batch actually won. The filter above prevents
-    // double-*claiming*, but the totals were computed from the pre-stamp read,
-    // so without this the row keeps paying for sessions another batch took —
-    // and that other batch pays for them too. Same session, paid twice.
-    .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos');
+  // Both sources are stamped the same way and for the same reasons. The
+  // `.is('payout_id', null)` re-assertion prevents a concurrent batch's rows
+  // being claimed twice; reading back what was actually won is what stops this
+  // batch *paying* for work another batch took — the filter prevents the
+  // double claim, not the double payment.
+  const stamp = async (
+    table: 'bookings' | 'class_registrations',
+    ids: string[],
+  ) => {
+    if (ids.length === 0) return [];
+    const { data, error: stampError } = await supabase
+      .from(table)
+      .update({ payout_id: payout.id })
+      .in('id', ids)
+      .is('payout_id', null)
+      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos')
+      .returns<PayableRow[]>();
+    if (stampError) throw stampError;
+    return data ?? [];
+  };
 
-  if (stampError) throw stampError;
-
-  const claimedRows = claimed ?? [];
+  // Sequential, not Promise.all: if stamping the classes throws, the bookings
+  // are already stamped to a batch that exists and is visible, which is
+  // recoverable by voiding it. Running both at once and failing one leaves the
+  // same state with no ordering to reason about.
+  const claimedBookings = await stamp('bookings', bookings.map((b) => b.id as string));
+  const claimedClasses = await stamp('class_registrations', classSeats.map((c) => c.id as string));
+  const claimedRows = [...claimedBookings, ...claimedClasses];
+  const expectedCount = bookings.length + classSeats.length;
 
   // Lost every row to a concurrent batch. Void rather than leave an empty
   // draft that reads as a real, approvable payout.
   if (claimedRows.length === 0) {
     await supabase.from('facilitator_payouts').update({ status: 'void' }).eq('id', payout.id);
     return json(409, {
-      error: 'Those sessions were claimed by another payout batch. Nothing left to pay in this period.',
+      error: 'That work was claimed by another payout batch. Nothing left to pay in this period.',
     });
   }
 
   // Re-total from what was actually claimed. Usually identical to the
   // provisional figures above; different only when a concurrent batch took
   // some, which is exactly the case this exists to get right.
-  if (claimedRows.length !== bookings.length) {
-    const actual = claimedRows.reduce(
-      (acc, row) => ({
-        gross: acc.gross + Number(row.price_centavos ?? 0),
-        fees: acc.fees + Number(row.platform_fee_centavos ?? 0),
-        net: acc.net + Number(row.facilitator_net_centavos ?? 0),
-      }),
-      { gross: 0, fees: 0, net: 0 },
-    );
+  if (claimedRows.length !== expectedCount) {
+    const actual = sumOf(claimedRows);
 
     const { data: corrected, error: correctionError } = await supabase
       .from('facilitator_payouts')
@@ -825,16 +895,26 @@ async function buildPayout(
       .maybeSingle();
     if (correctionError) throw correctionError;
 
-    console.warn('[adminFacilitators.buildPayout] concurrent batch claimed some sessions', {
+    console.warn('[adminFacilitators.buildPayout] concurrent batch claimed some work', {
       payoutId: payout.id,
-      expected: bookings.length,
+      expected: expectedCount,
       claimed: claimedRows.length,
     });
 
-    return ok({ payout: corrected ?? payout, sessionCount: claimedRows.length });
+    return ok({
+      payout: corrected ?? payout,
+      sessionCount: claimedRows.length,
+      bookingCount: claimedBookings.length,
+      classCount: claimedClasses.length,
+    });
   }
 
-  return ok({ payout, sessionCount: claimedRows.length });
+  return ok({
+    payout,
+    sessionCount: claimedRows.length,
+    bookingCount: claimedBookings.length,
+    classCount: claimedClasses.length,
+  });
 }
 
 async function updatePayout(
@@ -921,4 +1001,128 @@ async function updatePayout(
   }
 
   return ok({ payout: data });
+}
+
+/**
+ * Group class registrations, for the admin (0051).
+ *
+ *   GET  /admin/class-registrations             — the roster, filterable
+ *   GET  /admin/class-registrations?owed=true   — the refund queue
+ *   POST /admin/class-registrations/{id}/refund — record a refund as sent
+ *
+ * The refund queue is the reason this exists. Cancelling a class date releases
+ * everyone's seat and records what each is owed, but moves no money — refunds
+ * on this platform are issued by hand, everywhere. Until this endpoint there
+ * was no screen anywhere showing an admin which class refunds were
+ * outstanding, while the help centre was promising clients one "within a few
+ * working days". The promise existed and the queue behind it did not.
+ *
+ * Deliberately the same two-column ledger bookings use (0014): owed is
+ * `refund_centavos > 0 and refunded_at is null`, sent is `refunded_at is not
+ * null`. No third state to fall out of step.
+ */
+const CLASS_REGISTRATION_COLUMNS =
+  'id, session_id, facilitator_id, client_email, client_name, status, seat_no, ' +
+  'price_centavos, currency, refund_centavos, refunded_at, refund_reference, ' +
+  'cancelled_at, cancelled_by, cancellation_reason, payout_id, created_at';
+
+async function classRegistrations(
+  supabase: SupabaseClient,
+  event: APIGatewayProxyEventV2,
+  method: string,
+  path: string,
+): Promise<APIGatewayProxyResultV2> {
+  const registrationId = event.pathParameters?.registrationId;
+
+  if (registrationId && path.endsWith('/refund')) {
+    if (method !== 'POST') return badRequest(`Unsupported method ${method}`);
+    return await markClassRefundSent(supabase, registrationId, parseBody(event));
+  }
+
+  if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
+
+  const owedOnly = (event.queryStringParameters?.owed ?? '') === 'true';
+
+  let query = supabase
+    .from('class_registrations')
+    .select(
+      `${CLASS_REGISTRATION_COLUMNS}, ` +
+        'facilitators(slug, display_name, email), ' +
+        'facilitator_class_sessions(starts_at, ends_at, status, facilitator_classes(title))',
+    )
+    .order('created_at', { ascending: false })
+    .limit(500);
+
+  if (owedOnly) {
+    // Oldest first when working a queue: the refund somebody has been waiting
+    // on for a week is the urgent one, and the help centre tells them to chase
+    // us at exactly that point.
+    query = query.gt('refund_centavos', 0).is('refunded_at', null).order('cancelled_at', { ascending: true });
+  }
+
+  // The embedded relations defeat PostgREST's inferred row type, as on every
+  // other joined read in this file.
+  const { data, error } = await query.returns<Record<string, unknown>[]>();
+  if (error) throw error;
+
+  const rows = data ?? [];
+  return ok({
+    registrations: rows,
+    // Totalled here rather than in the browser so the figure on the screen and
+    // the figure in any report come from one place.
+    owedTotalCentavos: rows.reduce(
+      (total: number, row: Record<string, unknown>) =>
+        row.refunded_at ? total : total + Number(row.refund_centavos ?? 0),
+      0,
+    ),
+  });
+}
+
+/**
+ * Records that a class refund has actually been sent.
+ *
+ * Mirrors `markRefundSent` for bookings, including the re-asserted
+ * `refunded_at is null` on the write: two admins working the queue at once
+ * must not both be able to record the same refund, which would read as two
+ * payments having gone out.
+ */
+async function markClassRefundSent(
+  supabase: SupabaseClient,
+  registrationId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const reference = typeof body.reference === 'string' ? body.reference.trim().slice(0, 200) : '';
+  if (!reference) return badRequest('A payment or bank reference is required');
+
+  const { data: registration, error } = await supabase
+    .from('class_registrations')
+    .select('id, refund_centavos, refunded_at')
+    .eq('id', registrationId)
+    .maybeSingle<{ id: string; refund_centavos: number | null; refunded_at: string | null }>();
+
+  if (error) throw error;
+  if (!registration) return notFound('Class registration not found');
+  if (!registration.refund_centavos || registration.refund_centavos <= 0) {
+    return badRequest('No refund is owed on this class registration');
+  }
+  if (registration.refunded_at) {
+    return json(409, { error: 'This refund is already recorded as sent.' });
+  }
+
+  const { data: marked, error: updateError } = await supabase
+    .from('class_registrations')
+    .update({ refunded_at: new Date().toISOString(), refund_reference: reference })
+    .eq('id', registrationId)
+    .is('refunded_at', null)
+    .select('id, refunded_at, refund_reference')
+    .maybeSingle<{ id: string; refunded_at: string; refund_reference: string }>();
+
+  if (updateError) throw updateError;
+  if (!marked) return json(409, { error: 'This refund is already recorded as sent.' });
+
+  return ok({
+    registrationId,
+    refundedAt: marked.refunded_at,
+    reference: marked.refund_reference,
+  });
 }

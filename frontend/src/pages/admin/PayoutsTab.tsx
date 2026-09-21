@@ -23,8 +23,11 @@ import {
   adminListFacilitators,
   adminListPayouts,
   adminUpdatePayout,
+  adminListClassRegistrations,
+  adminMarkClassRefundSent,
   type AdminFacilitator,
   type AdminPayout,
+  type AdminClassRegistration,
 } from '../../lib/booking';
 
 /** First and last instant of the calendar month `offset` months back. */
@@ -113,6 +116,11 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
+
+      {/* Above the batch builder on purpose: a refund somebody is waiting on
+          is more urgent than this month's payout run, and renders nothing at
+          all when none is owed. */}
+      <ClassRefundsPanel adminKey={adminKey} onError={setError} onDone={setNotice} />
 
       <div className="panel">
         <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>New batch</h3>
@@ -237,5 +245,148 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
         </div>
       ))}
     </>
+  );
+}
+
+/**
+ * Class refunds owed (0051).
+ *
+ * Cancelling a group class date releases everyone's seat and records what each
+ * person is owed, but moves no money — refunds here are issued by hand, like
+ * every other refund on the platform. This is the queue that makes that
+ * defensible.
+ *
+ * It sits above the payout batches rather than in its own tab because both are
+ * the same job: money Hilom has to move by hand, in a list, with a reference
+ * recorded once it has gone. An admin doing one is doing the other.
+ *
+ * It renders nothing when the queue is empty. A permanently visible "0 owed"
+ * panel is a thing people stop reading, and this one needs to be noticed on
+ * the day it is not zero — the help centre tells clients to chase us after a
+ * week.
+ */
+function ClassRefundsPanel({
+  adminKey,
+  onError,
+  onDone,
+}: {
+  adminKey: string;
+  onError: (message: string | null) => void;
+  onDone: (message: string) => void;
+}) {
+  const [rows, setRows] = useState<AdminClassRegistration[]>([]);
+  const [owedTotal, setOwedTotal] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const reload = useCallback(() => {
+    adminListClassRegistrations(adminKey, true)
+      .then((r) => {
+        setRows(r.registrations);
+        setOwedTotal(r.owedTotalCentavos);
+      })
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setLoaded(true));
+  }, [adminKey, onError]);
+
+  useEffect(reload, [reload]);
+
+  async function markSent(row: AdminClassRegistration) {
+    const reference = window.prompt(
+      `Bank or PayMongo reference for the ${money(row.refund_centavos ?? 0, row.currency)} refund to ${row.client_email}?`,
+    );
+    if (reference === null) return;
+    if (!reference.trim()) {
+      onError('A reference is required — without one the refund cannot be reconciled later.');
+      return;
+    }
+
+    setBusyId(row.id);
+    onError(null);
+    try {
+      await adminMarkClassRefundSent(adminKey, row.id, reference.trim());
+      reload();
+      onDone(`Refund to ${row.client_email} recorded as sent.`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (!loaded || rows.length === 0) return null;
+
+  return (
+    <div className="panel" style={{ borderLeft: '3px solid var(--ochre-dark)' }}>
+      <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>
+        Class refunds owed — {money(owedTotal)}
+      </h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Group classes that were cancelled after someone paid. Nothing here has been refunded
+        yet. The help centre tells people to allow a few working days and to chase us after a
+        week, so the oldest are listed first.
+      </p>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Who</th>
+              <th>Class</th>
+              <th>Cancelled</th>
+              <th style={{ textAlign: 'right' }}>Owed</th>
+              <th style={{ textAlign: 'right' }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const waitingDays = row.cancelled_at
+                ? Math.floor((Date.now() - Date.parse(row.cancelled_at)) / 86_400_000)
+                : 0;
+              return (
+                <tr key={row.id}>
+                  <td className="small">
+                    <strong>{row.client_name || row.client_email}</strong>
+                    {row.client_name && <div className="muted">{row.client_email}</div>}
+                  </td>
+                  <td className="small">
+                    {row.facilitator_class_sessions?.facilitator_classes?.title ?? 'Class'}
+                    <div className="muted">{row.facilitators?.display_name}</div>
+                  </td>
+                  <td className="small">
+                    {row.cancelled_at
+                      ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(
+                          new Date(row.cancelled_at),
+                        )
+                      : '—'}
+                    {/* Past the window the help centre told them to expect. */}
+                    {waitingDays >= 7 && (
+                      <div>
+                        <span className="pill pill-bad" style={{ fontSize: '0.7rem' }}>
+                          {waitingDays} days
+                        </span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="small" style={{ textAlign: 'right' }}>
+                    {money(row.refund_centavos ?? 0, row.currency)}
+                  </td>
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <button
+                      className="btn btn-primary small"
+                      disabled={busyId === row.id}
+                      onClick={() => void markSent(row)}
+                      title="Record that this refund has been sent"
+                    >
+                      {busyId === row.id ? '…' : 'Mark refunded'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

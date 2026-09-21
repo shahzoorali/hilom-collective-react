@@ -225,7 +225,33 @@ export type AttachRoutes = (
  */
 export function routeAttacher(scope: Construct, httpApi: apigw.IHttpApi): AttachRoutes {
   return (fn, integrationId, entries) => {
-    const integration = new integrations.HttpLambdaIntegration(integrationId, fn);
+    // `scopePermissionToRoute: false` is load-bearing, not a tidy-up.
+    //
+    // By default CDK adds one AWS::Lambda::Permission per *route*, each with a
+    // sourceArn naming that route's path. A Lambda's resource policy is capped
+    // at 20 KB, and FacilitatorPortalFn — which carries the whole facilitator
+    // portal — hit that ceiling at roughly thirty routes:
+    //
+    //   The final policy size (20756) is bigger than the limit (20480)
+    //
+    // The deploy fails on whichever route happens to be last, which reads as a
+    // problem with that route and is nothing of the sort. The ceiling is
+    // structural: every feature added to a busy function moves it closer, and
+    // squeezing under it buys a release or two.
+    //
+    // With this false, CDK instead grants a single permission per
+    // (function, API) pair with sourceArn `<apiId>/*/*/*`, deduped across every
+    // route. The policy stops growing with the route count.
+    //
+    // The trade-off, stated plainly because it is a real widening: any route on
+    // this API may now invoke this function, where before only its own routes
+    // could. A future route misrouted to the wrong integration would reach code
+    // it was not meant to. Defining a route still requires AWS credentials, so
+    // this is not reachable from outside — but it does move one check from the
+    // IAM boundary to code review.
+    const integration = new integrations.HttpLambdaIntegration(integrationId, fn, {
+      scopePermissionToRoute: false,
+    });
     for (const [routePath, methods] of entries) {
       for (const method of methods) {
         new apigw.HttpRoute(scope, `${integrationId}${method}${routeSlug(routePath)}`, {

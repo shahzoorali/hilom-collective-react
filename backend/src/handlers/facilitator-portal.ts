@@ -1721,7 +1721,7 @@ async function earnings(
   // facilitator held the time — but a cancellation does not.
   const EARNING_STATUSES = ['confirmed', 'completed', 'no_show'];
 
-  const [monthRes, unpaidRes, payoutRes] = await Promise.all([
+  const [monthRes, unpaidRes, payoutRes, classMonthRes, classUnpaidRes] = await Promise.all([
     supabase
       .from('bookings')
       .select(
@@ -1742,11 +1742,36 @@ async function earnings(
       .eq('facilitator_id', facilitator.id)
       .order('period_end', { ascending: false })
       .limit(12),
+    // Group class seats (0051). Counted on the same terms as bookings: this
+    // month's classes, and everything delivered but not yet in a payout.
+    //
+    // Filtered on the session's date rather than the registration's, because
+    // when the class happened is what decides the month it belongs to -- a
+    // seat sold in March for an April class is April's earnings.
+    supabase
+      .from('class_registrations')
+      .select(
+        'price_centavos, platform_fee_centavos, facilitator_net_centavos, status, ' +
+          'facilitator_class_sessions!inner(starts_at)',
+      )
+      .eq('facilitator_id', facilitator.id)
+      .in('status', ['confirmed', 'completed'])
+      .gte('facilitator_class_sessions.starts_at', monthStart)
+      // The embedded relation defeats PostgREST's inferred row type.
+      .returns<Record<string, unknown>[]>(),
+    supabase
+      .from('class_registrations')
+      .select('price_centavos, platform_fee_centavos, facilitator_net_centavos')
+      .eq('facilitator_id', facilitator.id)
+      .eq('status', 'completed')
+      .is('payout_id', null),
   ]);
 
   if (monthRes.error) throw monthRes.error;
   if (unpaidRes.error) throw unpaidRes.error;
   if (payoutRes.error) throw payoutRes.error;
+  if (classMonthRes.error) throw classMonthRes.error;
+  if (classUnpaidRes.error) throw classUnpaidRes.error;
 
   interface Totals {
     sessions: number;
@@ -1772,9 +1797,28 @@ async function earnings(
   // no mention of the two they arranged directly would look like a bug.
   const selfBooked = (monthRes.data ?? []).filter((row) => row.booked_by === 'facilitator');
 
+  // Bookings and class seats are added together, because a facilitator is one
+  // person owed one sum and the payout batch totals them as one (0051). They
+  // are also reported separately, so "why is this month bigger than my
+  // sessions" has an answer on the screen rather than in a support thread.
+  const classMonth = sum(classMonthRes.data);
+  const classUnpaid = sum(classUnpaidRes.data);
+  const bookingMonth = sum(monthRes.data);
+  const bookingUnpaid = sum(unpaidRes.data);
+
+  const combine = (a: Totals, b: Totals): Totals => ({
+    sessions: a.sessions + b.sessions,
+    gross: a.gross + b.gross,
+    fees: a.fees + b.fees,
+    net: a.net + b.net,
+  });
+
   return ok({
-    thisMonth: sum(monthRes.data),
-    awaitingPayout: sum(unpaidRes.data),
+    thisMonth: combine(bookingMonth, classMonth),
+    awaitingPayout: combine(bookingUnpaid, classUnpaid),
+    // The class half on its own, for the breakdown line.
+    classesThisMonth: classMonth,
+    classesAwaitingPayout: classUnpaid,
     offPlatformThisMonth: {
       sessions: selfBooked.length,
       // Null (\"not recorded\") and 0 (\"nothing was charged\") both add nothing,
@@ -2553,12 +2597,49 @@ async function cancelClassSession(
     .eq('id', sessionId)
     .eq('facilitator_id', facilitator.id)
     .eq('status', 'scheduled')
-    .select('id, starts_at')
-    .maybeSingle<{ id: string; starts_at: string }>();
+    .select('id, starts_at, price_centavos')
+    .maybeSingle<{ id: string; starts_at: string; price_centavos: number }>();
   if (error) throw error;
   if (!data) return notFound('Session not found, or already cancelled');
 
-  const { data: affected, error: regError } = await supabase
+  // Cancel the confirmed seats and record what each is owed, in one write.
+  //
+  // `refund_centavos` is set here rather than worked out later because this is
+  // the only moment the amount is unambiguous: it is the price the seat was
+  // sold at, snapshotted on the row. A facilitator cancelling is always a full
+  // refund whatever the notice, so there is no policy to apply and no reason
+  // for an admin to have to derive the figure.
+  //
+  // Setting it is also what puts the row in the admin refund queue at all --
+  // that queue is `refund_centavos > 0 and refunded_at is null` (0051). Until
+  // this write existed, cancelling a paid class produced no record anywhere
+  // that money was owed, while the help centre promised a refund within a few
+  // working days.
+  const { data: paidSeats, error: paidError } = await supabase
+    .from('class_registrations')
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: 'facilitator',
+      cancellation_reason: reason,
+      // A constant, not a column copy: claim_class_seat stamps the session's
+      // price onto every seat it creates (0049), so every seat on one session
+      // was sold at the same price and there is nothing per-row to derive.
+      // PostgREST cannot express a column-to-column update anyway.
+      refund_centavos: Number(data.price_centavos),
+    })
+    .eq('session_id', sessionId)
+    .eq('status', 'confirmed')
+    .gt('price_centavos', 0)
+    .select('id, price_centavos')
+    .returns<{ id: string; price_centavos: number }[]>();
+  if (paidError) throw paidError;
+
+  // Everything else on the session: free seats, and holds that never paid.
+  // Cancelled the same way but owed nothing, so `refund_centavos` stays null —
+  // "nothing was charged" and "a refund of zero" are different facts and the
+  // queue must not show the first.
+  const { data: unpaidSeats, error: regError } = await supabase
     .from('class_registrations')
     .update({
       status: 'cancelled',
@@ -2568,11 +2649,12 @@ async function cancelClassSession(
     })
     .eq('session_id', sessionId)
     .in('status', ['pending_payment', 'confirmed'])
-    .select('id, status, price_centavos')
-    .returns<{ id: string; status: string; price_centavos: number }[]>();
+    .select('id, price_centavos')
+    .returns<{ id: string; price_centavos: number }[]>();
   if (regError) throw regError;
 
-  const owed = (affected ?? []).filter((r) => r.price_centavos > 0);
+  const affected = [...(paidSeats ?? []), ...(unpaidSeats ?? [])];
+  const owed = paidSeats ?? [];
 
   return ok({
     cancelled: true,

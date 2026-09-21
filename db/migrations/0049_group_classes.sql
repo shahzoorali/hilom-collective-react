@@ -157,9 +157,17 @@ create index if not exists class_sessions_class_idx
 -- Who is in it
 -- ---------------------------------------------------------------------------
 -- The money columns are copied from `bookings` verbatim — same names, same
--- split, same meaning — so that this feeds the existing facilitator_payouts
--- ledger with no second payout code path and no query that has to remember
--- which of two shapes it is summing.
+-- split, same meaning — so that one reducer can total both sources without
+-- having to remember which of two shapes it is summing.
+--
+-- NOTE (corrected by 0051): an earlier version of this comment claimed the
+-- shared shape alone made this "feed the existing facilitator_payouts ledger
+-- with no second payout code path". It did not. Identical columns are
+-- necessary and not sufficient: a payout batch attaches work by stamping a
+-- `payout_id`, which this table did not have until 0051, and the batch builder
+-- read `bookings` and nothing else. Between 0049 and 0051 a facilitator could
+-- sell a class and never be paid for it. See 0051 for the wiring that closes
+-- it.
 create table if not exists public.class_registrations (
   id         uuid primary key default gen_random_uuid(),
   session_id uuid not null references public.facilitator_class_sessions(id) on delete restrict,

@@ -177,6 +177,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations,
       adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
+      classes,
     ]) {
       supabaseSecret.grantRead(fn);
     }
@@ -243,7 +244,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // together for the reason the paymongoSecretId prop documents: the grant
     // alone controls nothing at runtime, so a function with the grant but no
     // env var silently reads the *test* secret while holding a live grant.
-    for (const fn of [bookings, eventRegistrations]) {
+    for (const fn of [bookings, eventRegistrations, classes]) {
       paymongoSecret.grantRead(fn);
       fn.addEnvironment('PAYMONGO_SECRET_ID', paymongoSecretId);
     }
@@ -252,7 +253,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // the pool id and SPA client id to build the verifier.
     for (const fn of [
       bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations, adminFacilitators,
-      eventRegistrations,
+      eventRegistrations, classes,
     ]) {
       fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
       fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
@@ -288,7 +289,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // for its PayMongo success/cancel URLs — see the note in checkout.ts about
     // why the apex domain breaks the return path — and the same activated
     // payment methods, since it opens sessions on the same account.
-    for (const fn of [bookings, eventRegistrations]) {
+    for (const fn of [bookings, eventRegistrations, classes]) {
       fn.addEnvironment('FRONTEND_URL', props.frontendUrl ?? DEFAULT_FRONTEND_URL);
       fn.addEnvironment('CHECKOUT_PAYMENT_METHODS', props.checkoutPaymentMethods ?? DEFAULT_CHECKOUT_PAYMENT_METHODS);
     }
@@ -449,6 +450,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/reviews/{reviewId}', [PATCH]],
       ['/admin/bookings/{bookingId}/cancel', [POST]],
       ['/admin/bookings/{bookingId}/refund', [POST]],
+      // Group class registrations and their refund queue (0051).
+      ['/admin/class-registrations', [GET]],
+      ['/admin/class-registrations/{registrationId}/refund', [POST]],
       ['/admin/payouts', [GET, POST]],
       ['/admin/payouts/{payoutId}', [PATCH]],
     ]);

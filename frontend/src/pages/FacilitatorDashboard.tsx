@@ -1094,6 +1094,8 @@ function EarningsTab() {
     thisMonth: EarningsTotals;
     awaitingPayout: EarningsTotals;
     offPlatformThisMonth: { sessions: number; centavos: number };
+    classesThisMonth: EarningsTotals;
+    classesAwaitingPayout: EarningsTotals;
     platformFeeBps: number;
     payouts: Payout[];
   } | null>(null);
@@ -1122,6 +1124,15 @@ function EarningsTab() {
       <div className="panel">
         <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>This month</h3>
         <Line label={`Gross (${data.thisMonth.sessions} sessions)`} value={money(data.thisMonth.gross)} />
+        {/* The class share of the gross above, not an addition to it. Shown
+            only when there is one, so a facilitator who teaches no classes
+            sees the same panel they always did. */}
+        {data.classesThisMonth.sessions > 0 && (
+          <Line
+            label={`  of which group classes (${data.classesThisMonth.sessions} ${data.classesThisMonth.sessions === 1 ? 'place' : 'places'})`}
+            value={money(data.classesThisMonth.gross)}
+          />
+        )}
         <Line
           label={`Hilom platform fee (${(data.platformFeeBps / 100).toFixed(data.platformFeeBps % 100 ? 2 : 0)}%)`}
           value={`−${money(data.thisMonth.fees)}`}
@@ -1155,9 +1166,15 @@ function EarningsTab() {
       <div className="panel">
         <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Awaiting payout</h3>
         <p className="small muted" style={{ marginTop: 0 }}>
-          Delivered sessions not yet included in a payout.
+          Delivered sessions and group classes not yet included in a payout.
         </p>
-        <Line label={`${data.awaitingPayout.sessions} sessions`} value={money(data.awaitingPayout.net)} strong />
+        <Line label={`${data.awaitingPayout.sessions} items`} value={money(data.awaitingPayout.net)} strong />
+        {data.classesAwaitingPayout.sessions > 0 && (
+          <Line
+            label={`  of which group classes (${data.classesAwaitingPayout.sessions} ${data.classesAwaitingPayout.sessions === 1 ? 'place' : 'places'})`}
+            value={money(data.classesAwaitingPayout.net)}
+          />
+        )}
       </div>
 
       <h3>Payout history</h3>

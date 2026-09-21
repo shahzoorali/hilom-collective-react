@@ -771,9 +771,66 @@ export const getMyEarnings = () =>
      * above: Hilom collected none of it and will pay out none of it (0031).
      */
     offPlatformThisMonth: { sessions: number; centavos: number };
+    /**
+     * The group-class half of the two totals above, which already include it
+     * (0051). Broken out so "why is this month more than my sessions" is
+     * answered on the screen rather than in a support thread.
+     */
+    classesThisMonth: EarningsTotals;
+    classesAwaitingPayout: EarningsTotals;
     platformFeeBps: number;
     payouts: Payout[];
   }>('/facilitator/earnings', { headers: authHeaders() });
+
+// ---- admin: group class registrations and their refund queue (0051) ----
+
+export interface AdminClassRegistration {
+  id: string;
+  session_id: string;
+  facilitator_id: string;
+  client_email: string;
+  client_name: string | null;
+  status: string;
+  seat_no: number;
+  price_centavos: number;
+  currency: string;
+  refund_centavos: number | null;
+  refunded_at: string | null;
+  refund_reference: string | null;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+  cancellation_reason: string | null;
+  payout_id: string | null;
+  created_at: string;
+  facilitators?: { slug: string; display_name: string; email: string } | null;
+  facilitator_class_sessions?: {
+    starts_at: string;
+    ends_at: string;
+    status: string;
+    facilitator_classes?: { title: string } | null;
+  } | null;
+}
+
+/** `owed` narrows to the refund queue: owed and not yet sent. */
+export const adminListClassRegistrations = (adminKey: string, owed = false) =>
+  apiFetch<{ registrations: AdminClassRegistration[]; owedTotalCentavos: number }>(
+    `/admin/class-registrations${owed ? '?owed=true' : ''}`,
+    { headers: { 'x-admin-key': adminKey } },
+  );
+
+/**
+ * Records a class refund as sent. Requires a bank or PayMongo reference —
+ * a refund with no reference cannot be reconciled against a statement later.
+ */
+export const adminMarkClassRefundSent = (adminKey: string, registrationId: string, reference: string) =>
+  apiFetch<{ registrationId: string; refundedAt: string; reference: string }>(
+    `/admin/class-registrations/${encodeURIComponent(registrationId)}/refund`,
+    {
+      method: 'POST',
+      headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reference }),
+    },
+  );
 
 // ---------------------------------------------------------------------------
 // Admin
