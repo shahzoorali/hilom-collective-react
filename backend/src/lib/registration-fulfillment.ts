@@ -21,6 +21,7 @@ import {
   sendPaymentReceipt,
   sendFullySettled,
   sendRegistrationPaidAdminAlert,
+  sendRegistrationHostAlert,
 } from './registration-email.js';
 
 /** Where the "someone paid" ping goes — same inbox as every other admin alert. */
@@ -319,7 +320,11 @@ async function notify(
     // the confirmation is the one send that releases it (see joinBlock in
     // registration-email.ts). A later instalment receipt carries the same event
     // object and simply never renders it.
-    .select('title, starts_at, ends_at, location, venue_details, format, join_url, join_instructions')
+    // facilitator_id and capacity are here for the host alert below, not for
+    // any of the attendee emails — see notifyHost.
+    .select(
+      'title, starts_at, ends_at, location, venue_details, format, join_url, join_instructions, facilitator_id, capacity',
+    )
     .eq('id', registration.event_id)
     .maybeSingle<{
       title: string;
@@ -330,6 +335,8 @@ async function notify(
       format: string | null;
       join_url: string | null;
       join_instructions: string | null;
+      facilitator_id: string | null;
+      capacity: number | null;
     }>();
 
   const { data: charges } = await supabase
@@ -381,11 +388,92 @@ async function notify(
       currency: charge.currency,
       receiptNo,
     });
+    await notifyHost(supabase, registration, event);
   } else {
     await sendPaymentReceipt({ ...context, charge, receiptNo });
   }
 
   if (settled && registration.plan_kind === 'installment') {
     await sendFullySettled(context);
+  }
+}
+
+/**
+ * Tells the event's host that a place was paid for.
+ *
+ * Three ways this legitimately does nothing, none of them an error:
+ *   * the event has no `facilitator_id` — a Hilom-run event has no host inbox
+ *   * the facilitator row has been removed (the FK is ON DELETE SET NULL, so
+ *     this is the same case arriving a moment later)
+ *   * the facilitator has no email, which the schema forbids but a defensive
+ *     read costs nothing
+ *
+ * Called only from the `confirmed` branch. A registration exists from the
+ * moment a seat is claimed, which is before payment: alerting then would tell
+ * a host about sign-ups that never pay, and those rows are swept away by
+ * registration-sweep.ts without anyone hearing about them.
+ *
+ * Wrapped in its own try/catch rather than relying on the send helper's:
+ * counting the roster is a database round-trip, and a host notification that
+ * fails must not take down the attendee's receipt or the payment it belongs to.
+ */
+async function notifyHost(
+  supabase: SupabaseClient,
+  registration: RegistrationRow,
+  event: {
+    title: string;
+    starts_at: string;
+    ends_at: string | null;
+    location: string | null;
+    venue_details: string | null;
+    format: string | null;
+    facilitator_id: string | null;
+    capacity: number | null;
+  },
+): Promise<void> {
+  if (!event.facilitator_id) return;
+
+  try {
+    const { data: host } = await supabase
+      .from('facilitators')
+      .select('email, display_name, short_name')
+      .eq('id', event.facilitator_id)
+      .maybeSingle<{ email: string | null; display_name: string; short_name: string | null }>();
+
+    if (!host?.email) return;
+
+    // head + exact: the count comes back without the rows, which matters on an
+    // event with a few hundred registrations.
+    const { count } = await supabase
+      .from('event_registrations')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', registration.event_id)
+      .eq('status', 'confirmed');
+
+    await sendRegistrationHostAlert({
+      to: host.email,
+      hostName: host.short_name || host.display_name,
+      eventId: registration.event_id,
+      event: {
+        title: event.title,
+        starts_at: event.starts_at,
+        ends_at: event.ends_at,
+        location: event.location,
+        venue_details: event.venue_details,
+        format: event.format,
+        // Deliberately not forwarded: the host has the joining link on their
+        // own dashboard, and this template must never render it.
+      },
+      registrantName: registration.registrant_name,
+      registrantEmail: registration.registrant_email,
+      seatsTaken: count ?? 0,
+      capacity: event.capacity,
+    });
+  } catch (err) {
+    console.warn('[registration-fulfillment] host alert failed', {
+      registrationId: registration.id,
+      eventId: registration.event_id,
+      err,
+    });
   }
 }

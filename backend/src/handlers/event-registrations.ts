@@ -10,6 +10,8 @@
  *   PUT  /registrations/{registrationId}/registrant
  *   POST /registrations/{registrationId}/cancel-request
  *   GET  /registrations/{registrationId}/charges/{chargeId}/receipt
+ *   GET  /registrations/{registrationId}/review
+ *   PUT  /registrations/{registrationId}/review
  *
  * Cognito-authenticated throughout: `requireBuyer` gives a verified, confirmed
  * email, which is the identity a registration is keyed on — there is no users
@@ -29,6 +31,13 @@ import { ok, notFound, badRequest, unauthorized, serverError, json } from '../li
 import { requireBuyer, UnauthorizedError } from '../lib/auth.js';
 import { createHostedCheckout } from '../lib/paymongo-checkout.js';
 import { selfActor, recordAudit } from '../lib/audit.js';
+import {
+  validateReview,
+  reviewerLabel,
+  isAttendanceReviewable,
+  reviewConflictTarget,
+  type ReviewSubject,
+} from '../lib/reviews.js';
 import { sendAttendeeTransferred, sendCancellationRequested, sendCancellationRequestedAdminAlert } from '../lib/registration-email.js';
 import {
   buildSchedule,
@@ -152,6 +161,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (registrationId && chargeId && method === 'GET' && path.endsWith('/receipt')) {
       return await receipt(registrationId, chargeId, buyer.email);
+    }
+    if (registrationId && path.endsWith('/review')) {
+      return await review(registrationId, buyer.email, method, event);
     }
     // Bare /registrations/{id} last: every literal-suffixed route above would
     // also match this one's shape.
@@ -1104,4 +1116,110 @@ async function receipt(
     buyerEmail: registration.buyer_email,
     event: registration.events,
   });
+}
+
+/**
+ * The attendee's review of an event they came to (0050).
+ *
+ *   GET /registrations/{registrationId}/review
+ *   PUT /registrations/{registrationId}/review
+ *
+ * Only for an event with a host. `events.facilitator_id` (0045) is who the
+ * rating is *of*, and an event Hilom ran itself has nobody to attribute one
+ * to — so an unhosted event reports `reviewable: false` with a reason, rather
+ * than accepting a rating that has nowhere to land.
+ *
+ * Matched on the *registrant*, not the buyer, unlike every payment route in
+ * this file. Someone who bought a place for a friend did not attend; the
+ * friend did, and the person who was in the room is the one with something to
+ * say about it.
+ */
+async function review(
+  registrationId: string,
+  email: string,
+  method: string,
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data: registration, error } = await supabase
+    .from('event_registrations')
+    .select(
+      'id, status, registrant_name, registrant_email, buyer_email, ' +
+        'events!inner(id, title, starts_at, ends_at, facilitator_id)',
+    )
+    .eq('id', registrationId)
+    .maybeSingle<Record<string, any>>();
+  if (error) throw error;
+  if (!registration) return notFound('Not found');
+
+  // Either role may read it; only one of them is the attendee, and both
+  // already have legitimate access to this registration.
+  const mine = [registration.registrant_email, registration.buyer_email]
+    .filter(Boolean)
+    .some((value: string) => value.toLowerCase() === email.toLowerCase());
+  if (!mine) return notFound('Not found');
+
+  const ev = registration.events;
+  const hosted = Boolean(ev?.facilitator_id);
+  const attended = isAttendanceReviewable(
+    String(registration.status),
+    ev?.ends_at ?? null,
+    String(ev?.starts_at),
+  );
+  const reviewable = hosted && attended;
+
+  if (method === 'GET') {
+    const { data, error: readError } = await supabase
+      .from('facilitator_reviews')
+      .select('id, rating, comment, status, created_at, updated_at')
+      .eq('event_registration_id', registrationId)
+      .maybeSingle();
+    if (readError) throw readError;
+
+    return ok({
+      review: data ?? null,
+      reviewable,
+      // Spelled out, because "not reviewable" has two very different causes
+      // here and the screen should not have to guess which.
+      reason: reviewable
+        ? null
+        : !hosted
+          ? 'This event was run by Hilom rather than by a facilitator, so there is no profile to review.'
+          : 'You can leave a review once the event has happened.',
+    });
+  }
+
+  if (method !== 'PUT') return badRequest(`Unsupported method ${method}`);
+
+  if (!hosted) {
+    return badRequest('This event was run by Hilom, so there is no facilitator to review.');
+  }
+  if (!attended) {
+    return badRequest('You can leave a review once the event has happened.');
+  }
+
+  const input = validateReview(parseBody(event));
+  const subject = { event_registration_id: registrationId } satisfies ReviewSubject;
+
+  // Always back to `pending`, including on a revision of an already-approved
+  // review — the new text has not been read by anyone.
+  const { data, error: writeError } = await supabase
+    .from('facilitator_reviews')
+    .upsert(
+      {
+        ...subject,
+        facilitator_id: ev.facilitator_id,
+        rating: input.rating,
+        comment: input.comment,
+        client_label: reviewerLabel(registration.registrant_name),
+        status: 'pending',
+      },
+      { onConflict: reviewConflictTarget(subject) },
+    )
+    .select('id, rating, comment, status, created_at')
+    .maybeSingle();
+  if (writeError) throw writeError;
+
+  return ok({ review: data });
 }

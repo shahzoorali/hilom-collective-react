@@ -146,8 +146,17 @@ async function reviews(
     let query = supabase
       .from('facilitator_reviews')
       .select(
-        'id, booking_id, facilitator_id, rating, comment, client_label, status, created_at, updated_at, ' +
-          'facilitators(slug, display_name), bookings(starts_at, client_email, facilitator_services(title))',
+        'id, booking_id, event_registration_id, class_registration_id, ' +
+          'facilitator_id, rating, comment, client_label, status, created_at, updated_at, ' +
+          'facilitators(slug, display_name), ' +
+          'bookings(starts_at, client_email, facilitator_services(title)), ' +
+          // 0050. An admin reading "the room was freezing" needs to know
+          // whether that is about a venue or a Zoom call before deciding
+          // whether it is fair — so the subject comes back with the review
+          // rather than being a second request per row.
+          'event_registrations(registrant_name, events(title, starts_at)), ' +
+          'class_registrations(client_name, facilitator_class_sessions(starts_at, ' +
+          'facilitator_classes(title)))',
       )
       // Oldest first: a moderation queue is worked from the front, and the
       // review someone has been waiting on for three days is the urgent one.

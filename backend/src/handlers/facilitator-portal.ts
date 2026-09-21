@@ -67,7 +67,7 @@ import {
   FacilitatorInputError,
 } from '../lib/facilitator-input.js';
 import { buildRoster, sendJoinDetailsToRegistrants } from '../lib/event-roster.js';
-import { httpUrlOrNull } from '../lib/cms-events.js';
+import { httpUrlOrNull, validateEvent } from '../lib/cms-events.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 import { randomBytes } from 'node:crypto';
@@ -153,6 +153,10 @@ export async function handler(ev: APIGatewayProxyEventV2): Promise<APIGatewayPro
 
     if (path.includes('/facilitator/bookings')) {
       return await bookings(supabase, facilitator, ev, method, path);
+    }
+
+    if (path.includes('/facilitator/classes')) {
+      return await classes(supabase, facilitator, ev, method, path);
     }
 
     if (path.includes('/facilitator/events')) {
@@ -1053,10 +1057,36 @@ interface ClientSummary {
    */
   netCentavos: number;
   hasAbout: boolean;
+  /**
+   * Confirmed registrations on events this facilitator hosts.
+   *
+   * Kept as its own count rather than folded into `sessions` because the two
+   * are different relationships and get handled differently. Someone who has
+   * had four 1:1s is a client; someone who came to one workshop is an
+   * attendee, and a facilitator who messages the second as though they were
+   * the first gets it wrong. The UI shows both numbers for that reason.
+   */
+  events: number;
+  lastEventAt: string | null;
+  nextEventAt: string | null;
 }
 
 /** Statuses that mean a session was real: held, or held and not attended. */
 const DELIVERED = new Set(['confirmed', 'completed', 'no_show']);
+
+/**
+ * One row of the hosted-event roster query.
+ *
+ * `events` is singular in fact but PostgREST types an embedded relation as an
+ * array when it cannot prove the FK is to-one; declared as the object it
+ * actually is, because the query selects through a many-to-one FK.
+ */
+interface EventAttendeeRow {
+  registrant_email: string;
+  registrant_name: string | null;
+  status: string;
+  events: { id: string; starts_at: string; facilitator_id: string };
+}
 
 async function clients(
   supabase: SupabaseClient,
@@ -1091,7 +1121,7 @@ async function listClients(
   supabase: SupabaseClient,
   facilitator: FacilitatorRow,
 ): Promise<APIGatewayProxyResultV2> {
-  const [bookingRes, aboutRes] = await Promise.all([
+  const [bookingRes, aboutRes, eventRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('client_email, client_name, starts_at, status, facilitator_net_centavos')
@@ -1104,10 +1134,26 @@ async function listClients(
       .from('facilitator_clients')
       .select('client_email, about')
       .eq('facilitator_id', facilitator.id),
+    // Attendees of events this facilitator hosts (0045's facilitator_id).
+    //
+    // An inner join on the embedded event is what scopes this — PostgREST
+    // returns a registration only when its event matches the filter, so a
+    // facilitator can never see a roster that is not theirs. `!inner` is
+    // load-bearing here, not a hint: without it the filter is applied to the
+    // embedded row and every registration on the site comes back with a null
+    // event attached.
+    supabase
+      .from('event_registrations')
+      .select('registrant_email, registrant_name, status, events!inner(id, starts_at, facilitator_id)')
+      .eq('events.facilitator_id', facilitator.id)
+      .eq('status', 'confirmed')
+      .limit(2000)
+      .returns<EventAttendeeRow[]>(),
   ]);
 
   if (bookingRes.error) throw bookingRes.error;
   if (aboutRes.error) throw aboutRes.error;
+  if (eventRes.error) throw eventRes.error;
 
   const withAbout = new Set(
     (aboutRes.data ?? [])
@@ -1135,6 +1181,9 @@ async function listClients(
         nextSessionAt: null,
         netCentavos: 0,
         hasAbout: withAbout.has(email),
+        events: 0,
+        lastEventAt: null,
+        nextEventAt: null,
       } satisfies ClientSummary);
 
     // The most recent name they gave wins — rows arrive newest first, so the
@@ -1156,13 +1205,62 @@ async function listClients(
     byEmail.set(email, current);
   }
 
+  // Event attendees are merged into the same map, so someone who both books
+  // 1:1s and comes to workshops is one person with two histories rather than
+  // two rows that happen to share an address. Keyed on the *registrant*, not
+  // the buyer: when someone buys a place for a friend, the person in the room
+  // is the one the facilitator will meet.
+  for (const row of eventRes.data ?? []) {
+    const email = String(row.registrant_email).toLowerCase();
+    const startsAt = String(row.events.starts_at);
+    const isFuture = new Date(startsAt).getTime() > now;
+
+    const current =
+      byEmail.get(email) ??
+      ({
+        email,
+        name: null,
+        sessions: 0,
+        firstSessionAt: null,
+        lastSessionAt: null,
+        nextSessionAt: null,
+        netCentavos: 0,
+        hasAbout: withAbout.has(email),
+        events: 0,
+        lastEventAt: null,
+        nextEventAt: null,
+      } satisfies ClientSummary);
+
+    if (!current.name && row.registrant_name) current.name = String(row.registrant_name);
+
+    current.events += 1;
+    // This query is not ordered — the roster comes back however Postgres
+    // returns it — so each side is a running min/max rather than relying on
+    // first-seen the way the booking loop above does.
+    if (isFuture) {
+      if (!current.nextEventAt || startsAt < current.nextEventAt) current.nextEventAt = startsAt;
+    } else if (!current.lastEventAt || startsAt > current.lastEventAt) {
+      current.lastEventAt = startsAt;
+    }
+
+    byEmail.set(email, current);
+  }
+
   // Someone with a session tomorrow is more interesting than someone last seen
-  // in March, so upcoming sorts first; otherwise by recency.
+  // in March, so upcoming sorts first; otherwise by recency. Events count as
+  // engagements on both halves of that: an attendee arriving on Saturday
+  // belongs at the top just as much as a 1:1 does.
+  const soonest = (c: ClientSummary) =>
+    [c.nextSessionAt, c.nextEventAt].filter(Boolean).sort()[0] ?? null;
+  const latest = (c: ClientSummary) =>
+    [c.lastSessionAt, c.lastEventAt].filter(Boolean).sort().reverse()[0] ?? '';
+
   const list = [...byEmail.values()].sort((a, b) => {
-    if (a.nextSessionAt && b.nextSessionAt) return a.nextSessionAt.localeCompare(b.nextSessionAt);
-    if (a.nextSessionAt) return -1;
-    if (b.nextSessionAt) return 1;
-    return (b.lastSessionAt ?? '').localeCompare(a.lastSessionAt ?? '');
+    const [an, bn] = [soonest(a), soonest(b)];
+    if (an && bn) return an.localeCompare(bn);
+    if (an) return -1;
+    if (bn) return 1;
+    return latest(b).localeCompare(latest(a));
   });
 
   return ok({ clients: list });
@@ -1181,7 +1279,7 @@ async function clientDetail(
   facilitator: FacilitatorRow,
   clientEmail: string,
 ): Promise<APIGatewayProxyResultV2> {
-  const [bookingRes, aboutRes] = await Promise.all([
+  const [bookingRes, aboutRes, eventRes] = await Promise.all([
     supabase
       .from('bookings')
       .select(
@@ -1201,25 +1299,48 @@ async function clientDetail(
       .eq('facilitator_id', facilitator.id)
       .ilike('client_email', clientEmail)
       .maybeSingle<{ about: string | null; updated_at: string }>(),
+    // Their attendance at this facilitator's own events. Same `!inner` scoping
+    // as the list above: the roster of an event someone else hosts is not
+    // reachable through this endpoint.
+    supabase
+      .from('event_registrations')
+      .select('id, status, registrant_name, events!inner(id, title, starts_at, ends_at, location, facilitator_id)')
+      .eq('events.facilitator_id', facilitator.id)
+      .ilike('registrant_email', clientEmail)
+      .eq('status', 'confirmed')
+      .order('id', { ascending: false }),
   ]);
 
   if (bookingRes.error) throw bookingRes.error;
   if (aboutRes.error) throw aboutRes.error;
+  if (eventRes.error) throw eventRes.error;
 
   // `any[]` because the embedded relation defeats PostgREST's inferred row
   // type, exactly as it does on every other joined read in this file.
   const bookings = (bookingRes.data ?? []) as any[];
-  // Nobody by that address has ever booked with this facilitator. Not found
-  // rather than an empty timeline: an empty page for an address they have
-  // never seen is a way to probe whether it exists.
-  if (bookings.length === 0 && !aboutRes.data) return notFound('No client by that address');
+  const events = (eventRes.data ?? []) as any[];
+  // Nobody by that address has ever booked with this facilitator *or* attended
+  // one of their events. Not found rather than an empty timeline: an empty page
+  // for an address they have never seen is a way to probe whether it exists.
+  if (bookings.length === 0 && events.length === 0 && !aboutRes.data) {
+    return notFound('No client by that address');
+  }
+
+  // Sorted here rather than in SQL: the order that matters is by event date,
+  // which lives on the embedded row and is not something PostgREST will order
+  // a parent query by.
+  events.sort((a, b) => String(b.events?.starts_at ?? '').localeCompare(String(a.events?.starts_at ?? '')));
 
   return ok({
     email: clientEmail,
-    name: bookings.find((row) => row.client_name)?.client_name ?? null,
+    name:
+      bookings.find((row) => row.client_name)?.client_name ??
+      events.find((row) => row.registrant_name)?.registrant_name ??
+      null,
     about: aboutRes.data?.about ?? null,
     aboutUpdatedAt: aboutRes.data?.updated_at ?? null,
     bookings,
+    events,
   });
 }
 
@@ -1236,14 +1357,26 @@ async function saveClientAbout(
   // Only for someone they have actually seen. Without this the endpoint is a
   // notepad addressable by any email, which is both a storage vector and a way
   // to write a record about a person with no relationship to this facilitator.
-  const { count, error: countError } = await supabase
-    .from('bookings')
-    .select('id', { count: 'exact', head: true })
-    .eq('facilitator_id', facilitator.id)
-    .ilike('client_email', clientEmail)
-    .neq('status', 'pending_payment');
-  if (countError) throw countError;
-  if (!count) return notFound('No client by that address');
+  //
+  // "Seen" now means a booking *or* a place at one of their events — otherwise
+  // the notes field is visible on an attendee's card and rejects every save.
+  const [bookingCount, eventCount] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('facilitator_id', facilitator.id)
+      .ilike('client_email', clientEmail)
+      .neq('status', 'pending_payment'),
+    supabase
+      .from('event_registrations')
+      .select('id, events!inner(facilitator_id)', { count: 'exact', head: true })
+      .eq('events.facilitator_id', facilitator.id)
+      .ilike('registrant_email', clientEmail)
+      .eq('status', 'confirmed'),
+  ]);
+  if (bookingCount.error) throw bookingCount.error;
+  if (eventCount.error) throw eventCount.error;
+  if (!bookingCount.count && !eventCount.count) return notFound('No client by that address');
 
   const { error } = await supabase.from('facilitator_clients').upsert(
     {
@@ -1668,7 +1801,49 @@ async function earnings(
  */
 const HOSTED_EVENT_COLUMNS =
   'id, title, subtitle, excerpt, image_url, image_alt, location, starts_at, ends_at, status, ' +
-  'ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions';
+  'ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions, ' +
+  'review_status, submitted_at, reviewed_at, review_note, submitted_by';
+
+/**
+ * What a facilitator may write on their own event, and when.
+ *
+ * Split into two sets rather than one, because the answer changes the moment
+ * an admin approves it:
+ *
+ *   DRAFT_FIELDS — the proposal. Editable while the row is theirs to shape
+ *                  (draft or rejected) and frozen once submitted, so that what
+ *                  an admin reviews cannot change underneath them, and frozen
+ *                  again once approved, because the title and date of a
+ *                  published event are what attendees bought.
+ *
+ *   HOST_FIELDS  — operational detail, editable at any point by the host. A
+ *                  corrected Zoom link two hours before the doors open must
+ *                  not require an admin.
+ *
+ * Deliberately absent from both: `status`, `review_status`, `capacity`,
+ * `ticketing_enabled`, `currency` and anything on `event_payment_plans`. Those
+ * are the money and the publish decision, and they belong to the admin — see
+ * the check constraint in 0048, which is what actually enforces the publish
+ * half of that.
+ */
+const DRAFT_FIELDS = [
+  'title',
+  'subtitle',
+  'excerpt',
+  'description',
+  'image_url',
+  'image_alt',
+  'location',
+  'starts_at',
+  'ends_at',
+  'venue_details',
+  'format',
+] as const;
+
+const HOST_FIELDS = ['join_url', 'join_instructions'] as const;
+
+/** Review states in which the proposal itself is still the facilitator's to edit. */
+const EDITABLE_REVIEW_STATES = new Set(['draft', 'rejected']);
 
 interface HostedEventRow extends Record<string, unknown> {
   id: string;
@@ -1696,7 +1871,10 @@ async function ownedEvent(
     .from('events')
     .select(HOSTED_EVENT_COLUMNS)
     .eq('id', eventId)
-    .eq('facilitator_id', facilitator.id)
+    // Theirs if they host it *or* proposed it. A submission that has not been
+    // approved yet has no host assigned, so `facilitator_id` alone would lock
+    // an author out of the row they just wrote.
+    .or(`facilitator_id.eq.${facilitator.id},submitted_by.eq.${facilitator.id}`)
     .maybeSingle<HostedEventRow>();
   if (error) throw error;
   return data ?? null;
@@ -1712,10 +1890,17 @@ async function events(
   const eventId = ev.pathParameters?.eventId;
 
   if (!eventId) {
-    if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
-    return await listHostedEvents(supabase, facilitator);
+    if (method === 'GET') return await listHostedEvents(supabase, facilitator);
+    if (method === 'POST') return await createProposal(supabase, facilitator, parseBody(ev));
+    return badRequest(`Unsupported method ${method}`);
   }
 
+  if (method === 'PUT' && path.endsWith('/submit')) {
+    return await submitProposal(supabase, facilitator, eventId);
+  }
+  if (method === 'PUT' && !path.endsWith('/join-link')) {
+    return await saveProposal(supabase, facilitator, eventId, parseBody(ev));
+  }
   if (method === 'GET' && path.endsWith('/roster')) {
     return await hostedRoster(supabase, facilitator, eventId);
   }
@@ -1742,7 +1927,7 @@ async function listHostedEvents(
   const { data, error } = await supabase
     .from('events')
     .select(HOSTED_EVENT_COLUMNS)
-    .eq('facilitator_id', facilitator.id)
+    .or(`facilitator_id.eq.${facilitator.id},submitted_by.eq.${facilitator.id}`)
     .order('starts_at', { ascending: false })
     .returns<HostedEventRow[]>();
   if (error) throw error;
@@ -1858,4 +2043,543 @@ async function resendJoinDetails(
     id: eventId,
   });
   return ok(result);
+}
+
+// ---------------------------------------------------------------------------
+// Event proposals (0048)
+// ---------------------------------------------------------------------------
+//
+//   POST /facilitator/events              — start a proposal
+//   PUT  /facilitator/events/{id}         — save it, or edit the host fields
+//   PUT  /facilitator/events/{id}/submit  — hand it to Hilom for review
+//
+// Nothing here can publish. `status` is never written by this file, and the
+// check constraint in 0048 means even a bug that tried would be rejected by
+// the database rather than by a code review.
+
+/**
+ * Runs the admin event validator, then keeps only the fields a facilitator is
+ * allowed to set.
+ *
+ * Reusing `validateEvent` rather than writing a second validator is the point:
+ * title limits, date ordering, rich-text sanitisation and the media-ref shape
+ * are one implementation, so a rule tightened for admins is tightened here
+ * too. The allowlist is applied *after* validation, so a body that smuggles
+ * `capacity` or `link_url` is not rejected — it is silently dropped, which is
+ * the right behaviour for a form that may legitimately post extra keys.
+ */
+function proposalFields(body: Record<string, unknown>): Record<string, unknown> {
+  const validated = validateEvent(body) as unknown as Record<string, unknown>;
+  const picked: Record<string, unknown> = {};
+  for (const field of DRAFT_FIELDS) {
+    if (field in validated) picked[field] = validated[field];
+  }
+  return picked;
+}
+
+/** The operational fields, editable by the host whatever the review state. */
+function hostFields(body: Record<string, unknown>): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const field of HOST_FIELDS) {
+    if (field in body) {
+      const value = body[field];
+      picked[field] = typeof value === 'string' && value.trim() ? value.trim().slice(0, 2000) : null;
+    }
+  }
+  return picked;
+}
+
+/**
+ * A new proposal, always as a draft.
+ *
+ * `status: 'draft'` and `review_status: 'draft'` are written explicitly rather
+ * than left to the column defaults, because 0048 defaults `review_status` to
+ * 'approved' for the benefit of the rows that already existed. Relying on a
+ * default here would publish-approve every facilitator submission on creation.
+ */
+async function createProposal(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  // Only a listed facilitator may propose. An applicant whose profile is still
+  // in review has no standing to put an event on the public calendar, and
+  // `status` here is the same gate the directory uses.
+  if (facilitator.status !== 'published') {
+    return badRequest('Your profile needs to be published before you can propose an event.');
+  }
+
+  const { data, error } = await supabase
+    .from('events')
+    .insert({
+      ...proposalFields(body),
+      ...hostFields(body),
+      status: 'draft',
+      review_status: 'draft',
+      submitted_by: facilitator.id,
+      // Proposed by them, so hosted by them unless an admin says otherwise.
+      facilitator_id: facilitator.id,
+    })
+    .select(HOSTED_EVENT_COLUMNS)
+    .single<HostedEventRow>();
+  if (error) throw error;
+
+  return ok({ event: data });
+}
+
+/**
+ * Saves an edit.
+ *
+ * Which fields are accepted depends on where the row is:
+ *   draft / rejected → the proposal plus the host fields
+ *   submitted        → host fields only; the proposal is frozen under review
+ *   approved         → host fields only; the proposal is what people bought
+ *
+ * An edit to a rejected event moves it back to 'draft' so it leaves the
+ * admin's queue until it is resubmitted. Without that, a rejected row either
+ * sits in the queue being re-reviewed unchanged, or the facilitator has no
+ * way to signal that they acted on the note.
+ */
+async function saveProposal(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const existing = await ownedEvent(supabase, facilitator, eventId);
+  if (!existing) return notFound('Event not found');
+
+  const reviewStatus = String(existing.review_status ?? 'approved');
+  const editable = EDITABLE_REVIEW_STATES.has(reviewStatus);
+
+  const patch: Record<string, unknown> = { ...hostFields(body) };
+  if (editable) {
+    Object.assign(patch, proposalFields(body));
+    if (reviewStatus === 'rejected') {
+      patch.review_status = 'draft';
+      patch.review_note = null;
+    }
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return badRequest('Nothing to save. This event is being reviewed by Hilom.');
+  }
+
+  const { data, error } = await supabase
+    .from('events')
+    .update(patch)
+    .eq('id', eventId)
+    .select(HOSTED_EVENT_COLUMNS)
+    .single<HostedEventRow>();
+  if (error) throw error;
+
+  return ok({ event: data });
+}
+
+/**
+ * Hands a proposal to Hilom.
+ *
+ * Only from 'draft'. Submitting an already-submitted event would reset its
+ * place in the queue, and submitting an approved one would un-publish an event
+ * that may already have registrations against it — so both are refused here
+ * rather than being allowed to fall through to a no-op that looks like success.
+ */
+async function submitProposal(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+): Promise<APIGatewayProxyResultV2> {
+  const existing = await ownedEvent(supabase, facilitator, eventId);
+  if (!existing) return notFound('Event not found');
+
+  const reviewStatus = String(existing.review_status ?? 'approved');
+  if (reviewStatus === 'submitted') return badRequest('This is already with Hilom for review.');
+  if (reviewStatus === 'approved') return badRequest('This event has already been approved.');
+
+  // The things an admin cannot review the absence of. Checked at submit rather
+  // than at save, so a half-written draft can still be saved and come back to.
+  const missing = [
+    !existing.title && 'a title',
+    !existing.starts_at && 'a date',
+    !existing.description && 'a description',
+  ].filter((m): m is string => typeof m === 'string');
+  if (missing.length > 0) {
+    return badRequest(`Add ${missing.join(', ')} before submitting.`);
+  }
+
+  const { data, error } = await supabase
+    .from('events')
+    .update({
+      review_status: 'submitted',
+      submitted_at: new Date().toISOString(),
+      review_note: null,
+    })
+    .eq('id', eventId)
+    .select(HOSTED_EVENT_COLUMNS)
+    .single<HostedEventRow>();
+  if (error) throw error;
+
+  return ok({ event: data });
+}
+
+// ---------------------------------------------------------------------------
+// Group classes (0049) — the facilitator's own half
+// ---------------------------------------------------------------------------
+//
+//   GET    /facilitator/classes                        — what they teach
+//   POST   /facilitator/classes                        — a new class
+//   PUT    /facilitator/classes/{classId}              — edit it
+//   DELETE /facilitator/classes/{classId}              — deactivate it
+//   POST   /facilitator/classes/{classId}/sessions     — schedule an occurrence
+//   GET    /facilitator/classes/{classId}/sessions     — its occurrences + rosters
+//   DELETE /facilitator/classes/sessions/{sessionId}   — cancel one occurrence
+//
+// A class is never deleted, only deactivated, for the reason the FK says: its
+// sessions carry seats people paid for.
+
+/** What a facilitator may set on a class. Everything else is derived. */
+function classInput(body: Record<string, unknown>): Record<string, unknown> {
+  const text = (value: unknown, max: number): string | null => {
+    const s = typeof value === 'string' ? value.trim() : '';
+    return s ? s.slice(0, max) : null;
+  };
+
+  const title = text(body.title, 200);
+  if (!title) throw new FacilitatorInputError('A class needs a title.');
+
+  const duration = Number(body.duration_minutes ?? 0);
+  if (!Number.isInteger(duration) || duration < 5 || duration > 480) {
+    throw new FacilitatorInputError('Length must be between 5 and 480 minutes.');
+  }
+
+  const price = Number(body.price_centavos ?? 0);
+  if (!Number.isInteger(price) || price < 0) {
+    throw new FacilitatorInputError('That price is not a number of centavos.');
+  }
+
+  const minJoiners = Number(body.min_joiners ?? 1);
+  const maxJoiners = Number(body.max_joiners ?? 0);
+  if (!Number.isInteger(minJoiners) || minJoiners < 1) {
+    throw new FacilitatorInputError('The minimum must be at least 1.');
+  }
+  if (!Number.isInteger(maxJoiners) || maxJoiners < 1) {
+    throw new FacilitatorInputError('Set how many people can join.');
+  }
+  // Checked here as well as by the constraint so the message is a sentence
+  // rather than a Postgres constraint name.
+  if (maxJoiners < minJoiners) {
+    throw new FacilitatorInputError('The maximum cannot be lower than the minimum.');
+  }
+
+  const mode = String(body.delivery_mode ?? 'online');
+  if (!['online', 'in_person', 'both'].includes(mode)) {
+    throw new FacilitatorInputError('Pick online, in person, or both.');
+  }
+
+  return {
+    title,
+    description: text(body.description, 5000),
+    delivery_mode: mode,
+    location: text(body.location, 300),
+    meeting_url: httpUrlOrNull(body.meeting_url, 'meeting_url'),
+    duration_minutes: duration,
+    price_centavos: price,
+    min_joiners: minJoiners,
+    max_joiners: maxJoiners,
+    is_active: body.is_active === undefined ? true : Boolean(body.is_active),
+  };
+}
+
+async function classes(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  ev: APIGatewayProxyEventV2,
+  method: string,
+  path: string,
+): Promise<APIGatewayProxyResultV2> {
+  const classId = ev.pathParameters?.classId;
+  const sessionId = ev.pathParameters?.sessionId;
+
+  if (sessionId) {
+    if (method === 'DELETE') return await cancelClassSession(supabase, facilitator, sessionId, ev);
+    return badRequest(`Unsupported method ${method}`);
+  }
+
+  if (!classId) {
+    if (method === 'GET') return await listClasses(supabase, facilitator);
+    if (method === 'POST') return await createClass(supabase, facilitator, parseBody(ev));
+    return badRequest(`Unsupported method ${method}`);
+  }
+
+  if (path.endsWith('/sessions')) {
+    if (method === 'GET') return await listClassSessions(supabase, facilitator, classId);
+    if (method === 'POST') {
+      return await scheduleClassSession(supabase, facilitator, classId, parseBody(ev));
+    }
+    return badRequest(`Unsupported method ${method}`);
+  }
+
+  if (method === 'PUT') return await updateClass(supabase, facilitator, classId, parseBody(ev));
+  if (method === 'DELETE') return await deactivateClass(supabase, facilitator, classId);
+  return badRequest(`Unsupported method ${method}`);
+}
+
+/** Their classes, including deactivated ones — this is the management screen. */
+async function listClasses(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('facilitator_classes')
+    .select('*')
+    .eq('facilitator_id', facilitator.id)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return ok({ classes: data ?? [] });
+}
+
+async function createClass(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('facilitator_classes')
+    .insert({ ...classInput(body), facilitator_id: facilitator.id })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return ok({ class: data });
+}
+
+/**
+ * Edits a class.
+ *
+ * Note what this does *not* touch: the sessions already on the calendar. Price,
+ * capacity and the meeting link are snapshotted onto a session when it is
+ * scheduled, precisely so that editing the class in November cannot restate
+ * what somebody bought in September. New sessions pick up the new values.
+ */
+async function updateClass(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  classId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('facilitator_classes')
+    .update(classInput(body))
+    .eq('id', classId)
+    .eq('facilitator_id', facilitator.id)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return notFound('Class not found');
+  return ok({ class: data });
+}
+
+/**
+ * Takes a class off sale.
+ *
+ * Deactivated, never deleted: the FK from sessions is ON DELETE RESTRICT
+ * because those sessions carry seats people paid for. Scheduled sessions are
+ * deliberately left alone — a facilitator who stops offering a class still has
+ * to teach the ones already sold, and silently cancelling them here would
+ * strand paying clients with no notice and no refund.
+ */
+async function deactivateClass(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  classId: string,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('facilitator_classes')
+    .update({ is_active: false })
+    .eq('id', classId)
+    .eq('facilitator_id', facilitator.id)
+    .select('id')
+    .maybeSingle<{ id: string }>();
+  if (error) throw error;
+  if (!data) return notFound('Class not found');
+
+  const { count } = await supabase
+    .from('facilitator_class_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('class_id', classId)
+    .eq('status', 'scheduled')
+    .gt('starts_at', new Date().toISOString());
+
+  return ok({ deactivated: true, upcomingSessions: count ?? 0 });
+}
+
+/**
+ * Schedules one occurrence.
+ *
+ * The price, capacity, minimum and meeting link are copied from the class onto
+ * the session here — the one moment they are read. From then on the session is
+ * self-contained, which is what lets the class be edited without moving the
+ * ground under sessions that have already sold.
+ *
+ * Overlap with the facilitator's own 1:1 diary is *not* checked. A class
+ * session is added to `busy` in scheduling.ts, so it blocks future 1:1
+ * bookings from the moment it exists; the reverse case — scheduling a class
+ * over a session already in the diary — is a conflict the facilitator can see
+ * on their own calendar and may legitimately intend while they move things
+ * around. Refusing it would make the screen unusable for exactly the person
+ * who knows best.
+ */
+async function scheduleClassSession(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  classId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const { data: cls, error: readError } = await supabase
+    .from('facilitator_classes')
+    .select('*')
+    .eq('id', classId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<Record<string, any>>();
+  if (readError) throw readError;
+  if (!cls) return notFound('Class not found');
+
+  const startsAt = typeof body.starts_at === 'string' ? new Date(body.starts_at) : null;
+  if (!startsAt || Number.isNaN(startsAt.getTime())) {
+    throw new FacilitatorInputError('That start time is not a date.');
+  }
+  if (startsAt.getTime() <= Date.now()) {
+    throw new FacilitatorInputError('A class cannot be scheduled in the past.');
+  }
+
+  const endsAt = new Date(startsAt.getTime() + Number(cls.duration_minutes) * 60_000);
+
+  const { data, error } = await supabase
+    .from('facilitator_class_sessions')
+    .insert({
+      class_id: classId,
+      facilitator_id: facilitator.id,
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      price_centavos: cls.price_centavos,
+      currency: cls.currency,
+      capacity: cls.max_joiners,
+      min_joiners: cls.min_joiners,
+      meeting_url: cls.meeting_url,
+      status: 'scheduled',
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  return ok({ session: data });
+}
+
+/** Every occurrence of one class, with who is on it. */
+async function listClassSessions(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  classId: string,
+): Promise<APIGatewayProxyResultV2> {
+  const { data: sessions, error } = await supabase
+    .from('facilitator_class_sessions')
+    .select('*')
+    .eq('class_id', classId)
+    .eq('facilitator_id', facilitator.id)
+    .order('starts_at', { ascending: false })
+    .returns<Record<string, any>[]>();
+  if (error) throw error;
+
+  const rows = sessions ?? [];
+  if (rows.length === 0) return ok({ sessions: [] });
+
+  const { data: registrations, error: regError } = await supabase
+    .from('class_registrations')
+    .select('id, session_id, client_email, client_name, client_notes, status, seat_no')
+    .in('session_id', rows.map((s) => s.id as string))
+    .in('status', ['pending_payment', 'confirmed', 'completed'])
+    .order('seat_no', { ascending: true })
+    .returns<Record<string, any>[]>();
+  if (regError) throw regError;
+
+  const bySession = new Map<string, Record<string, any>[]>();
+  for (const r of registrations ?? []) {
+    const list = bySession.get(r.session_id) ?? [];
+    list.push(r);
+    bySession.set(r.session_id, list);
+  }
+
+  return ok({
+    sessions: rows.map((s) => {
+      const roster = bySession.get(s.id as string) ?? [];
+      const paid = roster.filter((r) => r.status !== 'pending_payment');
+      return {
+        ...s,
+        roster,
+        seatsTaken: roster.length,
+        // Surfaced so the screen can say "2 of 3 — runs anyway". Nothing acts
+        // on it: the minimum is advisory (0049).
+        meetsMinimum: paid.length >= Number(s.min_joiners),
+      };
+    }),
+  });
+}
+
+/**
+ * Cancels one occurrence.
+ *
+ * Deliberately does **not** refund. Refunds on this platform are manual by
+ * design — the same locked decision that governs course refunds and 1:1
+ * cancellations — so this records the cancellation, frees the seats, and
+ * reports how many people are owed money so that an admin can act on it. A
+ * handler that quietly issued refunds would be the only automatic money
+ * movement in the codebase.
+ */
+async function cancelClassSession(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  sessionId: string,
+  ev: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(ev);
+  const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 1000) : null;
+
+  const { data, error } = await supabase
+    .from('facilitator_class_sessions')
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      cancellation_reason: reason,
+    })
+    .eq('id', sessionId)
+    .eq('facilitator_id', facilitator.id)
+    .eq('status', 'scheduled')
+    .select('id, starts_at')
+    .maybeSingle<{ id: string; starts_at: string }>();
+  if (error) throw error;
+  if (!data) return notFound('Session not found, or already cancelled');
+
+  const { data: affected, error: regError } = await supabase
+    .from('class_registrations')
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: 'facilitator',
+      cancellation_reason: reason,
+    })
+    .eq('session_id', sessionId)
+    .in('status', ['pending_payment', 'confirmed'])
+    .select('id, status, price_centavos')
+    .returns<{ id: string; status: string; price_centavos: number }[]>();
+  if (regError) throw regError;
+
+  const owed = (affected ?? []).filter((r) => r.price_centavos > 0);
+
+  return ok({
+    cancelled: true,
+    registrationsCancelled: (affected ?? []).length,
+    // What an admin has to action by hand. Named `refundsOwed` rather than
+    // `refunded` because nothing here moved any money.
+    refundsOwed: owed.length,
+    refundTotalCentavos: owed.reduce((sum, r) => sum + Number(r.price_centavos), 0),
+  });
 }

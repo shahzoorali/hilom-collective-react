@@ -14,6 +14,7 @@ import { useState } from 'react';
 import {
   formatInZone,
   updateMyFacilitatorProfile,
+  uploadFacilitatorFile,
   type OwnProfile,
   type VacationConflict,
 } from '../../lib/booking';
@@ -212,10 +213,12 @@ export default function ProfileTab({
         />
       </label>
 
-      <label className="field">
-        <span>Photo URL</span>
-        <input value={draft.photo_url} onChange={(e) => set('photo_url', e.target.value)} />
-      </label>
+      <PhotoField
+        value={draft.photo_url}
+        onChange={(url) => set('photo_url', url)}
+        onError={setError}
+      />
+
 
       <label className="field">
         <span>My approach</span>
@@ -359,5 +362,125 @@ export default function ProfileTab({
       </div>
       <p className="small muted">Used for your payouts. Never shown publicly.</p>
     </>
+  );
+}
+
+/**
+ * The profile photo: a preview, a file picker, and the URL box that used to be
+ * the only thing here.
+ *
+ * The text input stays deliberately. `photo_url` is a plain column, not a
+ * foreign key to `media_assets`, and some facilitators arrive with a headshot
+ * already hosted somewhere — a personal site, a previous directory. Replacing
+ * the field with a picker would have taken that away to add convenience.
+ *
+ * The preview is round and small because that is how the photo is actually
+ * used — the directory card, the booking confirmation, the message thread. A
+ * full-bleed rectangular preview would show a composition nobody ever sees and
+ * hide the one problem worth catching here, which is a face cropped out of its
+ * own circle.
+ *
+ * Validation is client-side *as well as* server-side: `facilitator-uploads.ts`
+ * enforces the same 5 MB and the same type set, and is the check that counts.
+ * Doing it here too turns a failed round-trip on a 12 MB phone photo into an
+ * instant, specific message.
+ */
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp,image/avif';
+
+function PhotoField({
+  value,
+  onChange,
+  onError,
+}: {
+  value: string;
+  onChange: (url: string) => void;
+  onError: (message: string | null) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function pick(file: File | undefined) {
+    if (!file) return;
+    onError(null);
+
+    if (!PHOTO_ACCEPT.split(',').includes(file.type)) {
+      onError('That needs to be a JPEG, PNG, WebP or AVIF image.');
+      return;
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      const mb = (file.size / 1024 / 1024).toFixed(1);
+      onError(`That photo is ${mb} MB. The limit is 5 MB — most phones can export a smaller copy.`);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { url } = await uploadFacilitatorFile('photo', file);
+      // The confirm step returns null only if the media row could not be
+      // written, in which case the object exists but nothing can reach it.
+      if (!url) throw new Error('That photo uploaded but could not be saved. Please try again.');
+      onChange(url);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'That photo could not be uploaded.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="field">
+      <span>Photo</span>
+      <div className="row" style={{ gap: '1rem', alignItems: 'center', marginBottom: '0.6rem' }}>
+        {value ? (
+          <img
+            src={value}
+            alt=""
+            width={72}
+            height={72}
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: '50%',
+              objectFit: 'cover',
+              border: '1px solid var(--line)',
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: '50%',
+              background: 'var(--surface)',
+              border: '1px dashed var(--line)',
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <div>
+          <input
+            type="file"
+            accept={PHOTO_ACCEPT}
+            disabled={busy}
+            onChange={(e) => {
+              void pick(e.target.files?.[0]);
+              // Cleared so that picking the same file again after an error
+              // still fires a change event.
+              e.target.value = '';
+            }}
+          />
+          <small className="muted" style={{ display: 'block' }}>
+            {busy ? 'Uploading…' : 'JPEG, PNG or WebP, up to 5 MB. Shown as a circle, so centre your face.'}
+          </small>
+        </div>
+      </div>
+
+      <label className="field" style={{ marginBottom: 0 }}>
+        <span className="small muted">Or paste an image URL</span>
+        <input value={value} onChange={(e) => onChange(e.target.value)} />
+      </label>
+    </div>
   );
 }

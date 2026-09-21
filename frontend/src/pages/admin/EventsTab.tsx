@@ -21,6 +21,7 @@ import {
   adminListEvents,
   adminReplaceEventPlans,
   adminSetEventStatus,
+  adminReviewEvent,
   adminUpdateEvent,
   type AdminEvent,
   type AdminEventInput,
@@ -272,7 +273,7 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
   const [draft, setDraft] = useState<Draft>(blankDraft);
   const [searchQuery, setSearchQuery] = useState('');
   const [timeFilter, setTimeFilter] = useState<'all' | 'upcoming' | 'past'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'submitted'>('all');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -374,6 +375,61 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
    * it cannot be deleted) but it takes the registration page down for everyone
    * mid-payment, and that deserves saying out loud rather than discovering.
    */
+  /**
+   * Approve or reject a facilitator's proposal (0048).
+   *
+   * Approving publishes in the same call. The two are separable at the API
+   * level — and deliberately so — but an admin who has just read a proposal
+   * and pressed Approve means "put it on the site", and leaving it approved
+   * and invisible is the state that generates "why isn't my event showing"
+   * every time. Unpublishing afterwards is one click away and does not
+   * un-approve it.
+   *
+   * A rejection without a note is refused by the backend, so the prompt loops
+   * rather than sending something that will bounce.
+   */
+  async function decide(event: AdminEvent, decision: 'approve' | 'reject') {
+    let note = '';
+    if (decision === 'reject') {
+      const typed = window.prompt(
+        `What should ${event.title ? `“${event.title}”` : 'this event'} change before Hilom can publish it?
+
+` +
+          'The facilitator sees this note exactly as you write it.',
+      );
+      if (typed === null) return;
+      note = typed.trim();
+      if (!note) return setError('A rejection needs a note — it is the only explanation they get.');
+    } else {
+      const blockers = blockersIn(publishChecks(readinessOfEvent(event)));
+      if (blockers.length > 0) {
+        return setError(
+          `“${event.title}” cannot be published yet — ${blockers.map((c) => c.missing).join(', ')}. ` +
+            'Open it, set the ticketing and prices, then approve.',
+        );
+      }
+    }
+
+    setBusyRow(event.id);
+    setError(null);
+    try {
+      await adminReviewEvent(adminKey, event.id, decision, {
+        note: note || undefined,
+        publish: decision === 'approve',
+      });
+      await reload();
+      flash(
+        decision === 'approve'
+          ? `“${event.title}” is approved and live on the site.`
+          : `“${event.title}” went back to its facilitator with your note.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
   async function togglePublish(event: AdminEvent) {
     const next = event.status === 'published' ? 'draft' : 'published';
 
@@ -506,7 +562,11 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
         (timeFilter === 'upcoming' && !isPast) ||
         (timeFilter === 'past' && isPast);
 
-      const matchesStatus = statusFilter === 'all' || e.status === statusFilter;
+      // 'submitted' filters on the moderation axis, not the publication one —
+      // it is the review queue, which is the whole reason the option exists.
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'submitted' ? e.review_status === 'submitted' : e.status === statusFilter);
 
       return matchesSearch && matchesTime && matchesStatus;
     });
@@ -525,6 +585,7 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
   const upcomingCount = events.filter((e) => new Date(e.ends_at ?? e.starts_at).getTime() >= now).length;
   const pastCount = events.filter((e) => new Date(e.ends_at ?? e.starts_at).getTime() < now).length;
   const publishedCount = events.filter((e) => e.status === 'published').length;
+  const submittedCount = events.filter((e) => e.review_status === 'submitted').length;
 
   return (
     <>
@@ -588,11 +649,14 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
 
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'published' | 'draft')}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as 'all' | 'published' | 'draft' | 'submitted')
+              }
             >
               <option value="all">All Statuses</option>
               <option value="published">Published</option>
               <option value="draft">Drafts</option>
+              <option value="submitted">Awaiting review ({submittedCount})</option>
             </select>
 
             {(searchQuery || timeFilter !== 'all' || statusFilter !== 'all') && (
@@ -698,6 +762,26 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                           <span className={event.status === 'published' ? 'pill pill-ok' : 'pill pill-warn'}>
                             {event.status}
                           </span>
+                          {/* Moderation is a second axis, not a second value
+                              of `status` — an approved event can still be
+                              unpublished, and that must not read as
+                              un-approving it (0048). Only shown when it says
+                              something: `approved` is the default for every
+                              admin-authored row and would be noise on all of
+                              them. */}
+                          {event.review_status !== 'approved' && (
+                            <span
+                              className={event.review_status === 'submitted' ? 'pill pill-warn' : 'pill'}
+                              style={{ marginLeft: '0.3rem', fontSize: '0.7rem' }}
+                              title={event.review_note ?? undefined}
+                            >
+                              {event.review_status === 'submitted'
+                                ? 'awaiting review'
+                                : event.review_status === 'rejected'
+                                  ? 'changes requested'
+                                  : 'facilitator draft'}
+                            </span>
+                          )}
                           {/* A published event that fails a blocking check is
                               already live and already broken — the one state
                               on this screen worth flagging without being
@@ -725,21 +809,49 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                               View ↗
                             </a>
                           )}
-                          <button
-                            className="btn btn-ghost small"
-                            style={{ marginRight: '0.35rem' }}
-                            onClick={() => void togglePublish(event)}
-                            disabled={rowBusy}
-                            title={
-                              event.status === 'published'
-                                ? 'Take this event off the site'
-                                : blockers.length > 0
-                                  ? `Not ready: ${blockers.map((c) => c.missing).join(', ')}`
-                                  : 'Put this event on the site'
-                            }
-                          >
-                            {rowBusy ? '…' : event.status === 'published' ? 'Unpublish' : 'Publish'}
-                          </button>
+                          {/* A submission is reviewed, not published. Publish
+                              is hidden rather than disabled while it waits,
+                              because 0048's constraint would reject it anyway
+                              and a disabled button invites a support question
+                              about why. */}
+                          {event.review_status === 'submitted' ? (
+                            <>
+                              <button
+                                className="btn btn-primary small"
+                                style={{ marginRight: '0.35rem' }}
+                                onClick={() => void decide(event, 'approve')}
+                                disabled={rowBusy}
+                                title="Approve this proposal and put it on the site"
+                              >
+                                {rowBusy ? '…' : 'Approve'}
+                              </button>
+                              <button
+                                className="btn btn-ghost small"
+                                style={{ marginRight: '0.35rem' }}
+                                onClick={() => void decide(event, 'reject')}
+                                disabled={rowBusy}
+                                title="Send this back to the facilitator with a note"
+                              >
+                                Request changes
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="btn btn-ghost small"
+                              style={{ marginRight: '0.35rem' }}
+                              onClick={() => void togglePublish(event)}
+                              disabled={rowBusy}
+                              title={
+                                event.status === 'published'
+                                  ? 'Take this event off the site'
+                                  : blockers.length > 0
+                                    ? `Not ready: ${blockers.map((c) => c.missing).join(', ')}`
+                                    : 'Put this event on the site'
+                              }
+                            >
+                              {rowBusy ? '…' : event.status === 'published' ? 'Unpublish' : 'Publish'}
+                            </button>
+                          )}
                           <button className="btn btn-primary small" onClick={() => openEdit(event)}>
                             Edit
                           </button>

@@ -2214,6 +2214,61 @@ div[class*="_PuckCanvas-root_"],
 
 .event-note p { margin: 0; }
 
+/* Event poster (EventRegister.tsx).
+
+   The cover image used to be a 21/9 `object-fit: cover` band. That works for a
+   landscape photograph of a venue and destroys the far more common case: a
+   portrait poster, laid out in Canva, with the title across the top and the
+   date across the bottom. A 21/9 crop of that keeps the middle and throws away
+   both of the things it was made to say.
+
+   So the image is never cropped here — `contain` inside a box with a bounded
+   height. The cost of `contain` is empty space beside a portrait image, and
+   the fix for that is the same image again, scaled up and blurred, behind it:
+   the bars read as part of the artwork instead of as a mistake. The backdrop
+   is `aria-hidden` decoration, painted via a background-image on the wrapper
+   so it never lands in the accessibility tree or the tab order.
+
+   max-height is viewport-relative so a tall poster cannot push the entire
+   registration form below the fold on a laptop; a landscape image simply never
+   reaches the cap and behaves exactly as it did before. */
+.event-poster {
+  position: relative;
+  margin: 2rem 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.event-poster__backdrop {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  /* Scaled past the edges because `blur` samples transparent pixels outside
+     the element and would otherwise fade the border into the card. */
+  transform: scale(1.15);
+  filter: blur(28px) saturate(1.3);
+  opacity: 0.55;
+}
+
+.event-poster img {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-height: min(70vh, 640px);
+  object-fit: contain;
+  /* Only meaningful when the image is wider than it is tall, where it keeps
+     the poster from stretching beyond its own resolution. */
+  margin: 0 auto;
+}
+
+@media (max-width: 640px) {
+  /* A phone is portrait already: the poster can have more of the screen, and
+     the blurred bars are barely visible at this width anyway. */
+  .event-poster img { max-height: 80vh; }
+}
+
 /* Venue gallery thumbnails (EventRegister.tsx).
    Buttons rather than bare <img>, so enlarging a photo is reachable from the
    keyboard; everything below is undoing the default button chrome. */

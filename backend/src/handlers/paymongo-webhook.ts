@@ -129,9 +129,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     paymentData,
   );
 
-  // Three things are sold through this endpoint now: courses, facilitator
-  // sessions, and places at ticketed events. `kind` is set in the checkout
-  // session's metadata by whichever flow created it.
+  // Four things are sold through this endpoint now: courses, facilitator
+  // sessions, places at ticketed events, and seats in group classes. `kind` is
+  // set in the checkout session's metadata by whichever flow created it.
   //
   // Its *absence* means a course order. That is not a fallback for tidiness —
   // `checkout.ts` writes no `kind` at all, so treating missing as 'product' is
@@ -147,6 +147,10 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
   if (metadata.kind === 'event_registration') {
     return await handleRegistrationCharge(paymentId, metadata.charge_id, eventType);
+  }
+
+  if (metadata.kind === 'class') {
+    return await handleClassSeat(paymentId, metadata.class_registration_id, eventType);
   }
 
   const productId = metadata.product_id;
@@ -250,6 +254,65 @@ async function handleBooking(
     const message = err instanceof Error ? err.message : String(err);
     console.error('[paymongo-webhook] booking confirmation failed, queuing retry', { bookingId, message });
     await enqueueRetry(bookingId, message, 'booking');
+    return ok({ received: true, handled: true, status: 'queued_for_retry' });
+  }
+}
+
+/**
+ * A paid seat in a group class (0049).
+ *
+ * The simplest of the four: confirming a seat is a status change and a
+ * `hold_expires_at` clear, because the seat number was already allocated under
+ * a row lock when it was claimed. There is no slot to re-check and no capacity
+ * to re-test — the claim is what raced, and it has already been won.
+ *
+ * Idempotent by construction: a single hosted-checkout payment fires two
+ * fulfillable events, and the update is filtered on `pending_payment` so the
+ * second one matches nothing and reports `already_confirmed` rather than
+ * overwriting a confirmed row.
+ */
+async function handleClassSeat(
+  paymentId: string | undefined,
+  registrationId: string | undefined,
+  eventType: string,
+): Promise<APIGatewayProxyResultV2> {
+  if (!registrationId) {
+    // Expected for the sibling `payment.paid` event: metadata lives on the
+    // checkout session. Missing metadata never becomes present on redelivery.
+    console.warn('[paymongo-webhook] class event without registration id, skipping', {
+      eventType,
+      paymentId,
+    });
+    return ok({ received: true, handled: false, error: 'missing_class_registration_id' });
+  }
+
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from('class_registrations')
+      .update({
+        status: 'confirmed',
+        hold_expires_at: null,
+        paymongo_payment_id: paymentId ?? null,
+      })
+      .eq('id', registrationId)
+      .eq('status', 'pending_payment')
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (error) throw error;
+
+    return ok({
+      received: true,
+      handled: true,
+      status: data ? 'confirmed' : 'already_confirmed',
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[paymongo-webhook] class seat confirmation failed, queuing retry', {
+      registrationId,
+      message,
+    });
+    await enqueueRetry(registrationId, message, 'class');
     return ok({ received: true, handled: true, status: 'queued_for_retry' });
   }
 }

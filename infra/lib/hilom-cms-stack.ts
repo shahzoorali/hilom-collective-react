@@ -199,6 +199,8 @@ export class HilomCmsStack extends cdk.Stack {
     attach(adminEvents, 'AdminEventsInt', [
       ['/admin/events', [GET, POST]],
       ['/admin/events/{eventId}/plans', [GET, PUT]],
+      // Approve or reject a facilitator's submission (0048).
+      ['/admin/events/{eventId}/review', [PUT]],
       ['/admin/events/{eventId}', [GET, PUT, DELETE]],
     ]);
     attach(postsPublic, 'PostsPublicInt', [

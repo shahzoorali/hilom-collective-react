@@ -28,6 +28,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { money } from '../../components/Layout';
+import ReviewPanel from '../../components/ReviewPanel';
+import { getMyEventReview, saveMyEventReview } from '../../lib/booking';
 import { REGISTRANT_FIELD_LABELS } from '../../lib/cms';
 import {
   getMyRegistration,
@@ -119,6 +121,12 @@ export default function RegistrationDetail() {
   }
 
   const nextCharge = charges.find((c) => c.id === registration.nextChargeId) ?? null;
+  // Against the clock rather than the status: an event is marked `completed`
+  // by a sweep, and the hour between it ending and the sweep running is still
+  // an hour in which someone has a legitimate opinion about it.
+  const isPastEvent = Boolean(
+    ev && Date.parse(String(ev.ends_at ?? ev.starts_at)) < Date.now(),
+  );
   const canPayBalance =
     registration.status === 'confirmed' && charges.filter((c) => isOutstanding(c.status)).length > 1;
   const canRequestCancellation =
@@ -140,6 +148,18 @@ export default function RegistrationDetail() {
       )}
 
       <StatusBanner registration={registration} />
+
+      {/* Reviews for hosted events (0050). Only offered once the event is
+          behind them — the panel asks the server whether it is reviewable and
+          says why when it is not, including the case this cannot know from
+          here: an event Hilom ran itself has no facilitator to rate. */}
+      {isPastEvent && (
+        <ReviewPanel
+          noun="event"
+          load={() => getMyEventReview(registration.id)}
+          save={(rating, comment) => saveMyEventReview(registration.id, rating, comment)}
+        />
+      )}
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}

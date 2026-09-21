@@ -70,6 +70,7 @@ const ConnectionsTab = lazy(() => import('./facilitator/ConnectionsTab'));
 const ClientsTab = lazy(() => import('./facilitator/ClientsTab'));
 const MessagesTab = lazy(() => import('./facilitator/MessagesTab'));
 const EventsTab = lazy(() => import('./facilitator/EventsTab'));
+const ClassesTab = lazy(() => import('./facilitator/ClassesTab'));
 
 /**
  * Is this confirmed session inside the facilitator's vacation window?
@@ -94,6 +95,7 @@ const TABS = [
   // when they are not. A tab that appears and disappears with the data is
   // worse: the dashboard's shape would change under someone between visits.
   { label: 'Events', path: 'events', icon: '🎟️' },
+  { label: 'Classes', path: 'classes', icon: '👥' },
   { label: 'Services', path: 'services', icon: '🌿' },
   { label: 'Availability', path: 'availability', icon: '🕰️' },
   { label: 'Earnings', path: 'earnings', icon: '💰' },
@@ -223,6 +225,7 @@ export default function FacilitatorDashboard() {
             <Route path="bookings" element={<BookingsTab profile={profile} />} />
             <Route path="clients" element={<ClientsTab />} />
             <Route path="messages" element={<MessagesTab />} />
+            <Route path="classes" element={<ClassesTab />} />
             <Route path="events" element={<EventsTab />} />
             <Route path="events/:eventId" element={<EventsTab />} />
             <Route path="services" element={<ServicesTab />} />

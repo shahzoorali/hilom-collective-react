@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom';
 import { Stars } from '../../components/Stars';
 import {
   adminListReviews,
+  reviewSubject,
   adminSetReviewStatus,
   type AdminReview,
   type ReviewStatus,
@@ -111,13 +112,20 @@ export default function ReviewsTab({ adminKey }: { adminKey: string }) {
           </div>
 
           <p className="small muted" style={{ margin: '0.3rem 0 0' }}>
-            {r.bookings?.facilitator_services?.title ?? 'Session'}
-            {r.bookings?.starts_at && (
+            {/* A review can now be of a 1:1, an event or a group class (0050),
+                and the kind is named out loud: "the room was freezing" is fair
+                comment on a venue and nonsense about a Zoom call, and an admin
+                cannot tell which without being told. */}
+            <span className="pill" style={{ fontSize: '0.7rem', marginRight: '0.35rem' }}>
+              {reviewSubject(r).kind}
+            </span>
+            {reviewSubject(r).title}
+            {reviewSubject(r).when && (
               <>
                 {' '}
                 ·{' '}
                 {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(
-                  new Date(r.bookings.starts_at),
+                  new Date(reviewSubject(r).when!),
                 )}
               </>
             )}
@@ -125,7 +133,10 @@ export default function ReviewsTab({ adminKey }: { adminKey: string }) {
             {/* The full address is admin-only and is never published — the
                 public review carries only `client_label`. It is here because
                 judging a report sometimes means knowing who wrote it. */}
-            {r.bookings?.client_email ?? 'unknown client'}
+            {r.bookings?.client_email ??
+              r.event_registrations?.registrant_name ??
+              r.class_registrations?.client_name ??
+              'unknown client'}
             {r.client_label && <> · shown as “{r.client_label}”</>}
           </p>
 

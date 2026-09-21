@@ -36,7 +36,9 @@ const COLUMNS =
   'registrant_fields, facilitators, gallery, ' +
   // 0045. Admin-visible because an admin sets the host and can fix a bad
   // joining link without going through the facilitator's own dashboard.
-  'facilitator_id, join_url, join_instructions';
+  'facilitator_id, join_url, join_instructions, ' +
+  // 0048. The moderation queue and the badge on every row in the list.
+  'review_status, submitted_by, submitted_at, reviewed_at, review_note';
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +
@@ -95,6 +97,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       if (method === 'POST') return await create(event, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
+    if (eventId && path.endsWith('/review')) {
+      if (method === 'PUT') return await review(event, eventId, parseBody(event));
+      return badRequest(`Unsupported method ${method}`);
+    }
+
     if (method === 'GET') return await get(eventId);
     if (method === 'PUT') return await update(event, eventId, parseBody(event));
     if (method === 'DELETE') return await remove(eventId);
@@ -329,6 +336,85 @@ async function setStatus(
       note: `"${current.title ?? 'Untitled event'}" ${status === 'published' ? 'published' : 'reverted to draft'}`,
     });
   }
+
+  return ok({ event: data });
+}
+
+/**
+ * Approve or reject a facilitator's event proposal (0048).
+ *
+ *   PUT /admin/events/{id}/review   { decision: 'approve' | 'reject', note?, publish? }
+ *
+ * ## Approval and publication are two decisions, not one
+ *
+ * `approve` sets `review_status` and nothing else by default. An admin
+ * approving an event at 11pm may well not want it on the public calendar until
+ * the copy has been read once more, and 0048's check constraint means
+ * publishing is only *possible* after approval — it does not make it automatic.
+ * `publish: true` does both in one call, which is the common case, and the
+ * constraint still holds because both columns move in the same UPDATE.
+ *
+ * ## Rejection requires a note
+ *
+ * Enforced here rather than left to the UI. A rejection with no reason produces
+ * a support thread every time, and the facilitator's own screen renders this
+ * text verbatim as the only explanation they get.
+ */
+async function review(
+  event: APIGatewayProxyEventV2,
+  eventId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const decision = String(body.decision ?? '');
+  if (decision !== 'approve' && decision !== 'reject') {
+    return badRequest('decision must be either "approve" or "reject"');
+  }
+
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
+  if (decision === 'reject' && !note) {
+    return badRequest('Say why it was rejected — the facilitator sees this note.');
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: current, error: readError } = await supabase
+    .from('events')
+    .select('id, title, status, review_status')
+    .eq('id', eventId)
+    .maybeSingle<EventRow & { review_status: string }>();
+  if (readError) throw readError;
+  if (!current) return notFound('Event not found');
+
+  const patch: Record<string, unknown> = {
+    review_status: decision === 'approve' ? 'approved' : 'rejected',
+    reviewed_at: new Date().toISOString(),
+    review_note: note || null,
+  };
+
+  // Rejecting an event that is somehow already live takes it down with the
+  // same call, because the constraint would otherwise refuse the update and
+  // leave an admin unable to act on it at all.
+  if (decision === 'approve' && body.publish === true) patch.status = 'published';
+  if (decision === 'reject') patch.status = 'draft';
+
+  const { data, error } = await supabase
+    .from('events')
+    .update(patch)
+    .eq('id', eventId)
+    .select(COLUMNS)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return notFound('Event not found');
+
+  await recordAudit(actorFromEvent(event), {
+    action: decision === 'approve' ? 'event.approved' : 'event.rejected',
+    targetTable: 'events',
+    targetId: eventId,
+    eventId,
+    before: { review_status: current.review_status, status: current.status },
+    after: { review_status: patch.review_status, status: patch.status ?? current.status },
+    note: `"${current.title ?? 'Untitled event'}" ${decision === 'approve' ? 'approved' : 'rejected'}${note ? `: ${note}` : ''}`,
+  });
 
   return ok({ event: data });
 }

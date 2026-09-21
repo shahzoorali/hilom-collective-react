@@ -236,12 +236,63 @@ async function sendDueReminders(now: Date): Promise<number> {
   return sent;
 }
 
+/**
+ * Lapsed class holds, and past class sessions (0049).
+ *
+ * Two differences from the booking equivalents above, both deliberate:
+ *
+ *  * Lapsed holds are marked `expired`, not deleted. A class seat behaves like
+ *    an event registration rather than a booking — somebody chose a class and
+ *    got as far as a payment screen, and "they tried and the QR timed out" is
+ *    a lead, not noise. A booking is deleted because its row physically blocks
+ *    a calendar slot; a class row blocks only a seat number, which the partial
+ *    unique index frees the moment the status changes.
+ *
+ *  * There is no grace period before completing. Nothing about a class needs a
+ *    window to be marked a no-show — attendance is not tracked per seat — so
+ *    the session is complete once it has ended.
+ */
+async function sweepClasses(now: Date): Promise<{ expired: number; completed: number }> {
+  const supabase = await getSupabase();
+
+  const { data: expired, error: expireError } = await supabase
+    .from('class_registrations')
+    .update({ status: 'expired' })
+    .eq('status', 'pending_payment')
+    .lt('hold_expires_at', now.toISOString())
+    .select('id');
+  if (expireError) throw expireError;
+
+  const { data: completed, error: completeError } = await supabase
+    .from('facilitator_class_sessions')
+    .update({ status: 'completed' })
+    .eq('status', 'scheduled')
+    .lt('ends_at', now.toISOString())
+    .select('id');
+  if (completeError) throw completeError;
+
+  // The seats on a completed session follow it, so that a client's list and
+  // the payout ledger agree about what has been delivered. Confirmed only —
+  // an expired hold stays expired.
+  const sessionIds = (completed ?? []).map((row) => row.id as string);
+  if (sessionIds.length > 0) {
+    const { error } = await supabase
+      .from('class_registrations')
+      .update({ status: 'completed' })
+      .in('session_id', sessionIds)
+      .eq('status', 'confirmed');
+    if (error) throw error;
+  }
+
+  return { expired: (expired ?? []).length, completed: sessionIds.length };
+}
+
 export async function handler(): Promise<void> {
   const now = new Date();
 
   // Independent of each other, and one failing must not stop the other: a
   // stuck hold sweep should not also mean nobody gets paid this cycle.
-  const [released, completed, reminded] = await Promise.all([
+  const [released, completed, reminded, classes] = await Promise.all([
     releaseExpiredHolds(now).catch((err) => {
       console.error('[bookingSweep] releasing expired holds failed', err);
       return 0;
@@ -254,12 +305,17 @@ export async function handler(): Promise<void> {
       console.error('[bookingSweep] sending reminders failed', err);
       return 0;
     }),
+    sweepClasses(now).catch((err) => {
+      console.error('[bookingSweep] sweeping classes failed', err);
+      return { expired: 0, completed: 0 };
+    }),
   ]);
 
-  if (released > 0 || completed > 0 || reminded > 0) {
+  if (released > 0 || completed > 0 || reminded > 0 || classes.expired > 0 || classes.completed > 0) {
     console.log(
       `[bookingSweep] released ${released} hold(s), completed ${completed} session(s), ` +
-        `reminded ${reminded} booking(s)`,
+        `reminded ${reminded} booking(s), expired ${classes.expired} class hold(s), ` +
+        `completed ${classes.completed} class session(s)`,
     );
   }
 }

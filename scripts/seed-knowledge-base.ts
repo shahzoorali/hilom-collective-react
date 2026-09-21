@@ -1,5 +1,5 @@
 /**
- * Seeds the help centre with its starting set of 52 articles.
+ * Seeds the help centre with its starting set of 60 articles.
  *
  *   HILOM_API_BASE=https://api.hilomcollective.com \
  *   HILOM_ADMIN_KEY=... npx tsx scripts/seed-knowledge-base.ts
@@ -39,6 +39,36 @@
  *   * Course access is **permanent** — no expiry.
  *   * Refunds and payouts are moved **by hand**; nothing here promises an
  *     automatic reversal or a same-day transfer.
+ *
+ * Added with group classes, facilitator-submitted events and reviews beyond
+ * 1:1 sessions (0048-0050):
+ *   * A group class's **minimum joiners is advisory**. Nothing in the code
+ *     reads it to make a decision — a class below its minimum runs, and no
+ *     cancellation or refund is triggered by a low turnout. Articles must not
+ *     imply otherwise; clients read "runs with 3+" as a threshold unless told
+ *     plainly that it is not.
+ *   * **Maximum joiners is real.** The class sells out there.
+ *   * A class seat is held for **20 minutes**, the same as a 1:1 slot, and a
+ *     free class skips checkout entirely.
+ *   * **One place per person per date.** Bringing someone means a second
+ *     account and a second place.
+ *   * A facilitator cancelling a class date is **always a full refund**,
+ *     whatever the notice, and the facilitator's own cancellation tiers do not
+ *     apply to it. The refund is issued **by hand** — the articles say "allow a
+ *     few working days, chase after a week", which is a promise support has to
+ *     be able to keep.
+ *   * A client **cannot cancel their own class place**; there is no endpoint
+ *     for it. They contact the facilitator.
+ *   * A facilitator's event proposal is **invisible to everyone** until an
+ *     admin approves it. There is no half-published state. Price, capacity and
+ *     payment plans are set by Hilom, never by the proposer.
+ *   * After approval a host may edit **only the joining link and
+ *     instructions** — never the title, date or description, which are what
+ *     attendees bought.
+ *   * Reviews of 1:1s, events and classes all feed **one** rating per
+ *     facilitator. There is no per-format score.
+ *   * Only an event with a facilitator host can be reviewed. A Hilom-run event
+ *     collects no rating, because there is no profile to attach it to.
  */
 const API_BASE = process.env.HILOM_API_BASE ?? 'https://api.hilomcollective.com';
 const ADMIN_KEY = process.env.HILOM_ADMIN_KEY;
@@ -765,9 +795,21 @@ It is not monitored by Hilom, and it is not the place for anything urgent or for
 
 ## Leaving one
 
-Go to [your bookings](/account/bookings), open the past session, and leave a rating and a few words. You can review each completed session once.
+You can review three kinds of thing, and each is reached from where it lives:
+
+- **A 1:1 session** — [your bookings](/account/bookings), open the past session
+- **A group class** — [your account](/account/bookings), under **Group classes**
+- **An event** — [your registrations](/account/registrations), open the event
+
+Leave a rating and a few words. You can review each one once.
+
+All three feed the **same rating** on that facilitator's profile. There is not a separate score for workshops and for 1:1s — the rating is of the person, and someone deciding whether to book them is served by one solid number rather than two thin ones.
 
 We ask once and do not chase it. If you would rather not, that is fine.
+
+## Some things cannot be reviewed
+
+A session that was cancelled, because nothing happened. And an **event run by Hilom rather than by a facilitator** — there is no individual profile for the rating to land on. See [Reviewing an event](/help/events/reviewing-an-event).
 
 ## What is shown publicly
 
@@ -874,6 +916,78 @@ Confirmations and reminders show your time first and your facilitator's beside i
 
 Message your facilitator to confirm the time you both think it is — a two-line exchange beats turning up an hour out. Then tell us, with what you see and what you expected.`,
       },
+      {
+        slug: 'group-classes',
+        title: 'Group classes',
+        summary: 'Joining a class several people attend at once, and what the joiner numbers mean.',
+        kind: 'guide',
+        audience: 'client',
+        tags: ['classes', 'booking'],
+        body: `A group class is one session several people attend together, online or in a room. It is a different thing from a 1:1 session: the time is already set, there is a cap on how many can come, and you are joining a group rather than booking someone's hour.
+
+## Finding one
+
+Group classes appear on a facilitator's profile, under **Group classes**, with the next few dates and how many places are left on each. Pick a date and choose **Join**.
+
+## Booking a place
+
+You will need to be signed in. A place is held for **20 minutes** while you pay, which is long enough for a QR payment to clear. If you do not finish paying in that time the place goes back to the pool and you can try again.
+
+Free classes have no payment step — your place is confirmed straight away.
+
+You can hold one place per date. If you want to bring someone, they need their own account and their own place.
+
+## What "runs with 3+" means
+
+Some classes show a minimum, like *runs with 3+*. That is the facilitator telling you the number they had in mind, and nothing more.
+
+**It is not a threshold that cancels the class.** A class with fewer people than its minimum still goes ahead. Nothing is called off automatically and no refund is triggered by a low turnout. If a class is ever cancelled it is because the facilitator decided to cancel it, and you will be told.
+
+## Joining on the day
+
+For an online class the joining link is on [your account](/account/bookings), under **Group classes**, once your place is confirmed. It is never on the public page — only people who have a place can see it.
+
+For a class in a room, the venue is on the class listing and in your confirmation.
+
+## Afterwards
+
+Once the class has happened you can leave a review of the facilitator from the same place. See [Leaving a review](/help/sessions/leaving-a-review).`,
+      },
+      {
+        slug: 'if-a-class-is-cancelled',
+        title: 'If a group class is cancelled',
+        summary: 'What happens to your place and your money when a class is called off.',
+        kind: 'troubleshooting',
+        audience: 'client',
+        tags: ['classes', 'refunds'],
+        body: `Sometimes a facilitator has to call off a date. Here is what happens.
+
+## Your place
+
+The class is marked cancelled and your place is released. You do not need to do anything, and you are not charged again.
+
+You will see it on [your account](/account/bookings) under **Group classes**, marked cancelled, with what you are owed.
+
+## Your money
+
+**You get a full refund.** A facilitator cancelling a class is always a full refund, whatever the notice — the same rule as when a facilitator cancels a 1:1 session.
+
+Refunds at Hilom are issued **by a person, not automatically**. That is worth saying plainly, because it is the part that does not work the way an online purchase usually does: nothing reverses the moment the class is cancelled. Allow a few working days for it to reach the card or account you paid from.
+
+If it has not arrived within a week, [email us](/help/help/contacting-support) and we will find it.
+
+## A class that was free
+
+Nothing was charged, so there is nothing to refund.
+
+## If you would rather rebook than be refunded
+
+Message the facilitator. If they are running the class again, they may be able to move you onto another date — but that is a conversation with them, not something the site does. The refund happens either way unless you tell us otherwise.
+
+## If you cannot make a date you booked
+
+That is the other direction, and it works differently: contact the facilitator. A class place is not self-service cancellable, and whether you are refunded is theirs to decide.`,
+      },
     ],
   },
 
@@ -976,6 +1090,33 @@ Contact us straight away, especially if the event is soon. Send:
 Email [kumusta@hilomcollective.com](mailto:kumusta@hilomcollective.com). We will either confirm your place or refund you.
 
 > Do not register a second time. That is a second charge to refund, and for a capped event it may take a place that someone else could have had.`,
+      },
+      {
+        slug: 'reviewing-an-event',
+        title: 'Reviewing an event you attended',
+        summary: 'Leaving a review after an event, and why some events cannot be reviewed.',
+        kind: 'guide',
+        audience: 'client',
+        tags: ['events', 'reviews'],
+        body: `Once an event is over you can review the facilitator who ran it.
+
+## Leaving one
+
+Open the event on [your registrations](/account/registrations). Below the status you will find the review panel — a rating and a few words.
+
+It counts towards that facilitator's rating in exactly the same way a 1:1 review does. There is one rating per facilitator, not one per format: someone deciding whether to book them is served by knowing how their workshops went too.
+
+## Some events cannot be reviewed
+
+If there is no review panel, one of two things is true and the page will say which.
+
+**The event has not happened yet.** You can review it once it is over.
+
+**The event was run by Hilom rather than by a facilitator.** Some events have no individual host — there is no profile for a rating to land on, so there is nothing to review. That is not a fault, and it does not mean we are not interested in how it went: [tell us directly](/help/help/contacting-support).
+
+## Everything else works the same way
+
+What is shown publicly, the fact that reviews are read before they appear, and how to change yours are all covered in [Leaving a review](/help/sessions/leaving-a-review).`,
       },
     ],
   },
@@ -1206,7 +1347,7 @@ Your facilitator dashboard, under **Profile**.
 
 ## What to fill in
 
-- **Photo.** A clear, warm, recent one of your face. This matters more than people expect.
+- **Photo.** A clear, warm, recent one of your face. Upload it straight from your phone or computer — or paste a link if it is already hosted somewhere. It is shown as a circle, so centre yourself. This matters more than people expect.
 - **Headline.** One line on what you do and who for. Specific beats impressive.
 - **Bio.** How you work, what a session is like, who you are a good fit for. Write to the person reading, not to a hiring panel.
 - **Credentials and training.** Accurate and verifiable.
@@ -1434,8 +1575,15 @@ You can subscribe to a private feed so your Hilom sessions appear alongside ever
 ## What it holds
 
 - Every session you have had with them, with dates
+- Every event of yours they attended
 - A standing note about them, which you maintain
 - Private notes per session
+
+## Clients and attendees are counted separately
+
+Someone who books you 1:1 and someone who came to one of your workshops both appear here, but the card keeps them apart — *3 sessions · 1 event* rather than a single total.
+
+That is deliberate. They are not the same relationship, and a facilitator who writes to the whole list as though everyone on it were a regular 1:1 client will strike the wrong note with half of them.
 
 ## Your notes are private
 
@@ -1703,6 +1851,166 @@ You will have been emailed about any booking where link creation failed and ther
 - Check that your provider account still has permission to create meetings
 
 If it still will not connect, tell us which provider and what you see. In the meantime, set a manual link on your services so bookings keep working.`,
+      },
+      {
+        slug: 'running-group-classes',
+        title: 'Running group classes',
+        summary: 'Setting up a class, putting dates on the calendar, and what the joiner numbers do.',
+        kind: 'guide',
+        audience: 'facilitator',
+        tags: ['classes'],
+        body: `A group class is one session several people attend together. Unlike a 1:1, you set the time and people join it.
+
+## A class and its dates are two different things
+
+**The class** is the offering — "Thursday morning breathwork" as a thing that exists. You write it once: the title, the description, how long it runs, the price, and how many people can come.
+
+**A date** is one occurrence of it. You add these as you go, most often weekly.
+
+The split matters because a date takes a copy of the class's price, capacity and joining link at the moment you schedule it. Editing the class afterwards changes what *future* dates will use — it does not move the ground under a date people have already paid for. That is deliberate: what someone bought in September should not change because you edited the class in November.
+
+## Maximum joiners is a real cap
+
+The class sells out at this number. Once it is reached, nobody else can join that date.
+
+## Minimum joiners is not
+
+The minimum is **a note to yourself**, shown to clients as *runs with 3+*. Nothing acts on it.
+
+A class below its minimum still goes ahead. Nothing is cancelled, nobody is refunded, and no message is sent. If you want a thin class called off, you have to cancel it yourself — see [Cancelling a class date](/help/for-facilitators/cancelling-a-class-date).
+
+This is worth being clear about with yourself before you set the number, because a client reading *runs with 3+* on a class with two people may well assume it is about to fall through. The page tells them plainly that it is not.
+
+## Your joining link
+
+For an online class, put your standing room link on the class. It goes out only to people who have paid and appears nowhere public.
+
+## It blocks your 1:1 calendar
+
+A scheduled class makes that time unbookable for 1:1 sessions automatically — you cannot be double-booked by a client while you are teaching.
+
+The reverse is not enforced: you can schedule a class over a 1:1 you already have. The site assumes you know what you are doing and are about to move something.
+
+## Taking a class off sale
+
+**Take off sale** stops new people joining and hides it from your profile. Dates you have already scheduled **still go ahead** — people paid for those, and they are yours to teach or to cancel one by one.`,
+      },
+      {
+        slug: 'cancelling-a-class-date',
+        title: 'Cancelling a class date',
+        summary: 'What happens to everyone on a class when you call it off — and what does not happen.',
+        kind: 'guide',
+        audience: 'facilitator',
+        tags: ['classes', 'refunds'],
+        body: `You can cancel any scheduled date from **Classes → Dates**.
+
+## What it does
+
+Everyone's place is released and the date is marked cancelled. They see that on their account, with what they are owed.
+
+## What it does not do
+
+**It does not refund anyone.** This is the part people get wrong, so it is worth reading twice.
+
+Cancelling frees the seats. It does not move any money. Hilom refunds the people on that class by hand, and the screen tells you how many there are and how much is owed so that you know what you have just set in motion.
+
+Nothing about the refund is automatic and nothing reverses at the moment you press cancel.
+
+## They get everything back
+
+A facilitator cancelling is **always a full refund**, whatever the notice. Your cancellation terms do not apply here — those govern a client cancelling a 1:1, not you calling off a class.
+
+It comes out of what you are paid for that class, not out of Hilom's pocket.
+
+## Give as much notice as you can
+
+There is no notice rule and no penalty. There is a person who arranged their Thursday around this. Cancelling three weeks out and cancelling ninety minutes out are the same operation to the software and are not remotely the same thing to them.
+
+## Say why
+
+You are asked for a reason when you cancel. Write one. It is what the person reads, and "cancelled" with no explanation is the version that generates an email to support asking what happened.
+
+## If you just want to stop offering the class
+
+That is a different action — **Take off sale** on the class itself. It stops new people joining without touching dates that are already sold. See [Running group classes](/help/for-facilitators/running-group-classes).`,
+      },
+      {
+        slug: 'proposing-an-event',
+        title: 'Proposing an event',
+        summary: 'Putting an event forward for Hilom to review, and what happens next.',
+        kind: 'guide',
+        audience: 'facilitator',
+        tags: ['events'],
+        body: `You can propose an event — a workshop, a retreat, a one-off — from **Events** in your dashboard. Hilom reviews it before it goes anywhere.
+
+## Nothing is public until it is approved
+
+This is the first thing to understand. A proposal is invisible to everyone except you and Hilom until an admin approves it. It is not on the events page, it is not on your profile, and its link does not work. There is no half-published state.
+
+## Writing it
+
+**Save draft** keeps what you have typed without putting it in front of anyone. Come back to it as many times as you like.
+
+**Send to Hilom** hands it over for review. You need a title, a date and a description before you can send it.
+
+Once it is sent you cannot edit it. That is so an admin is not reviewing something that changes underneath them.
+
+## What you set, and what Hilom sets
+
+You write the event: title, date, where, the description, the practical details, the poster.
+
+Hilom sets **the ticket price, the capacity and the payment plans**. Those are not on your form. If you have a price in mind, put it in the description or send it with the proposal and it will be discussed.
+
+## If changes are asked for
+
+An admin can send it back with a note. You will see the note on the event in your dashboard, and the event becomes editable again. Edit it and send it back — it returns to the queue as a fresh submission.
+
+## Once it is approved
+
+It goes live on the events page and on your profile, and people can register.
+
+From then on the title, date and description are **fixed**. They are what people are buying, and changing them after someone has paid changes what they bought. Ask an admin if something genuinely has to change.
+
+What you can still edit yourself is the **joining link and joining instructions** — a corrected Zoom link two hours before the doors open should not need anybody's permission. See [Hosting an event](/help/for-facilitators/hosting-an-event).`,
+      },
+      {
+        slug: 'hosting-an-event',
+        title: 'Hosting an event',
+        summary: 'Your roster, your joining link, and being told when someone signs up.',
+        kind: 'guide',
+        audience: 'facilitator',
+        tags: ['events'],
+        body: `When Hilom assigns you as the host of an event — one you [proposed](/help/for-facilitators/proposing-an-event) or one Hilom set up — it appears under **Events** in your dashboard.
+
+## Who has registered
+
+Open the event to see the roster: who has a place, who is still paying, and what each person answered on the registration form.
+
+It is the same roster an admin sees, with the same figures. That is on purpose — if you email someone about a payment, you are reading the number the admin is reading, and the two of you cannot contradict each other in front of the person who paid.
+
+## You are emailed when someone signs up
+
+Every time a place is paid for you get a note: who registered, their email, and the running count against capacity.
+
+It arrives when the payment clears, not when someone starts checking out — otherwise you would hear about sign-ups that never complete.
+
+## Your joining link
+
+You control the link people join on, and you can change it at any time, including after the event is published.
+
+**Saving the link and sending it out are two separate actions.** Correcting a typo in your dial-in note should not email forty people. When you are ready for them to have it, use **Send joining details**.
+
+The link is never public. It goes only to people whose place is confirmed.
+
+## Your attendees show up in Clients
+
+Anyone who attends an event you host appears in your **Clients** tab, alongside people who book you 1:1 — counted separately, so you can tell a workshop attendee from a client you see every fortnight. See [Your clients](/help/for-facilitators/your-clients).
+
+## Reviews
+
+Once the event is over, people who came can review you, and it counts towards the rating on your profile exactly as a 1:1 review does.
+
+Only events with a facilitator host can be reviewed. An event Hilom ran itself has no profile for a rating to land on.`,
       },
     ],
   },

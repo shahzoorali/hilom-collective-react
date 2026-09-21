@@ -77,6 +77,11 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // ---- facilitator marketplace ----
     const facilitatorsPublic = makeFn('FacilitatorsPublicFn', 'handlers/facilitators.ts', 'handler');
     const bookings = makeFn('BookingsFn', 'handlers/bookings.ts', 'handler');
+    // Group classes (0049). Its own function rather than a branch of
+    // `bookings`: a class seat races against a seat count under a row lock,
+    // a booking races against the calendar's exclusion constraint, and one
+    // function with two concurrency models is where mistakes hide.
+    const classes = makeFn('ClassesFn', 'handlers/classes.ts', 'handler');
     const facilitatorPortal = makeFn('FacilitatorPortalFn', 'handlers/facilitator-portal.ts', 'handler');
     const facilitatorUploads = makeFn('FacilitatorUploadsFn', 'handlers/facilitator-uploads.ts', 'handler');
     const facilitatorIntegrations = makeFn(
@@ -367,10 +372,18 @@ export class HilomMarketplaceStack extends cdk.Stack {
       // roster, and the joining link they hand out. Authorized the same way as
       // every route above — by the facilitator row behind the token, never by
       // the id in the path.
-      ['/facilitator/events', [GET]],
+      // POST creates a proposal; PUT on the id saves it (0048).
+      ['/facilitator/events', [GET, POST]],
+      ['/facilitator/events/{eventId}', [PUT]],
+      ['/facilitator/events/{eventId}/submit', [PUT]],
       ['/facilitator/events/{eventId}/roster', [GET]],
       ['/facilitator/events/{eventId}/join-link', [PUT]],
       ['/facilitator/events/{eventId}/send-join-details', [POST]],
+      // Group classes they teach (0049).
+      ['/facilitator/classes', [GET, POST]],
+      ['/facilitator/classes/{classId}', [PUT, DELETE]],
+      ['/facilitator/classes/{classId}/sessions', [GET, POST]],
+      ['/facilitator/classes/sessions/{sessionId}', [DELETE]],
     ]);
 
     // A separate function from the portal above, following this stack's rule
@@ -417,6 +430,14 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/bookings/{bookingId}/accept-time', [POST]],
       ['/bookings/{bookingId}/decline-time', [POST]],
       ['/me/bookings', [GET]],
+    ]);
+
+    attach(classes, 'ClassesInt', [
+      ['/classes/{facilitatorSlug}', [GET]],
+      ['/classes/session/{sessionId}', [GET]],
+      ['/classes/session/{sessionId}/join', [POST]],
+      ['/classes/registration/{registrationId}/review', [GET, PUT]],
+      ['/me/classes', [GET]],
     ]);
 
     attach(adminFacilitators, 'AdminFacilitatorsInt', [
@@ -477,6 +498,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/registrations/{registrationId}/cancel-request', [POST]],
       ['/registrations/{registrationId}/charges/{chargeId}/pay', [POST]],
       ['/registrations/{registrationId}/charges/{chargeId}/receipt', [GET]],
+      // Review of a hosted event (0050). Before the bare {registrationId}
+      // route, which would otherwise also match this shape.
+      ['/registrations/{registrationId}/review', [GET, PUT]],
       ['/registrations/{registrationId}', [GET]],
     ]);
   }

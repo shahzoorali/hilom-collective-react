@@ -1026,3 +1026,85 @@ export async function sendJoinDetails(input: {
     invite ? [invite] : undefined,
   );
 }
+
+/**
+ * Tells the facilitator hosting an event that someone has paid for a place.
+ *
+ * ## Why this is a separate send and not a CC on the attendee's confirmation
+ *
+ * Two reasons, either sufficient. A CC puts the host's personal address in a
+ * header the attendee can read, on every registration — the host did not agree
+ * to publish it. And the confirmation is written in the second person to the
+ * person who just paid ("your place is held", "here is your joining link"); a
+ * host reading that about their own event has to translate every sentence.
+ *
+ * ## Why it carries the roster count
+ *
+ * "Someone registered" is a notification. "Someone registered, that is 7 of 20"
+ * is the thing a host actually needs, because the decision it feeds is whether
+ * to promote the event again this week. It costs one count that the caller has
+ * already loaded.
+ *
+ * ## What it deliberately omits
+ *
+ * No money. The host's cut is a payout question answered by the payouts screen,
+ * against the ledger, after fees — quoting a gross ticket price here invites
+ * them to expect that number and to query the difference every month. And no
+ * `registrant_details`: dietary needs and emergency contacts belong on the
+ * roster, behind auth, not scattered across an inbox. The link goes there.
+ */
+export async function sendRegistrationHostAlert(input: {
+  to: string;
+  hostName: string;
+  eventId: string;
+  event: EmailEvent;
+  registrantName: string;
+  registrantEmail: string;
+  /** Confirmed registrations for this event, including the one just made. */
+  seatsTaken: number;
+  /** Null for an event with no cap. */
+  capacity: number | null;
+}): Promise<void> {
+  const {
+    to,
+    hostName,
+    eventId,
+    event,
+    registrantName,
+    registrantEmail,
+    seatsTaken,
+    capacity,
+  } = input;
+
+  const eventTitle = event.title;
+  const heading = `New registration: ${eventTitle}`;
+  const count =
+    capacity === null ? `${seatsTaken} registered so far` : `${seatsTaken} of ${capacity} places taken`;
+
+  const rows = [
+    { label: 'Who', value: escapeHtml(registrantName) },
+    { label: 'Email', value: escapeHtml(registrantEmail) },
+    { label: 'Event', value: escapeHtml(eventTitle) },
+    { label: 'When', value: escapeHtml(whenEvent(event)) },
+    { label: 'Registered', value: escapeHtml(count) },
+  ];
+
+  const body =
+    p(`Hi ${escapeHtml(hostName)}, ${escapeHtml(registrantName)} has paid for a place at ${escapeHtml(eventTitle)}.`) +
+    details(rows) +
+    button('See the full roster', `${SITE}/facilitator/events/${eventId}`);
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `Hi ${hostName},`,
+      '',
+      `${registrantName} (${registrantEmail}) has paid for a place at ${eventTitle}.`,
+      `That is ${count}.`,
+      '',
+      `See the full roster: ${SITE}/facilitator/events/${eventId}`,
+    ]),
+    renderEmail({ heading, body }),
+  );
+}

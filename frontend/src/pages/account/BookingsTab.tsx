@@ -21,7 +21,8 @@ import IntakeForm from '../../components/IntakeForm';
 import MessageThread from '../../components/MessageThread';
 import AddToCalendar from '../../components/AddToCalendar';
 import PackagesPanel from './PackagesPanel';
-import { StarInput } from '../../components/Stars';
+import ClassesPanel from './ClassesPanel';
+import ReviewPanel from '../../components/ReviewPanel';
 import { currentUser } from '../../lib/auth';
 import { shortName } from '../../lib/names';
 import {
@@ -35,7 +36,6 @@ import {
   getMyReview,
   saveMyBookingIntake,
   saveMyReview,
-  type MyReview,
   type IntakeQuestion,
   formatInZone,
   viewerTimezone,
@@ -186,135 +186,30 @@ function IntakePanel({ booking }: { booking: Booking }) {
 }
 
 /**
- * The client's review of a session they had (0013).
+ * The client's review of a session they had (0013, generalised by 0050).
  *
- * Shown on past sessions, and prominent when there is no review yet: the whole
- * reason the marketplace has no social proof is that nobody was ever asked, and
- * a prompt tucked behind a disclosure triangle is barely more of an ask than
- * the email.
- *
- * Loaded when the panel is opened rather than with the bookings list. Most past
- * sessions have no review, and a request per row to find that out is a request
- * per row for nothing.
+ * The panel itself is shared with events and group classes — see
+ * components/ReviewPanel.tsx for why. What stays here is the eligibility rule,
+ * which is specific to a 1:1.
  */
-function ReviewPanel({ booking }: { booking: Booking }) {
-  const [open, setOpen] = useState(false);
-  const [review, setReview] = useState<MyReview | null>(null);
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState('');
-  const [loaded, setLoaded] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+function BookingReviewPanel({ booking }: { booking: Booking }) {
   // A session that did not happen cannot be reviewed — see isReviewable in
   // backend/src/lib/reviews.ts for why a no-show can be, and a cancellation
   // cannot.
   const reviewable = booking.status === 'completed' || booking.status === 'no_show';
   // The intro call is a conversation about whether to work together; rating it
   // would mostly measure how many free calls someone offers.
-  const worthAsking = reviewable && booking.price_centavos > 0;
-
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    getMyReview(booking.id)
-      .then((r) => {
-        if (!live) return;
-        setReview(r.review);
-        setRating(r.review?.rating ?? 0);
-        setComment(r.review?.comment ?? '');
-      })
-      .catch((err: Error) => live && setError(err.message))
-      .finally(() => live && setLoaded(true));
-    return () => {
-      live = false;
-    };
-  }, [open, booking.id]);
-
-  async function save() {
-    if (rating < 1) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await saveMyReview(booking.id, rating, comment);
-      setReview(result.review);
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save your review');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!worthAsking) return null;
+  if (!reviewable || booking.price_centavos <= 0) return null;
 
   return (
-    <div style={{ marginTop: '0.5rem' }}>
-      {!open && (
-        <button type="button" className="btn btn-ghost small" onClick={() => setOpen(true)}>
-          {booking.facilitator_reviews ? 'Your review' : 'How was it?'}
-        </button>
-      )}
-
-      {open && (
-        <div className="panel" style={{ marginTop: '0.5rem' }}>
-          {error && <div className="alert alert-error">{error}</div>}
-          {!loaded && !error && <div className="spinner" aria-label="Loading" />}
-
-          {loaded && (
-            <>
-              <p className="small muted" style={{ marginTop: 0 }}>
-                {review
-                  ? 'You can change this at any time. Edits are read again before they appear.'
-                  : 'A few words help the next person decide. We read reviews before they appear, and yours is shown with your first name and last initial.'}
-              </p>
-
-              <StarInput value={rating} onChange={setRating} disabled={busy} />
-
-              <label className="field">
-                <span>Anything you'd like to add? (optional)</span>
-                <textarea
-                  rows={4}
-                  value={comment}
-                  maxLength={2000}
-                  disabled={busy}
-                  onChange={(e) => {
-                    setComment(e.target.value);
-                    setSaved(false);
-                  }}
-                />
-              </label>
-
-              {/* The status is worth saying plainly. A client who leaves a
-                  review and never sees it appear assumes it was thrown away. */}
-              {review && (
-                <p className="small muted">
-                  {review.status === 'pending' && 'Waiting to be read — it will appear on the profile shortly.'}
-                  {review.status === 'approved' && 'Published on their profile.'}
-                  {review.status === 'rejected' &&
-                    "This wasn't published. If you think that's wrong, email kumusta@hilomcollective.com."}
-                </p>
-              )}
-
-              <div className="row" style={{ gap: '0.5rem' }}>
-                <button
-                  type="button"
-                  className="btn btn-accent small"
-                  disabled={busy || rating < 1}
-                  onClick={() => void save()}
-                >
-                  {busy ? 'Saving…' : saved ? 'Saved' : review ? 'Update my review' : 'Leave my review'}
-                </button>
-                <button type="button" className="btn btn-ghost small" onClick={() => setOpen(false)}>
-                  Close
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <ReviewPanel
+      noun="session"
+      hasReview={Boolean(booking.facilitator_reviews)}
+      load={() =>
+        getMyReview(booking.id).then((r) => ({ review: r.review, reviewable: r.reviewable }))
+      }
+      save={(rating, comment) => saveMyReview(booking.id, rating, comment).then((r) => r.review)}
+    />
   );
 }
 
@@ -465,6 +360,8 @@ export default function BookingsTab() {
           nobody has scheduled, and "four sessions left" has to be the first
           thing on the page rather than a line inside a booking (0035). */}
       <PackagesPanel onBooked={reload} />
+      {/* Renders nothing for someone who has never joined a class (0049). */}
+      <ClassesPanel />
 
       {upcoming.length > 0 && (
         <>
@@ -699,7 +596,7 @@ export default function BookingsTab() {
 
               {/* The ask. Nothing has ever written to facilitator_reviews
                   because nobody was ever asked — see 0036 and the audit. */}
-              <ReviewPanel booking={b} />
+              <BookingReviewPanel booking={b} />
             </div>
           ))}
         </>

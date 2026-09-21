@@ -26,6 +26,7 @@ import {
   saveMySessionNotes,
   viewerTimezone,
   type ClientBooking,
+  type ClientEvent,
   type ClientSummary,
 } from '../../lib/booking';
 
@@ -37,6 +38,19 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled_by_facilitator: 'Cancelled by you',
   refunded: 'Refunded',
 };
+
+/**
+ * The soonest thing in the diary with this person, and the most recent thing
+ * behind it — across both a 1:1 and an event, because "next" means next.
+ *
+ * ISO-8601 in UTC sorts lexicographically, which is why these compare strings
+ * rather than parsing dates.
+ */
+const nextUp = (c: ClientSummary): string | null =>
+  [c.nextSessionAt, c.nextEventAt].filter((v): v is string => Boolean(v)).sort()[0] ?? null;
+
+const lastSeen = (c: ClientSummary): string | null =>
+  [c.lastSessionAt, c.lastEventAt].filter((v): v is string => Boolean(v)).sort().reverse()[0] ?? null;
 
 export default function ClientsTab() {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
@@ -57,7 +71,10 @@ export default function ClientsTab() {
     <>
       <h2>Clients</h2>
       {clients.length === 0 && (
-        <p className="muted">Nobody yet. Clients appear here after their first booking.</p>
+        <p className="muted">
+          Nobody yet. People appear here after their first booking with you, or when they
+          register for an event you are hosting.
+        </p>
       )}
 
       {clients.map((c) => (
@@ -77,17 +94,22 @@ export default function ClientsTab() {
           </div>
 
           <p className="small muted" style={{ margin: '0.3rem 0 0' }}>
-            {c.sessions} session{c.sessions === 1 ? '' : 's'}
+            {/* Both counts, always, because they are different relationships:
+                "3 sessions" and "1 event" say something "4 things" does not.
+                A zero on either side is dropped rather than printed. */}
+            {c.sessions > 0 && <>{c.sessions} session{c.sessions === 1 ? '' : 's'}</>}
+            {c.sessions > 0 && c.events > 0 && ' · '}
+            {c.events > 0 && <>{c.events} event{c.events === 1 ? '' : 's'}</>}
+            {c.sessions === 0 && c.events === 0 && 'No sessions yet'}
             {c.netCentavos > 0 && <> · {money(c.netCentavos)} earned</>}
-            {c.nextSessionAt && (
+            {nextUp(c) && (
               <>
                 {' '}
-                · next{' '}
-                {formatInZone(c.nextSessionAt, zone, { dateStyle: 'medium', timeStyle: 'short' })}
+                · next {formatInZone(nextUp(c)!, zone, { dateStyle: 'medium', timeStyle: 'short' })}
               </>
             )}
-            {!c.nextSessionAt && c.lastSessionAt && (
-              <> · last seen {formatInZone(c.lastSessionAt, zone, { dateStyle: 'medium', timeStyle: undefined })}</>
+            {!nextUp(c) && lastSeen(c) && (
+              <> · last seen {formatInZone(lastSeen(c)!, zone, { dateStyle: 'medium' })}</>
             )}
             {c.hasAbout && <> · you have notes</>}
           </p>
@@ -109,6 +131,7 @@ export default function ClientsTab() {
 function ClientDetail({ email, zone }: { email: string; zone: string }) {
   const [about, setAbout] = useState('');
   const [bookings, setBookings] = useState<ClientBooking[] | null>(null);
+  const [events, setEvents] = useState<ClientEvent[]>([]);
   const [savingAbout, setSavingAbout] = useState(false);
   const [aboutSaved, setAboutSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +143,7 @@ function ClientDetail({ email, zone }: { email: string; zone: string }) {
         if (!live) return;
         setAbout(r.about ?? '');
         setBookings(r.bookings);
+        setEvents(r.events ?? []);
       })
       .catch((err: Error) => live && setError(err.message));
     return () => {
@@ -169,10 +193,39 @@ function ClientDetail({ email, zone }: { email: string; zone: string }) {
         {savingAbout ? 'Saving…' : aboutSaved ? 'Saved' : 'Save note'}
       </button>
 
-      <h4 style={{ marginBottom: '0.4rem' }}>Your sessions together</h4>
-      {bookings.map((b) => (
-        <SessionRow key={b.id} booking={b} zone={zone} />
-      ))}
+      {bookings.length > 0 && (
+        <>
+          <h4 style={{ marginBottom: '0.4rem' }}>Your sessions together</h4>
+          {bookings.map((b) => (
+            <SessionRow key={b.id} booking={b} zone={zone} />
+          ))}
+        </>
+      )}
+
+      {/* Kept as its own list rather than interleaved with sessions. A session
+          row carries private notes and intake answers and is a thing to write
+          about; an event row is a fact — they were in the room. Merging the two
+          into one timeline implies the second has the first's affordances. */}
+      {events.length > 0 && (
+        <>
+          <h4 style={{ marginBottom: '0.4rem' }}>Events they came to</h4>
+          {events.map((e) => (
+            <div key={e.id} className="row" style={{ justifyContent: 'space-between', padding: '0.35rem 0' }}>
+              <span>{e.events?.title ?? 'Event'}</span>
+              <span className="small muted">
+                {e.events?.starts_at
+                  ? formatInZone(e.events.starts_at, zone, { dateStyle: 'medium' })
+                  : null}
+                {e.events?.location ? ` · ${e.events.location}` : null}
+              </span>
+            </div>
+          ))}
+        </>
+      )}
+
+      {bookings.length === 0 && events.length === 0 && (
+        <p className="small muted">Nothing booked yet.</p>
+      )}
     </div>
   );
 }

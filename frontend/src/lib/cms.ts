@@ -369,6 +369,12 @@ export const adminDeleteSubmission = (adminKey: string, formId: string, submissi
 export interface AdminEvent extends CmsEvent {
   image_id: string | null;
   status: 'draft' | 'published';
+  /** Moderation, independent of `status` (0048). */
+  review_status: 'draft' | 'submitted' | 'approved' | 'rejected';
+  submitted_by: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
   created_at: string;
   updated_at: string;
   facilitators: EventFacilitator[];
@@ -525,6 +531,25 @@ export const adminSetEventStatus = (adminKey: string, eventId: string, status: '
   apiFetch<{ event: AdminEvent }>(
     `/admin/events/${eventId}`,
     adminInit(adminKey, 'PUT', { status }),
+  ).then((r) => r.event);
+
+/**
+ * Approves or rejects a facilitator's event proposal (0048).
+ *
+ * `publish` is separate from `approve` because they are separate decisions:
+ * the 0048 check constraint makes publication *possible* after approval, never
+ * automatic. Rejection requires a note — the backend refuses without one, and
+ * it is the only explanation the facilitator ever sees.
+ */
+export const adminReviewEvent = (
+  adminKey: string,
+  eventId: string,
+  decision: 'approve' | 'reject',
+  options: { note?: string; publish?: boolean } = {},
+) =>
+  apiFetch<{ event: AdminEvent }>(
+    `/admin/events/${eventId}/review`,
+    adminInit(adminKey, 'PUT', { decision, ...options }),
   ).then((r) => r.event);
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>

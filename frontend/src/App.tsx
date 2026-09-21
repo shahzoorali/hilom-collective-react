@@ -5,6 +5,7 @@ import FacilitatorProfile from './pages/FacilitatorProfile';
 import BookingFlow from './pages/BookingFlow';
 import BookingProcessing from './pages/BookingProcessing';
 import EventRegister from './pages/EventRegister';
+import ClassJoin from './pages/ClassJoin';
 import AccountDashboard from './pages/AccountDashboard';
 import RegistrationProcessing from './pages/RegistrationProcessing';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
@@ -104,6 +105,7 @@ export default function App() {
                     /:slug CMS catch-all so no page can shadow them. */}
                 <Route path="/events/registration/processing" element={<RegistrationProcessing />} />
                 <Route path="/events/:eventId/register" element={<EventRegister />} />
+                <Route path="/classes/:sessionId" element={<ClassJoin />} />
                 {/* Everything signed-in lives under one shell — /account is
                     already reserved against CMS page slugs, and the nested
                     routes (registrations, registrations/:id, bookings,

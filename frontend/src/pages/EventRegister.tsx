@@ -267,18 +267,17 @@ function EventHeader({ event }: { event: TicketedEvent }) {
 
       {event.image_url && (
         <div className="container">
-          <img
-            src={event.image_url}
-            alt={event.image_alt ?? ''}
-            style={{
-              width: '100%',
-              aspectRatio: '21 / 9',
-              objectFit: 'cover',
-              borderRadius: 'var(--radius)',
-              margin: '2rem 0',
-              display: 'block',
-            }}
-          />
+          <div className="event-poster">
+            {/* Decorative only — the real image is the <img> below, and this
+                is the same file again, blurred, so a portrait poster sits on
+                its own colours instead of on grey bars. */}
+            <div
+              className="event-poster__backdrop"
+              aria-hidden="true"
+              style={{ backgroundImage: `url(${JSON.stringify(event.image_url)})` }}
+            />
+            <img src={event.image_url} alt={event.image_alt ?? ''} />
+          </div>
         </div>
       )}
 

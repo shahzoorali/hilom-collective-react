@@ -22,9 +22,48 @@ import {
   getMyHostedRoster,
   saveMyHostedJoinLink,
   sendMyHostedJoinDetails,
+  createMyHostedEvent,
+  saveMyHostedEvent,
+  submitMyHostedEvent,
+  type EventReviewStatus,
   type MyHostedEvent,
 } from '../../lib/booking';
 import type { AdminRegistration, RosterMoney } from '../../lib/cms';
+
+/** Review states in which the proposal is still the facilitator's to change. */
+const EDITABLE = new Set<EventReviewStatus>(['draft', 'rejected']);
+
+/**
+ * Where a proposal stands, in the facilitator's own terms.
+ *
+ * Deliberately not the raw enum. "submitted" is a database word; "With Hilom"
+ * tells a host that the ball is not in their court, which is the only thing
+ * they need from this badge. The approved-but-unpublished case gets its own
+ * wording because it is the one people otherwise write in about — approved is
+ * not the same as live, and a badge saying only "Approved" invites the
+ * question of why the event is not on the site.
+ */
+function ReviewBadge({ event }: { event: MyHostedEvent }) {
+  const [label, tone] =
+    event.review_status === 'draft'
+      ? ['Draft', 'muted']
+      : event.review_status === 'submitted'
+        ? ['With Hilom for review', 'muted']
+        : event.review_status === 'rejected'
+          ? ['Changes requested', 'muted']
+          : event.status === 'published'
+            ? ['Live', 'forest']
+            : ['Approved, not published yet', 'muted'];
+
+  return (
+    <span
+      className="small"
+      style={{ color: tone === 'forest' ? 'var(--forest)' : 'var(--muted)', fontWeight: 600 }}
+    >
+      · {label}
+    </span>
+  );
+}
 
 const STATUS_LABEL: Record<string, string> = {
   pending_payment: 'Holding a place',
@@ -51,6 +90,8 @@ export default function EventsTab() {
   const navigate = useNavigate();
   const [events, setEvents] = useState<MyHostedEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** null = list, 'new' = a blank proposal, otherwise the id being edited. */
+  const [composing, setComposing] = useState<string | null>(null);
 
   useEffect(() => {
     listMyHostedEvents()
@@ -72,13 +113,38 @@ export default function EventsTab() {
     );
   }
 
+  if (composing) {
+    return (
+      <EventProposalForm
+        existing={composing === 'new' ? null : events.find((e) => e.id === composing) ?? null}
+        onDone={(saved) => {
+          setEvents((list) =>
+            list === null
+              ? [saved]
+              : list.some((e) => e.id === saved.id)
+                ? list.map((e) => (e.id === saved.id ? saved : e))
+                : [saved, ...list],
+          );
+          setComposing(null);
+        }}
+        onCancel={() => setComposing(null)}
+      />
+    );
+  }
+
   return (
     <>
-      <h2>Events</h2>
+      <div className="admin-toolbar">
+        <h2 style={{ margin: 0 }}>Events</h2>
+        <button type="button" className="btn btn-accent small" onClick={() => setComposing('new')}>
+          Propose an event
+        </button>
+      </div>
+
       {events.length === 0 && (
         <p className="muted">
-          You are not hosting any events yet. When an event is assigned to you, it appears here
-          with its registrations and its joining link.
+          Nothing here yet. Propose an event and Hilom will review it — nothing appears on the
+          public events page until it is approved.
         </p>
       )}
 
@@ -86,23 +152,39 @@ export default function EventsTab() {
         <div key={e.id} className="card" style={{ marginBottom: '0.6rem' }}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div>
-              <strong>{e.title}</strong>
-              {e.status !== 'published' && (
-                <span className="small muted"> · not published yet</span>
-              )}
+              <strong>{e.title}</strong> <ReviewBadge event={e} />
               <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
                 {when(e.starts_at, e.ends_at)}
                 {e.location ? ` · ${e.location}` : ''}
               </p>
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              onClick={() => navigate(`/facilitator/events/${e.id}`)}
-            >
-              Registrations
-            </button>
+            <div className="row" style={{ gap: '0.4rem' }}>
+              {EDITABLE.has(e.review_status) && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  onClick={() => setComposing(e.id)}
+                >
+                  Edit
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary btn-small"
+                onClick={() => navigate(`/facilitator/events/${e.id}`)}
+              >
+                Registrations
+              </button>
+            </div>
           </div>
+
+          {/* The rejection note is the only explanation they get, so it is
+              shown on the card rather than behind the edit screen. */}
+          {e.review_status === 'rejected' && e.review_note && (
+            <div className="alert alert-warning" style={{ margin: '0.6rem 0 0' }}>
+              <strong>Hilom asked for changes:</strong> {e.review_note}
+            </div>
+          )}
 
           <p className="small" style={{ margin: '0.5rem 0 0' }}>
             <strong>{e.registrations.confirmed}</strong> confirmed
@@ -357,6 +439,238 @@ function EventDetail({
           ))}
         </>
       )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The proposal form.
+ *
+ * Save and Submit are two buttons on purpose. A half-written event should be
+ * keepable without putting it in front of an admin, and submitting should be a
+ * thing someone chose rather than a side effect of typing — the same split the
+ * joining link already makes between saving a Zoom URL and emailing it to
+ * forty people.
+ *
+ * What is conspicuously absent: capacity, ticket prices, payment plans and the
+ * publish switch. Those are the money and the publication decision, they belong
+ * to Hilom, and the backend drops them from this payload rather than trusting
+ * the form not to send them.
+ */
+function EventProposalForm({
+  existing,
+  onDone,
+  onCancel,
+}: {
+  existing: MyHostedEvent | null;
+  onDone: (saved: MyHostedEvent) => void;
+  onCancel: () => void;
+}) {
+  // `datetime-local` wants 'YYYY-MM-DDTHH:mm' with no zone, and the stored
+  // value is UTC ISO. Sliced rather than reformatted: every event on this site
+  // is in Asia/Manila and the admin editor makes the same trade.
+  const local = (iso: string | null) => (iso ? iso.slice(0, 16) : '');
+
+  const [draft, setDraft] = useState({
+    title: existing?.title ?? '',
+    subtitle: existing?.subtitle ?? '',
+    excerpt: existing?.excerpt ?? '',
+    description: '',
+    location: existing?.location ?? '',
+    starts_at: local(existing?.starts_at ?? null),
+    ends_at: local(existing?.ends_at ?? null),
+    venue_details: existing?.venue_details ?? '',
+    format: existing?.format ?? '',
+    image_url: existing?.image_url ?? '',
+    image_alt: existing?.image_alt ?? '',
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
+    setDraft((d) => ({ ...d, [key]: value }));
+
+  const payload = () => ({
+    title: draft.title,
+    subtitle: draft.subtitle,
+    excerpt: draft.excerpt,
+    description: draft.description,
+    location: draft.location,
+    // Back to an ISO instant. `new Date()` on a zoneless string reads it in the
+    // browser's zone, which is what someone typing "7pm" means.
+    starts_at: draft.starts_at ? new Date(draft.starts_at).toISOString() : '',
+    ends_at: draft.ends_at ? new Date(draft.ends_at).toISOString() : null,
+    venue_details: draft.venue_details,
+    format: draft.format,
+    image: draft.image_url ? { id: null, url: draft.image_url, alt: draft.image_alt } : null,
+  });
+
+  async function save(): Promise<MyHostedEvent | null> {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = existing
+        ? await saveMyHostedEvent(existing.id, payload())
+        : await createMyHostedEvent(payload());
+      onDone(saved);
+      return saved;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Saves first, then submits. Two round-trips rather than one endpoint that
+   * does both, so that a submission which fails validation still leaves the
+   * typing safely on the server.
+   */
+  async function saveAndSubmit() {
+    const saved = await save();
+    if (!saved) return;
+    setBusy(true);
+    try {
+      onDone(await submitMyHostedEvent(saved.id));
+      setNotice('Sent to Hilom for review.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not submit');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="admin-toolbar">
+        <h2 style={{ margin: 0 }}>{existing ? 'Edit event' : 'Propose an event'}</h2>
+        <div className="row" style={{ gap: '0.4rem' }}>
+          <button type="button" className="btn btn-ghost small" onClick={onCancel}>
+            Back
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary small"
+            disabled={busy}
+            onClick={() => void save()}
+          >
+            {busy ? 'Saving…' : 'Save draft'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-accent small"
+            disabled={busy}
+            onClick={() => void saveAndSubmit()}
+          >
+            Send to Hilom
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
+      {notice && <div className="alert alert-success">{notice}</div>}
+
+      <div className="alert alert-info">
+        Hilom reviews every event before it goes on the public calendar. Ticket prices and
+        capacity are set by Hilom when your event is approved.
+      </div>
+
+      <label className="field">
+        <span>Title</span>
+        <input value={draft.title} onChange={(e) => set('title', e.target.value)} />
+      </label>
+
+      <label className="field">
+        <span>Subtitle</span>
+        <input
+          value={draft.subtitle}
+          onChange={(e) => set('subtitle', e.target.value)}
+          placeholder="A half-day workshop on rest"
+        />
+      </label>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Starts</span>
+          <input
+            type="datetime-local"
+            value={draft.starts_at}
+            onChange={(e) => set('starts_at', e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Ends (optional)</span>
+          <input
+            type="datetime-local"
+            value={draft.ends_at}
+            onChange={(e) => set('ends_at', e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Where</span>
+          <input
+            value={draft.location}
+            onChange={(e) => set('location', e.target.value)}
+            placeholder="Via Zoom, or Quezon City"
+          />
+        </label>
+        <label className="field">
+          <span>Format</span>
+          <input
+            value={draft.format}
+            onChange={(e) => set('format', e.target.value)}
+            placeholder="Online, in person, hybrid"
+          />
+        </label>
+      </div>
+
+      <label className="field">
+        <span>Short summary</span>
+        <textarea rows={2} value={draft.excerpt} onChange={(e) => set('excerpt', e.target.value)} />
+        <small className="muted">One or two lines, shown on the events listing card.</small>
+      </label>
+
+      <label className="field">
+        <span>Description</span>
+        <textarea
+          rows={10}
+          value={draft.description}
+          onChange={(e) => set('description', e.target.value)}
+          placeholder="What the session is, who it is for, what people should bring."
+        />
+        <small className="muted">
+          Basic formatting is kept; anything else is stripped when saved.
+        </small>
+      </label>
+
+      <label className="field">
+        <span>Practical details</span>
+        <textarea
+          rows={3}
+          value={draft.venue_details}
+          onChange={(e) => set('venue_details', e.target.value)}
+          placeholder="Parking, what to wear, whether lunch is included."
+        />
+      </label>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Poster image URL</span>
+          <input value={draft.image_url} onChange={(e) => set('image_url', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Image description</span>
+          <input value={draft.image_alt} onChange={(e) => set('image_alt', e.target.value)} />
+        </label>
+      </div>
     </>
   );
 }

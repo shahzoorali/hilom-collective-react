@@ -17,7 +17,8 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { getFacilitator } from '../lib/booking';
+import { getFacilitator, listFacilitatorClasses } from '../lib/booking';
+import type { PublicGroupClass } from '../components/FacilitatorProfileView';
 import { Skeleton, SkeletonText, SkeletonBoundary } from '../components/Skeleton';
 import FacilitatorProfileView from '../components/FacilitatorProfileView';
 import { playFlip } from '../lib/pageFlip';
@@ -30,6 +31,10 @@ export default function FacilitatorProfile() {
   // is exactly what happened when `rating` and `reviews` were added.
   const [data, setData] = useState<Awaited<ReturnType<typeof getFacilitator>> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Fetched separately from the profile rather than folded into it: classes
+  // are a different handler and a different stack, and a facilitator with no
+  // classes must not have their profile fail to load because that call did.
+  const [classes, setClasses] = useState<PublicGroupClass[]>([]);
   const root = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -39,6 +44,13 @@ export default function FacilitatorProfile() {
     getFacilitator(slug)
       .then((res) => live && setData(res))
       .catch((err: Error) => live && setError(err.message));
+    // Failure is swallowed on purpose — the section simply does not render.
+    // A class listing is an enhancement to the page, never a reason to show
+    // someone an error instead of a profile.
+    listFacilitatorClasses(slug)
+      .then((res) => live && setClasses(res.classes))
+      .catch(() => undefined);
+
     return () => {
       live = false;
     };
@@ -106,6 +118,7 @@ export default function FacilitatorProfile() {
       rating={data.rating}
       reviews={data.reviews}
       events={data.events}
+      classes={classes}
       rootRef={root}
       backLink={
         <div className="container">

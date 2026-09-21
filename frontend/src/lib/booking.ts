@@ -1233,6 +1233,25 @@ export interface ClientSummary {
   nextSessionAt: string | null;
   netCentavos: number;
   hasAbout: boolean;
+  /** Confirmed places at events this facilitator hosts. Counted separately
+   *  from `sessions` because a workshop attendee is not a 1:1 client. */
+  events: number;
+  lastEventAt: string | null;
+  nextEventAt: string | null;
+}
+
+/** One event this client attended, as it appears on their timeline. */
+export interface ClientEvent {
+  id: string;
+  status: string;
+  registrant_name: string | null;
+  events: {
+    id: string;
+    title: string;
+    starts_at: string;
+    ends_at: string | null;
+    location: string | null;
+  } | null;
 }
 
 /** One session in a client's timeline, with both kinds of note attached. */
@@ -1274,6 +1293,7 @@ export const getMyClient = (email: string) =>
     about: string | null;
     aboutUpdatedAt: string | null;
     bookings: ClientBooking[];
+    events: ClientEvent[];
   }>(`/facilitator/clients/${encodeURIComponent(email)}`, { headers: authHeaders() });
 
 export const saveMyClientAbout = (email: string, about: string) =>
@@ -1442,7 +1462,84 @@ export interface AdminReview {
     client_email: string;
     facilitator_services?: { title: string } | null;
   } | null;
+  // 0050. Exactly one of the three subject blocks is populated, matching the
+  // CHECK on the table.
+  event_registration_id?: string | null;
+  class_registration_id?: string | null;
+  event_registrations?: {
+    registrant_name: string | null;
+    events?: { title: string; starts_at: string } | null;
+  } | null;
+  class_registrations?: {
+    client_name: string | null;
+    facilitator_class_sessions?: {
+      starts_at: string;
+      facilitator_classes?: { title: string } | null;
+    } | null;
+  } | null;
 }
+
+/**
+ * What a review is about, in one line, for the moderation queue.
+ *
+ * An admin reading "the room was freezing" needs to know whether that is a
+ * venue or a Zoom call before deciding whether it is fair comment.
+ */
+export function reviewSubject(review: AdminReview): { kind: string; title: string; when: string | null } {
+  if (review.event_registrations) {
+    return {
+      kind: 'Event',
+      title: review.event_registrations.events?.title ?? 'an event',
+      when: review.event_registrations.events?.starts_at ?? null,
+    };
+  }
+  if (review.class_registrations) {
+    const session = review.class_registrations.facilitator_class_sessions;
+    return {
+      kind: 'Group class',
+      title: session?.facilitator_classes?.title ?? 'a class',
+      when: session?.starts_at ?? null,
+    };
+  }
+  return {
+    kind: '1:1 session',
+    title: review.bookings?.facilitator_services?.title ?? 'a session',
+    when: review.bookings?.starts_at ?? null,
+  };
+}
+
+// ---- reviewing an event or a class (0050) ----
+
+/** The attendee's review of a hosted event. */
+export const getMyEventReview = (registrationId: string) =>
+  apiFetch<{ review: MyReview | null; reviewable: boolean; reason: string | null }>(
+    `/registrations/${encodeURIComponent(registrationId)}/review`,
+    { headers: authHeaders() },
+  );
+
+export const saveMyEventReview = (registrationId: string, rating: number, comment: string) =>
+  apiFetch<{ review: MyReview }>(`/registrations/${encodeURIComponent(registrationId)}/review`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ rating, comment }),
+  }).then((r) => r.review);
+
+/** The client's review of a group class they attended. */
+export const getMyClassReview = (registrationId: string) =>
+  apiFetch<{ review: MyReview | null; reviewable: boolean }>(
+    `/classes/registration/${encodeURIComponent(registrationId)}/review`,
+    { headers: authHeaders() },
+  );
+
+export const saveMyClassReview = (registrationId: string, rating: number, comment: string) =>
+  apiFetch<{ review: MyReview }>(
+    `/classes/registration/${encodeURIComponent(registrationId)}/review`,
+    {
+      method: 'PUT',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify({ rating, comment }),
+    },
+  ).then((r) => r.review);
 
 export const adminListReviews = (adminKey: string, status?: ReviewStatus) =>
   apiFetch<{ reviews: AdminReview[] }>(
@@ -1496,12 +1593,56 @@ export interface MyHostedEvent {
   join_url: string | null;
   join_instructions: string | null;
   registrations: { confirmed: number; pending: number };
+  /** Moderation state (0048). Independent of `status`, which is publication. */
+  review_status: EventReviewStatus;
+  submitted_by: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  /** Why it was rejected. Shown to the facilitator verbatim. */
+  review_note: string | null;
+}
+
+export type EventReviewStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
+
+/** The fields a facilitator may write on their own proposal. */
+export interface EventProposalInput {
+  title: string;
+  subtitle: string;
+  excerpt: string;
+  description: string;
+  location: string;
+  starts_at: string;
+  ends_at: string | null;
+  venue_details: string;
+  format: string;
+  image: { id: string | null; url: string; alt: string } | null;
 }
 
 export interface HostedJoinLink {
   join_url: string | null;
   join_instructions: string | null;
 }
+
+export const createMyHostedEvent = (input: EventProposalInput) =>
+  apiFetch<{ event: MyHostedEvent }>('/facilitator/events', {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  }).then((r) => r.event);
+
+export const saveMyHostedEvent = (eventId: string, input: Partial<EventProposalInput>) =>
+  apiFetch<{ event: MyHostedEvent }>(`/facilitator/events/${encodeURIComponent(eventId)}`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  }).then((r) => r.event);
+
+/** Hands the proposal to Hilom. Only valid from `draft`. */
+export const submitMyHostedEvent = (eventId: string) =>
+  apiFetch<{ event: MyHostedEvent }>(`/facilitator/events/${encodeURIComponent(eventId)}/submit`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+  }).then((r) => r.event);
 
 export const listMyHostedEvents = () =>
   apiFetch<{ events: MyHostedEvent[] }>('/facilitator/events', {
@@ -1558,4 +1699,165 @@ export const sendMyHostedJoinDetails = (eventId: string) =>
   apiFetch<JoinDetailsResult>(
     `/facilitator/events/${encodeURIComponent(eventId)}/send-join-details`,
     { method: 'POST', headers: jsonAuthHeaders() },
+  );
+
+// ---------------------------------------------------------------------------
+// Group classes (0049)
+// ---------------------------------------------------------------------------
+
+export interface GroupClass {
+  id: string;
+  title: string;
+  description: string | null;
+  delivery_mode: DeliveryMode;
+  location: string | null;
+  /** Only ever populated on the facilitator's own read — never on a public one. */
+  meeting_url?: string | null;
+  duration_minutes: number;
+  price_centavos: number;
+  currency: string;
+  min_joiners: number;
+  max_joiners: number;
+  is_active: boolean;
+}
+
+export interface ClassSession {
+  id: string;
+  class_id: string;
+  starts_at: string;
+  ends_at: string;
+  price_centavos: number;
+  currency: string;
+  capacity: number;
+  min_joiners: number;
+  status: 'scheduled' | 'cancelled' | 'completed';
+  seatsTaken: number;
+  /** Absent on the facilitator's own read, which reports the roster instead. */
+  seatsLeft?: number;
+  full?: boolean;
+  meetsMinimum: boolean;
+  roster?: ClassRosterEntry[];
+}
+
+export interface ClassRosterEntry {
+  id: string;
+  client_email: string;
+  client_name: string | null;
+  client_notes: string | null;
+  status: string;
+  seat_no: number;
+}
+
+/** What a facilitator sets on a class. */
+export interface GroupClassInput {
+  title: string;
+  description: string;
+  delivery_mode: DeliveryMode;
+  location: string;
+  meeting_url: string;
+  duration_minutes: number;
+  price_centavos: number;
+  min_joiners: number;
+  max_joiners: number;
+  is_active?: boolean;
+}
+
+// ---- the facilitator's own classes ----
+
+export const listMyClasses = () =>
+  apiFetch<{ classes: GroupClass[] }>('/facilitator/classes', { headers: authHeaders() }).then(
+    (r) => r.classes,
+  );
+
+export const createMyClass = (input: GroupClassInput) =>
+  apiFetch<{ class: GroupClass }>('/facilitator/classes', {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  }).then((r) => r.class);
+
+export const updateMyClass = (classId: string, input: GroupClassInput) =>
+  apiFetch<{ class: GroupClass }>(`/facilitator/classes/${encodeURIComponent(classId)}`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  }).then((r) => r.class);
+
+/**
+ * Takes a class off sale. Sessions already scheduled are deliberately left
+ * running — the response says how many, so the screen can say so.
+ */
+export const deactivateMyClass = (classId: string) =>
+  apiFetch<{ deactivated: boolean; upcomingSessions: number }>(
+    `/facilitator/classes/${encodeURIComponent(classId)}`,
+    { method: 'DELETE', headers: authHeaders() },
+  );
+
+export const listMyClassSessions = (classId: string) =>
+  apiFetch<{ sessions: ClassSession[] }>(
+    `/facilitator/classes/${encodeURIComponent(classId)}/sessions`,
+    { headers: authHeaders() },
+  ).then((r) => r.sessions);
+
+export const scheduleMyClassSession = (classId: string, startsAt: string) =>
+  apiFetch<{ session: ClassSession }>(
+    `/facilitator/classes/${encodeURIComponent(classId)}/sessions`,
+    {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify({ starts_at: startsAt }),
+    },
+  ).then((r) => r.session);
+
+/**
+ * Cancels one occurrence.
+ *
+ * Refunds are **not** automatic — the reply reports what is owed so an admin
+ * can action it by hand, which is the same manual-refund rule the rest of the
+ * platform follows.
+ */
+export const cancelMyClassSession = (sessionId: string, reason: string) =>
+  apiFetch<{
+    cancelled: boolean;
+    registrationsCancelled: number;
+    refundsOwed: number;
+    refundTotalCentavos: number;
+  }>(`/facilitator/classes/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ reason }),
+  });
+
+// ---- the public side ----
+
+export const listFacilitatorClasses = (slug: string) =>
+  apiFetch<{
+    facilitator: { slug: string; display_name: string };
+    classes: (GroupClass & { sessions: ClassSession[] })[];
+  }>(`/classes/${encodeURIComponent(slug)}`);
+
+export const getClassSession = (sessionId: string) =>
+  apiFetch<{ session: ClassSession & Record<string, unknown> }>(
+    `/classes/session/${encodeURIComponent(sessionId)}`,
+  ).then((r) => r.session);
+
+/** Claims a seat and returns a PayMongo checkout URL, or confirms a free class. */
+export const joinClassSession = (sessionId: string, input: { name?: string; notes?: string }) =>
+  apiFetch<{
+    registrationId: string;
+    free: boolean;
+    checkoutUrl?: string;
+    amountCentavos?: number;
+    currency?: string;
+    title?: string;
+    startsAt?: string;
+  }>(`/classes/session/${encodeURIComponent(sessionId)}/join`, {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  });
+
+export const listMyJoinedClasses = () =>
+  apiFetch<{ classes: Record<string, any>[] }>('/me/classes', { headers: authHeaders() }).then(
+    (r) => r.classes,
   );

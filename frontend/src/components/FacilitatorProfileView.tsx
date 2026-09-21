@@ -24,8 +24,13 @@ import {
   type PublicReview,
   type RatingSummary,
   type HostedEventCard,
+  type GroupClass,
+  type ClassSession,
 } from '../lib/booking';
 import { Stars } from './Stars';
+
+/** A class as the public profile needs it: the offering plus its next dates. */
+export type PublicGroupClass = GroupClass & { sessions: ClassSession[] };
 import { YEARS_EXPERIENCE, labelFor } from '../lib/facilitator-intake';
 import { shortName } from '../lib/names';
 
@@ -230,6 +235,7 @@ export default function FacilitatorProfileView({
   rating,
   reviews,
   events,
+  classes,
   rootRef,
   backLink = null,
   preview = false,
@@ -244,6 +250,12 @@ export default function FacilitatorProfileView({
    * event list to hand it — the absent case is "not loaded", not "hosts none".
    */
   events?: { upcoming: HostedEventCard[]; past: HostedEventCard[] };
+  /**
+   * Group classes with a date on the calendar (0049). Optional, so the admin
+   * preview — which has no classes to fetch — renders nothing rather than an
+   * empty heading.
+   */
+  classes?: PublicGroupClass[];
   /** The page passes its flip-animation ref through; the editor does not. */
   rootRef?: RefObject<HTMLElement | null>;
   backLink?: ReactNode;
@@ -264,6 +276,7 @@ export default function FacilitatorProfileView({
     .filter((s) => s.kind !== 'exploratory')
     .sort((a, b) => a.price_centavos - b.price_centavos);
   const firstName = shortName(f.display_name, f.short_name);
+  const upcomingClasses = (classes ?? []).filter((c) => c.sessions.length > 0);
   const upcomingEvents = events?.upcoming ?? [];
   const pastEvents = events?.past ?? [];
 
@@ -448,6 +461,21 @@ export default function FacilitatorProfileView({
               <h2>{firstName} is hosting</h2>
               {upcomingEvents.map((e) => (
                 <HostedEvent key={e.id} event={e} preview={preview} />
+              ))}
+            </section>
+          )}
+
+          {/* Group classes, between the events and the reviews. A class is
+              closer to an event than to a 1:1 — many people, one time — but it
+              is the facilitator's own recurring offering rather than a
+              one-off, so it gets its own heading rather than being mixed into
+              "is hosting". Classes with no date scheduled are filtered out
+              entirely: there is nothing to join. */}
+          {upcomingClasses.length > 0 && (
+            <section className="fac-section">
+              <h2>Group classes with {firstName}</h2>
+              {upcomingClasses.map((c) => (
+                <GroupClassCard key={c.id} cls={c} preview={preview} />
               ))}
             </section>
           )}
@@ -963,5 +991,73 @@ function HostedEvent({
     >
       {body}
     </Link>
+  );
+}
+
+/**
+ * One group class on the public profile, with its next few dates.
+ *
+ * Three dates, not all of them: a weekly class has dozens, the page is a
+ * summary, and someone who wants the fourth one is already sold enough to open
+ * the class itself.
+ *
+ * "Full" is stated on the date rather than hiding it. A sold-out Thursday is
+ * evidence the class is worth joining, and hiding it makes the offering look
+ * thinner than it is.
+ */
+function GroupClassCard({ cls, preview }: { cls: PublicGroupClass; preview?: boolean }) {
+  const dates = cls.sessions.slice(0, 3);
+
+  return (
+    <article className="card" style={{ marginBottom: '0.75rem' }}>
+      <h3 style={{ marginBottom: '0.25rem' }}>{cls.title}</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        {cls.delivery_mode === 'online'
+          ? 'Online'
+          : cls.delivery_mode === 'in_person'
+            ? `In person${cls.location ? ` · ${cls.location}` : ''}`
+            : 'Online or in person'}
+        {' · '}
+        {cls.duration_minutes} min
+        {' · '}
+        {cls.price_centavos === 0 ? 'Free' : displayPrice(cls.price_centavos)}
+        {cls.min_joiners > 1 && <> · runs with {cls.min_joiners}+</>}
+      </p>
+
+      {cls.description && <p className="desc">{cls.description}</p>}
+
+      <ul className="small" style={{ listStyle: 'none', padding: 0, margin: '0.5rem 0 0' }}>
+        {dates.map((s) => (
+          <li key={s.id} style={{ padding: '0.3rem 0' }}>
+            <span>
+              {new Intl.DateTimeFormat('en-PH', {
+                timeZone: 'Asia/Manila',
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short',
+                hour: 'numeric',
+                minute: '2-digit',
+              }).format(new Date(s.starts_at))}
+            </span>
+            {s.full ? (
+              <span className="muted"> · full</span>
+            ) : (
+              <>
+                <span className="muted"> · {s.seatsLeft} left </span>
+                {/* Inert in the admin preview, for the same reason every other
+                    link on this view is. */}
+                {preview ? (
+                  <span className="linklike small">Join</span>
+                ) : (
+                  <Link to={`/classes/${s.id}`} className="linklike small">
+                    Join
+                  </Link>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </article>
   );
 }

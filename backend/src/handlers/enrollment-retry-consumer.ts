@@ -47,6 +47,19 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
         // for in-flight compatibility, as retry-queue.ts explains.
         const result = await confirmPackage(await getSupabase(), message.orderId);
         console.log(`[enrollment-retry-consumer] package ${message.orderId} -> ${result.status}`);
+      } else if (kind === 'class') {
+        // `orderId` carries the class_registrations id — the field keeps its
+        // original name for in-flight compatibility, as retry-queue.ts
+        // explains. Filtered on pending_payment so a retry that races the
+        // original webhook cannot un-confirm anything (0049).
+        const supabase = await getSupabase();
+        const { error } = await supabase
+          .from('class_registrations')
+          .update({ status: 'confirmed', hold_expires_at: null })
+          .eq('id', message.orderId)
+          .eq('status', 'pending_payment');
+        if (error) throw error;
+        console.log(`[enrollment-retry-consumer] class seat ${message.orderId} -> confirmed`);
       } else if (kind === 'registration_charge') {
         // `orderId` carries the charge id — the field keeps its original name
         // for in-flight compatibility, as retry-queue.ts explains. No payment

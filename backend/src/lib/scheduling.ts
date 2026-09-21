@@ -104,7 +104,7 @@ async function loadContext(
   now: Date,
   excludeBookingId?: string,
 ): Promise<SchedulingContext> {
-  const [availabilityRes, blackoutRes, busyRes] = await Promise.all([
+  const [availabilityRes, blackoutRes, busyRes, classRes] = await Promise.all([
     supabase
       .from('facilitator_availability')
       .select('weekday, start_minute, end_minute')
@@ -123,11 +123,32 @@ async function loadContext(
       .in('status', ['pending_payment', 'confirmed'])
       .lt('starts_at', to.toISOString())
       .gt('ends_at', from.toISOString()),
+    // Group classes (0049). A facilitator teaching at 10:00 must not also be
+    // bookable for a 1:1 at 10:00.
+    //
+    // Folded into `busy` rather than added as a fourth kind of range, because
+    // it behaves identically to a booking for every purpose this computation
+    // has: it occupies the facilitator and it is not a blackout. Nothing in
+    // computeSlots changes, which means its existing tests still describe all
+    // of its behaviour.
+    //
+    // Note the asymmetry with bookings: there is no hold to honour here. A
+    // class session is scheduled by the facilitator, not held by a buyer, so
+    // it is busy from the moment it exists regardless of who has paid — an
+    // empty class is still a class the facilitator is teaching.
+    supabase
+      .from('facilitator_class_sessions')
+      .select('starts_at, ends_at')
+      .eq('facilitator_id', facilitatorId)
+      .eq('status', 'scheduled')
+      .lt('starts_at', to.toISOString())
+      .gt('ends_at', from.toISOString()),
   ]);
 
   if (availabilityRes.error) throw availabilityRes.error;
   if (blackoutRes.error) throw blackoutRes.error;
   if (busyRes.error) throw busyRes.error;
+  if (classRes.error) throw classRes.error;
 
   const busy = (busyRes.data ?? [])
     .filter((row) => {
@@ -140,6 +161,10 @@ async function loadContext(
       return !row.hold_expires_at || new Date(row.hold_expires_at).getTime() > now.getTime();
     })
     .map((row) => ({ startsAt: row.starts_at as string, endsAt: row.ends_at as string }));
+
+  for (const row of classRes.data ?? []) {
+    busy.push({ startsAt: row.starts_at as string, endsAt: row.ends_at as string });
+  }
 
   return {
     availability: (availabilityRes.data ?? []).map((row) => ({
