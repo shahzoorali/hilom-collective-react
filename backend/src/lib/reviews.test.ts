@@ -9,7 +9,15 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateReview, reviewerLabel, isReviewable, ratingSummary, ReviewError } from './reviews.js';
+import {
+  validateReview,
+  reviewerLabel,
+  isReviewable,
+  ratingSummary,
+  ReviewError,
+  isAttendanceReviewable,
+  reviewConflictTarget,
+} from './reviews.js';
 
 describe('isReviewable — which sessions may be reviewed', () => {
   it('allows a session that took place', () => {
@@ -123,5 +131,73 @@ describe('ratingSummary', () => {
     const summary = ratingSummary({ rating_count: -5, rating_sum: -20 });
     assert.equal(summary.count, 0);
     assert.equal(summary.average, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reviewing things other than a 1:1 session (0050)
+// ---------------------------------------------------------------------------
+
+describe('isAttendanceReviewable', () => {
+  const past = '2026-01-01T10:00:00Z';
+  const pastEnd = '2026-01-01T12:00:00Z';
+  const now = new Date('2026-06-01T00:00:00Z');
+
+  it('a confirmed registration for a finished event can be reviewed', () => {
+    assert.equal(isAttendanceReviewable('confirmed', pastEnd, past, now), true);
+  });
+
+  it('completed counts too — the sweep marks attendance after the fact', () => {
+    assert.equal(isAttendanceReviewable('completed', pastEnd, past, now), true);
+  });
+
+  it('an event that has not happened yet cannot be reviewed', () => {
+    const future = '2026-12-01T10:00:00Z';
+    assert.equal(isAttendanceReviewable('confirmed', null, future, now), false);
+  });
+
+  it('ends_at decides, not starts_at — a two-day retreat is not reviewable on day one', () => {
+    // Mid-retreat: it started yesterday and ends tomorrow.
+    const midway = new Date('2026-06-02T00:00:00Z');
+    assert.equal(
+      isAttendanceReviewable('confirmed', '2026-06-03T00:00:00Z', '2026-06-01T00:00:00Z', midway),
+      false,
+    );
+  });
+
+  it('a one-day event with no ends_at falls back to starts_at', () => {
+    assert.equal(isAttendanceReviewable('confirmed', null, past, now), true);
+  });
+
+  it('judged on the clock, not on a status', () => {
+    // An event is marked `completed` by a sweep. The hour between it ending
+    // and the sweep running is still an hour in which someone has a
+    // legitimate opinion about it, so `confirmed` plus a past date is enough.
+    assert.equal(isAttendanceReviewable('confirmed', pastEnd, past, now), true);
+  });
+
+  it('a lapsed hold cannot be reviewed — they never paid and never came', () => {
+    assert.equal(isAttendanceReviewable('expired', pastEnd, past, now), false);
+    assert.equal(isAttendanceReviewable('pending_payment', pastEnd, past, now), false);
+  });
+
+  it('a cancelled place cannot be reviewed — nothing happened', () => {
+    assert.equal(isAttendanceReviewable('cancelled', pastEnd, past, now), false);
+  });
+
+  it('an unparseable date is not reviewable rather than throwing', () => {
+    assert.equal(isAttendanceReviewable('confirmed', null, 'not-a-date', now), false);
+  });
+});
+
+describe('reviewConflictTarget', () => {
+  // 0050 replaced the unique constraint on booking_id with three partial
+  // unique indexes. PostgREST has to be told which one an upsert targets, and
+  // naming the wrong one would insert a second review instead of revising the
+  // first.
+  it('names the column for each subject', () => {
+    assert.equal(reviewConflictTarget({ booking_id: 'b1' }), 'booking_id');
+    assert.equal(reviewConflictTarget({ event_registration_id: 'e1' }), 'event_registration_id');
+    assert.equal(reviewConflictTarget({ class_registration_id: 'c1' }), 'class_registration_id');
   });
 });

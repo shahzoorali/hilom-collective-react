@@ -28,6 +28,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
+import { sumPayable, reconcileClaim, payoutCurrency, type PayableRow } from '../lib/payout-domain.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
 import { sendFacilitatorApproved, sendFacilitatorPublished, sendBookingCancelled, sendPayoutPaid } from '../lib/booking-email.js';
@@ -679,21 +680,6 @@ async function markRefundSent(
   return ok({ bookingId, refundedAt: marked.refunded_at, reference: marked.refund_reference });
 }
 
-/**
- * One piece of payable work, from either source.
- *
- * Bookings and class registrations carry identical money columns by design
- * (0051), which is what lets the batch builder total them with one reducer
- * instead of two that have to be kept in step.
- */
-interface PayableRow {
-  id: string;
-  price_centavos: number;
-  platform_fee_centavos: number;
-  facilitator_net_centavos: number;
-  currency?: string;
-}
-
 const PAYOUT_COLUMNS =
   'id, facilitator_id, period_start, period_end, gross_centavos, platform_fee_centavos, processing_fee_centavos, net_centavos, currency, status, paid_at, reference, notes, created_at';
 
@@ -796,25 +782,9 @@ async function buildPayout(
   }
 
   // One reducer over both sources — the column names are identical by design
-  // (0051), which is what lets this stay a single sum rather than two that
-  // have to be kept in step.
-  const sumOf = (rows: Pick<PayableRow, 'price_centavos' | 'platform_fee_centavos' | 'facilitator_net_centavos'>[]) =>
-    rows.reduce(
-      (acc, row) => ({
-        gross: acc.gross + Number(row.price_centavos ?? 0),
-        fees: acc.fees + Number(row.platform_fee_centavos ?? 0),
-        net: acc.net + Number(row.facilitator_net_centavos ?? 0),
-      }),
-      { gross: 0, fees: 0, net: 0 },
-    );
-
-  const bookingTotals = sumOf(bookings);
-  const classTotals = sumOf(classSeats);
-  const totals = {
-    gross: bookingTotals.gross + classTotals.gross,
-    fees: bookingTotals.fees + classTotals.fees,
-    net: bookingTotals.net + classTotals.net,
-  };
+  // (0051). Lives in payout-domain.ts, with the tests that make the
+  // reconciliation below trustworthy.
+  const totals = sumPayable([...bookings, ...classSeats]);
 
   const processingFee = Number(body.processing_fee_centavos ?? 0);
 
@@ -828,7 +798,7 @@ async function buildPayout(
       platform_fee_centavos: totals.fees,
       processing_fee_centavos: processingFee,
       net_centavos: totals.net - processingFee,
-      currency: (bookings[0]?.currency as string) ?? (classSeats[0]?.currency as string) ?? 'PHP',
+      currency: payoutCurrency(bookings, classSeats),
       status: 'draft',
       notes: typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null,
     })
@@ -866,29 +836,36 @@ async function buildPayout(
   const claimedBookings = await stamp('bookings', bookings.map((b) => b.id as string));
   const claimedClasses = await stamp('class_registrations', classSeats.map((c) => c.id as string));
   const claimedRows = [...claimedBookings, ...claimedClasses];
-  const expectedCount = bookings.length + classSeats.length;
+  // What this batch actually won, decided by the tested reconciliation in
+  // payout-domain.ts rather than inline here. `claimedRows` is deliberately
+  // the read-back from the stamping update, not the initial read: passing the
+  // latter would make the whole reconciliation a no-op and restore the
+  // double-payment it exists to prevent.
+  const reconciled = reconcileClaim({
+    expected: [...bookings, ...classSeats],
+    claimed: claimedRows,
+    processingFeeCentavos: processingFee,
+  });
 
   // Lost every row to a concurrent batch. Void rather than leave an empty
   // draft that reads as a real, approvable payout.
-  if (claimedRows.length === 0) {
+  if (reconciled.outcome === 'empty') {
     await supabase.from('facilitator_payouts').update({ status: 'void' }).eq('id', payout.id);
     return json(409, {
       error: 'That work was claimed by another payout batch. Nothing left to pay in this period.',
     });
   }
 
-  // Re-total from what was actually claimed. Usually identical to the
-  // provisional figures above; different only when a concurrent batch took
-  // some, which is exactly the case this exists to get right.
-  if (claimedRows.length !== expectedCount) {
-    const actual = sumOf(claimedRows);
-
+  // Re-total from what was actually claimed. Identical to the provisional
+  // figures above unless a concurrent batch took some, which is exactly the
+  // case this exists to get right.
+  if (reconciled.outcome === 'partial') {
     const { data: corrected, error: correctionError } = await supabase
       .from('facilitator_payouts')
       .update({
-        gross_centavos: actual.gross,
-        platform_fee_centavos: actual.fees,
-        net_centavos: actual.net - processingFee,
+        gross_centavos: reconciled.totals.gross,
+        platform_fee_centavos: reconciled.totals.fees,
+        net_centavos: reconciled.netAfterProcessing,
       })
       .eq('id', payout.id)
       .select(PAYOUT_COLUMNS)
@@ -897,8 +874,9 @@ async function buildPayout(
 
     console.warn('[adminFacilitators.buildPayout] concurrent batch claimed some work', {
       payoutId: payout.id,
-      expected: expectedCount,
+      expected: bookings.length + classSeats.length,
       claimed: claimedRows.length,
+      lost: reconciled.lost,
     });
 
     return ok({

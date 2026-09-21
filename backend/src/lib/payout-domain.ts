@@ -1,0 +1,148 @@
+/**
+ * The arithmetic behind a payout batch (0013, extended for classes by 0051).
+ *
+ * Extracted from `admin-facilitators.ts` because it is the part that decides
+ * how much money a person is sent, and it was the one piece of this system
+ * with no test behind it. The handler keeps the database work — reading the
+ * unpaid rows, inserting the batch, stamping the claims — and everything that
+ * is a decision about numbers lives here, where it can be run against the
+ * cases that actually matter.
+ *
+ * ## The failure this exists to prevent
+ *
+ * A payout batch is built in two steps that cannot be one transaction through
+ * PostgREST:
+ *
+ *   1. read every unpaid, delivered row in the period, and total it
+ *   2. stamp those rows with the new batch's id
+ *
+ * Between those, another admin can build an overlapping batch and take some of
+ * the same rows. Step 2 guards against *claiming* them twice by re-asserting
+ * `payout_id is null` — but the totals came from step 1, so without a second
+ * reconciliation the batch still pays for work it did not win, and the other
+ * batch pays for it as well. Same session, paid twice, to a facilitator who
+ * has no way of knowing.
+ *
+ * `reconcileClaim` is that reconciliation, and the tests beside it are the
+ * only thing standing between a race and a real overpayment.
+ */
+
+/**
+ * One piece of payable work, from either source.
+ *
+ * Bookings and class registrations carry identical money columns by design
+ * (0051), which is what lets one function total both instead of two that have
+ * to be kept in step.
+ */
+export interface PayableRow {
+  id: string;
+  price_centavos: number;
+  platform_fee_centavos: number;
+  facilitator_net_centavos: number;
+  currency?: string | null;
+}
+
+export interface PayableTotals {
+  /** What clients paid, before Hilom's cut. */
+  gross: number;
+  /** Hilom's cut. */
+  fees: number;
+  /** What the facilitator is owed, before payment-processing costs. */
+  net: number;
+  /** How many pieces of work this covers. */
+  count: number;
+}
+
+/**
+ * Totals a set of payable rows.
+ *
+ * Every field is read through `Number(x ?? 0)` rather than trusted: these rows
+ * come back from PostgREST, where a numeric column can arrive as a string, and
+ * a silent `'800' + '800' === '800800'` in a payout would be discovered by the
+ * facilitator, not by us.
+ */
+export function sumPayable(rows: readonly PayableRow[]): PayableTotals {
+  return rows.reduce<PayableTotals>(
+    (acc, row) => ({
+      gross: acc.gross + Number(row.price_centavos ?? 0),
+      fees: acc.fees + Number(row.platform_fee_centavos ?? 0),
+      net: acc.net + Number(row.facilitator_net_centavos ?? 0),
+      count: acc.count + 1,
+    }),
+    { gross: 0, fees: 0, net: 0, count: 0 },
+  );
+}
+
+export type PayoutReconciliation =
+  | {
+      /** Every row this batch read was still unpaid when it stamped them. */
+      outcome: 'exact';
+      totals: PayableTotals;
+      netAfterProcessing: number;
+    }
+  | {
+      /** A concurrent batch took some. The totals below are what this batch won. */
+      outcome: 'partial';
+      totals: PayableTotals;
+      netAfterProcessing: number;
+      lost: number;
+    }
+  | {
+      /** A concurrent batch took all of them. Nothing to pay; void the batch. */
+      outcome: 'empty';
+    };
+
+/**
+ * Decides what a batch actually owes, given what it read and what it won.
+ *
+ * `claimed` must be the rows read back *from the stamping update*, not the
+ * rows from the initial read. Passing the initial read here would make this
+ * function a no-op and restore the double-payment it exists to prevent.
+ *
+ * The processing fee is subtracted from net rather than from gross: it is a
+ * cost of sending the money, not a share of the sale, and Hilom's platform fee
+ * has already been taken out. It is allowed to push net negative — a tiny
+ * batch can genuinely cost more to send than it contains — because silently
+ * clamping to zero would hide that from the person deciding whether to send
+ * it.
+ */
+export function reconcileClaim(input: {
+  expected: readonly PayableRow[];
+  claimed: readonly PayableRow[];
+  processingFeeCentavos: number;
+}): PayoutReconciliation {
+  const { expected, claimed, processingFeeCentavos } = input;
+
+  if (claimed.length === 0) return { outcome: 'empty' };
+
+  const totals = sumPayable(claimed);
+  const netAfterProcessing = totals.net - processingFeeCentavos;
+
+  if (claimed.length === expected.length) {
+    return { outcome: 'exact', totals, netAfterProcessing };
+  }
+
+  return {
+    outcome: 'partial',
+    totals,
+    netAfterProcessing,
+    lost: expected.length - claimed.length,
+  };
+}
+
+/**
+ * The currency for a batch drawn from both sources.
+ *
+ * Bookings first only because that is the larger set in practice; either may
+ * be empty. Falls back to PHP, which is the column default everywhere and the
+ * only currency the platform has ever charged in — a batch is never built from
+ * nothing, so this fallback is for the type system rather than for a real case.
+ */
+export function payoutCurrency(...sources: readonly (readonly PayableRow[])[]): string {
+  for (const rows of sources) {
+    for (const row of rows) {
+      if (row.currency) return row.currency;
+    }
+  }
+  return 'PHP';
+}
