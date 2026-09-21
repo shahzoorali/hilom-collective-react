@@ -6,11 +6,16 @@
  * Hilom holds no meeting account of its own — see
  * docs/meeting-link-integrations.md.
  *
- * The copy carries one load-bearing message: **you need an account with the
- * provider**. Someone without a Zoom account who picks Zoom on a service ends
+ * The copy carries two load-bearing messages. The first: **you need an account
+ * with the provider**. Someone without a Zoom account who picks Zoom on a service ends
  * up with sessions that have no way to join, discovered by a client at the
  * worst possible moment. So the requirement is stated on the card, before the
  * button, rather than in a tooltip or an error afterwards.
+ *
+ * The second: **Google will call this app unverified, and that is expected.**
+ * See GOOGLE_UNVERIFIED below. Both notes sit before the button for the same
+ * reason — once someone has left for the provider's consent screen, this page
+ * has no way to say anything to them at all.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -39,6 +44,60 @@ const BLURB: Record<IntegrationProvider, { requires: string; effect: string }> =
   },
 };
 
+/**
+ * Google shows "Google hasn't verified this app" before the consent screen,
+ * because connecting needs the sensitive `meetings.space.created` scope and the
+ * app has not been through Google's verification review yet.
+ *
+ * Every facilitator hits this, not just the first — so it is explained here
+ * rather than answered one support message at a time. The wording matters: the
+ * screen accuses Hilom of being unsafe, and a facilitator who is not told in
+ * advance will reasonably stop. Saying it first, in our own voice, turns an
+ * alarming dead end into an expected step.
+ *
+ * Flip to false once verification is granted and this whole note disappears
+ * from every card — the only change needed.
+ */
+const GOOGLE_UNVERIFIED = true;
+
+/** Which providers show the unverified-app warning. */
+const SHOWS_UNVERIFIED_WARNING: IntegrationProvider[] = ['google_meet'];
+
+/**
+ * What to expect on Google's screen, and how to get past it.
+ *
+ * Deliberately not styled as an error. It is cream rather than red because
+ * nothing has gone wrong — a red box here would confirm the very suspicion the
+ * Google screen plants. Numbered, because it is a sequence of clicks and the
+ * second one is hidden behind the first.
+ */
+function UnverifiedAppNote({ label }: { label: string }) {
+  return (
+    <div className="alert alert-info" style={{ margin: '0.6rem 0 0' }}>
+      <strong>Google will say this app isn't verified — that's expected.</strong>
+      <p className="small" style={{ margin: '0.4rem 0 0' }}>
+        Hilom is new, and {label} access is still going through Google's review. Until that
+        finishes you'll see a screen headed <em>"Google hasn't verified this app"</em>. Your
+        account is safe; nothing is wrong. To continue:
+      </p>
+      <ol className="small" style={{ margin: '0.4rem 0 0', paddingLeft: '1.2rem' }}>
+        <li>
+          Click <strong>Advanced</strong> — it's a small link at the bottom left, easy to miss.
+        </li>
+        <li>
+          Click <strong>Go to Hilom Collective (unsafe)</strong>. The wording is Google's
+          standard text for an app still in review, not a warning about your data.
+        </li>
+        <li>Then approve the permissions as normal.</li>
+      </ol>
+      <p className="small" style={{ margin: '0.4rem 0 0' }}>
+        Hilom only ever sees the meetings it creates for you. It cannot read your calendar,
+        your email or anything else in your account.
+      </p>
+    </div>
+  );
+}
+
 export default function ConnectionsTab() {
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,9 +121,28 @@ export default function ConnectionsTab() {
     const connected = params.get('connected');
     if (!connected) return;
 
+    let attempted: string | null = null;
+    try {
+      attempted = sessionStorage.getItem('hilom.connectingProvider');
+      sessionStorage.removeItem('hilom.connectingProvider');
+    } catch {
+      attempted = null;
+    }
+
     if (connected === 'ok') setNotice('Account connected.');
-    else if (connected === 'cancelled') setNotice('Connection cancelled — nothing was changed.');
-    else setError(params.get('reason') || 'That connection could not be completed.');
+    else if (connected === 'cancelled') {
+      // "Back to safety" on Google's unverified-app screen arrives here as a
+      // plain cancel. Saying only "cancelled" leaves someone who was trying to
+      // do the right thing with no idea they were one hidden link away, so the
+      // guidance is repeated at exactly the moment it is relevant.
+      setNotice(
+        GOOGLE_UNVERIFIED && attempted === 'google_meet'
+          ? 'Connection cancelled — nothing was changed. If you stopped at the “Google hasn’t ' +
+              'verified this app” screen, that one is expected: start again and choose Advanced, ' +
+              'then “Go to Hilom Collective”.'
+          : 'Connection cancelled — nothing was changed.',
+      );
+    } else setError(params.get('reason') || 'That connection could not be completed.');
 
     params.delete('connected');
     params.delete('reason');
@@ -76,6 +154,15 @@ export default function ConnectionsTab() {
     setBusy(provider);
     setError(null);
     try {
+      // Which provider we left for. The cancelled callback cannot tell us —
+      // it has no session to look the state row up against by the time it
+      // redirects — so the answer is kept here, in the tab that asked.
+      try {
+        sessionStorage.setItem('hilom.connectingProvider', provider);
+      } catch {
+        // Private browsing, or storage disabled. The return message falls back
+        // to the generic wording; nothing else depends on this.
+      }
       // Full navigation, not fetch: the consent screen is the provider's page.
       window.location.href = await startConnectingProvider(provider, '/facilitator/connections');
     } catch (err) {
@@ -160,6 +247,14 @@ export default function ConnectionsTab() {
             <br />
             <strong>{BLURB[c.provider].requires}</strong>
           </p>
+
+          {/* Only while unconnected: once they are through the warning it is
+              noise, and a note that hides itself needs no dismiss button and no
+              per-facilitator state to remember. Still shown for a broken
+              connection, because reconnecting means meeting the screen again. */}
+          {GOOGLE_UNVERIFIED &&
+            SHOWS_UNVERIFIED_WARNING.includes(c.provider) &&
+            (!c.connected || c.broken) && <UnverifiedAppNote label={c.label} />}
 
           <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
             {c.connected ? (
