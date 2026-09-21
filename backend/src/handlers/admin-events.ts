@@ -27,6 +27,7 @@ import { validateEvent, validateTicketing } from '../lib/cms-events.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { validatePlans, TicketingValidationError } from '../lib/event-ticketing.js';
 import { actorFromEvent, recordAudit } from '../lib/audit.js';
+import { sendEventProposalDecision } from '../lib/booking-email.js';
 
 const COLUMNS =
   'id, title, subtitle, description, excerpt, image_id, image_url, image_alt, location, starts_at, ends_at, ' +
@@ -379,9 +380,17 @@ async function review(
 
   const { data: current, error: readError } = await supabase
     .from('events')
-    .select('id, title, status, review_status')
+    // submitted_by, not facilitator_id: the decision is addressed to whoever
+    // proposed the event, which is not necessarily who ends up hosting it.
+    .select('id, title, status, review_status, submitted_by, facilitators:submitted_by(email, display_name, short_name)')
     .eq('id', eventId)
-    .maybeSingle<EventRow & { review_status: string }>();
+    .maybeSingle<
+      EventRow & {
+        review_status: string;
+        submitted_by: string | null;
+        facilitators: { email: string; display_name: string; short_name: string | null } | null;
+      }
+    >();
   if (readError) throw readError;
   if (!current) return notFound('Event not found');
 
@@ -405,6 +414,26 @@ async function review(
     .maybeSingle();
   if (error) throw error;
   if (!data) return notFound('Event not found');
+
+  // Best-effort, like every other notification in this codebase: the decision
+  // is recorded and the row is correct, so a failed send is recoverable in a
+  // way that failing the admin's action is not.
+  //
+  // An event with no `submitted_by` was created by an admin rather than
+  // proposed, so there is nobody waiting to hear — that is the ordinary case
+  // for every event predating 0048, not an error.
+  if (current.submitted_by && current.facilitators?.email) {
+    await sendEventProposalDecision({
+      to: current.facilitators.email,
+      facilitatorName: current.facilitators.short_name || current.facilitators.display_name,
+      eventTitle: current.title ?? 'your event',
+      approved: decision === 'approve',
+      reviewNote: note || null,
+      published: patch.status === 'published',
+    }).catch((err: unknown) => {
+      console.error('[adminEvents.review] decision email failed', { eventId, err });
+    });
+  }
 
   await recordAudit(actorFromEvent(event), {
     action: decision === 'approve' ? 'event.approved' : 'event.rejected',

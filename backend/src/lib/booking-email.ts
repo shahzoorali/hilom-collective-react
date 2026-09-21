@@ -1009,3 +1009,195 @@ export async function sendPayoutPaid(ctx: {
 
   await send(ctx.facilitatorEmail, `You've been paid — ${amount}`, text, html);
 }
+
+/**
+ * Tells someone the group class they paid for has been cancelled (0049/0051).
+ *
+ * Until this existed a cancelled class was silent: the seat was released, the
+ * refund was queued, and the only way to find out was to open your account and
+ * notice. Somebody who had arranged their Thursday around a class deserves to
+ * be told, and told before they turn up.
+ *
+ * ## It states the refund in the same breath
+ *
+ * The one question this email exists to pre-empt is "what happens to my
+ * money", and the honest answer is unusual enough to need saying: a person at
+ * Hilom issues it by hand, so it is not instant. That matches the help centre
+ * (`if-a-class-is-cancelled`) word for word on the two things people act on —
+ * a few working days, chase after a week — because a client comparing the two
+ * and finding different promises trusts neither.
+ *
+ * A free class says so instead. "You will be refunded ₱0" is worse than
+ * nothing.
+ *
+ * ## The facilitator's reason is included verbatim when there is one
+ *
+ * It is the difference between a cancellation someone understands and one that
+ * reads as being dropped. Escaped, because it is free text a facilitator typed.
+ */
+export async function sendClassCancelled(input: {
+  to: string;
+  clientName: string | null;
+  className: string;
+  facilitatorName: string;
+  startsAt: string;
+  /** Client-local where known; falls back to Manila, like the rest of this file. */
+  timezone: string;
+  refundCentavos: number;
+  currency: string;
+  reason: string | null;
+}): Promise<void> {
+  const { to, clientName, className, facilitatorName, startsAt, timezone, refundCentavos, currency, reason } = input;
+
+  const when = new Intl.DateTimeFormat('en-PH', {
+    timeZone: timezone || 'Asia/Manila',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(startsAt));
+
+  const greeting = clientName ? `Hi ${escapeHtml(shortName(clientName))},` : 'Hi,';
+  const paid = refundCentavos > 0;
+  const amount = peso(refundCentavos, currency);
+
+  const refundHtml = paid
+    ? p(
+        `You will be refunded in full — <strong>${escapeHtml(amount)}</strong>. Hilom issues refunds by hand, ` +
+          'so please allow a few working days for it to reach the account you paid from.',
+      ) + note('If it has not arrived within a week, reply to this email and we will find it.')
+    : p('Nothing was charged for this class, so there is nothing to refund.');
+
+  const html = renderEmail({
+    preheader: `${className} on ${when} has been cancelled.`,
+    heading: 'Your class has been cancelled',
+    body:
+      p(greeting) +
+      p(
+        `<strong>${escapeHtml(className)}</strong> with ${escapeHtml(facilitatorName)}, on ${escapeHtml(when)}, ` +
+          'has been cancelled. Your place has been released.',
+      ) +
+      (reason ? note(`${escapeHtml(facilitatorName)} said: “${escapeHtml(reason)}”`) : '') +
+      refundHtml +
+      p('We are sorry for the disruption.'),
+  });
+
+  const text = renderText('Your class has been cancelled', [
+    clientName ? `Hi ${shortName(clientName)},` : 'Hi,',
+    '',
+    `${className} with ${facilitatorName}, on ${when}, has been cancelled. Your place has been released.`,
+    ...(reason ? ['', `${facilitatorName} said: "${reason}"`] : []),
+    '',
+    ...(paid
+      ? [
+          `You will be refunded in full - ${amount}. Hilom issues refunds by hand, so please allow`,
+          'a few working days. If it has not arrived within a week, reply to this email.',
+        ]
+      : ['Nothing was charged for this class, so there is nothing to refund.']),
+    '',
+    'We are sorry for the disruption.',
+  ]);
+
+  await send(to, `Cancelled: ${className}`, text, html);
+}
+
+/**
+ * Tells a facilitator what Hilom decided about the event they proposed (0048).
+ *
+ * Without this, a decision was silent. The proposal flow deliberately makes a
+ * rejection note mandatory — an admin cannot reject without writing one —
+ * and that note then reached nobody until the facilitator happened to open
+ * their dashboard and look. A required explanation that nobody is told about
+ * is a form of politeness with no recipient.
+ *
+ * ## Approval and rejection are one function, not two
+ *
+ * They share a subject, a recipient, a link and a shape, and the thing that
+ * differs is two paragraphs. Two functions would mean two places to keep the
+ * link correct and two places for the wording to drift apart.
+ *
+ * ## The note is reproduced exactly
+ *
+ * Escaped, because an admin typed it, and unedited, because paraphrasing
+ * someone's reason for a rejection is how "the dates clash with the retreat"
+ * becomes "your event was not suitable".
+ */
+export async function sendEventProposalDecision(input: {
+  to: string;
+  facilitatorName: string;
+  eventTitle: string;
+  approved: boolean;
+  /** Required on a rejection; ignored on an approval. */
+  reviewNote: string | null;
+  /** Only meaningful when approved and published. */
+  published: boolean;
+}): Promise<void> {
+  const { to, facilitatorName, eventTitle, approved, reviewNote, published } = input;
+
+  const dashboard = 'https://www.hilomcollective.com/facilitator/events';
+  const greeting = `Hi ${escapeHtml(shortName(facilitatorName))},`;
+
+  const body = approved
+    ? p(greeting) +
+      p(`<strong>${escapeHtml(eventTitle)}</strong> has been approved.`) +
+      p(
+        published
+          ? 'It is live on the Hilom events page now, and people can register.'
+          : 'It is approved but not published yet — we will put it on the events page shortly.',
+      ) +
+      // The one thing they can still change, and the one thing they cannot.
+      // Worth saying here because this is the moment the rules change.
+      note(
+        'You can still edit the joining link and joining instructions yourself, at any time. ' +
+          'The title, date and description are now fixed — they are what people are registering for. ' +
+          'If one of those genuinely has to change, reply to this email.',
+      ) +
+      button('Open your event', dashboard)
+    : p(greeting) +
+      p(`We have not published <strong>${escapeHtml(eventTitle)}</strong> yet, and we would like some changes first.`) +
+      (reviewNote ? note(`<strong>What we would like changed:</strong><br>${escapeHtml(reviewNote)}`) : '') +
+      p(
+        'Your event is editable again in your dashboard. Make the changes and send it back to us — ' +
+          'it goes straight back into the queue.',
+      ) +
+      button('Edit your event', dashboard);
+
+  const html = renderEmail({
+    preheader: approved
+      ? `${eventTitle} has been approved.`
+      : `${eventTitle} needs a few changes before we can publish it.`,
+    heading: approved ? 'Your event is approved' : 'A few changes first',
+    body,
+  });
+
+  const text = renderText(approved ? 'Your event is approved' : 'A few changes first', [
+    `Hi ${shortName(facilitatorName)},`,
+    '',
+    ...(approved
+      ? [
+          `${eventTitle} has been approved.`,
+          published
+            ? 'It is live on the Hilom events page now, and people can register.'
+            : 'It is approved but not published yet - we will put it on the events page shortly.',
+          '',
+          'You can still edit the joining link and instructions yourself at any time.',
+          'The title, date and description are now fixed - they are what people are registering for.',
+        ]
+      : [
+          `We have not published ${eventTitle} yet, and we would like some changes first.`,
+          ...(reviewNote ? ['', 'What we would like changed:', reviewNote] : []),
+          '',
+          'Your event is editable again in your dashboard. Make the changes and send it back to us.',
+        ]),
+    '',
+    dashboard,
+  ]);
+
+  await send(
+    to,
+    approved ? `Approved: ${eventTitle}` : `Changes needed: ${eventTitle}`,
+    text,
+    html,
+  );
+}

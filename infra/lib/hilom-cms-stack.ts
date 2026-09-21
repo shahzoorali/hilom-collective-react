@@ -123,6 +123,12 @@ export class HilomCmsStack extends cdk.Stack {
     // hardcoded community form (core stack) does — see notifySubmission in
     // backend/src/handlers/forms.ts.
     formsPublic.addToRolePolicy(sesSendPolicy(this));
+    // Approving or rejecting a facilitator's event proposal emails them the
+    // decision (0048). Granted here for the same reason the marketplace stack
+    // grants per function: omitting it is a silent runtime AccessDenied, not a
+    // deploy error — which is exactly how ClassesFn shipped unable to reach
+    // any of its secrets.
+    adminEvents.addToRolePolicy(sesSendPolicy(this));
 
     // Presigning can only sign what the signing role is itself allowed to do,
     // so these grants are what make the upload URL work — and what bound it.
