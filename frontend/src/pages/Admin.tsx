@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams, Link } from 'react-router-dom';
 import { adminListPages, ADMIN_ACTOR_STORAGE } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
+import DashboardTab from './admin/DashboardTab';
 import CommerceTab from './admin/CommerceTab';
 import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
@@ -28,6 +29,10 @@ import { MediaGrid } from './admin/MediaLibrary';
 const KEY_STORAGE = 'hilom.adminKey';
 
 const NAV_GROUPS = [
+  {
+    label: 'Overview',
+    items: [{ label: 'Dashboard', path: 'dashboard', icon: '🏠' }],
+  },
   {
     label: 'Content',
     items: [
@@ -143,7 +148,7 @@ export default function Admin() {
     sessionStorage.removeItem(ADMIN_ACTOR_STORAGE);
     setAuthed(false);
     setAdminKey('');
-    navigate('/admin/pages');
+    navigate('/admin/dashboard');
   }
 
   if (checkingSession) {
@@ -239,7 +244,7 @@ export default function Admin() {
     );
   }
 
-  const activeTab = location.pathname.split('/')[2] ?? 'pages';
+  const activeTab = location.pathname.split('/')[2] ?? 'dashboard';
   const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
   const editingPost = /^\/admin\/posts\/[^/]+/.test(location.pathname);
   const flushChrome = editingPage || editingPost;
@@ -269,7 +274,7 @@ export default function Admin() {
 
       {/* Left Sidebar Navigation (slides in as a drawer on mobile) */}
       <aside className={`admin-sidebar ${drawerOpen ? 'admin-sidebar--open' : ''}`}>
-        <Link to="/admin/pages" className="admin-sidebar-brand">
+        <Link to="/admin/dashboard" className="admin-sidebar-brand">
           <img src={hilomLogo} alt="Hilom" className="brand-logo" />
           <div className="admin-brand-text">
             <span className="admin-brand-title">Hilom CMS</span>
@@ -336,7 +341,8 @@ export default function Admin() {
       {/* Main Admin Body */}
       <main className={flushChrome ? 'admin-content admin-content--flush' : 'admin-content'}>
         <Routes>
-          <Route index element={<Navigate to="pages" replace />} />
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<DashboardTab adminKey={adminKey} />} />
           <Route path="pages" element={<PagesTab adminKey={adminKey} />} />
           <Route path="pages/:pageId" element={<PageEditorRoute adminKey={adminKey} />} />
           <Route path="posts" element={<PostsTab adminKey={adminKey} />} />
@@ -375,7 +381,7 @@ export default function Admin() {
           <Route path="accounts" element={<CognitoUsersTab adminKey={adminKey} />} />
           <Route path="reviews" element={<ReviewsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
-          <Route path="*" element={<Navigate to="pages" replace />} />
+          <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Routes>
       </main>
     </div>

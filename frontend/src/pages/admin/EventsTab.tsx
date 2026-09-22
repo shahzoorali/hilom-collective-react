@@ -13,7 +13,7 @@
  * could ever catch, since plans live in their own table behind their own save.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   adminCreateEvent,
   adminDeleteEvent,
@@ -273,7 +273,15 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
   const [draft, setDraft] = useState<Draft>(blankDraft);
   const [searchQuery, setSearchQuery] = useState('');
   const [timeFilter, setTimeFilter] = useState<'all' | 'upcoming' | 'past'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'submitted'>('all');
+  // `?status=submitted` is how the dashboard hands over: its "event proposals"
+  // card links here with the review queue already selected.
+  const [searchParams] = useSearchParams();
+  const initialStatus = searchParams.get('status');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'submitted'>(
+    initialStatus === 'submitted' || initialStatus === 'published' || initialStatus === 'draft'
+      ? initialStatus
+      : 'all',
+  );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

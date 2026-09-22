@@ -963,6 +963,38 @@ export const adminListAuditLog = (adminKey: string, params: Record<string, strin
   ).then((r) => r.entries);
 };
 
+/** One line of the dashboard's "money in" figure — see admin-overview.ts. */
+export interface RevenueLine {
+  source: 'courses' | 'events' | 'sessions' | 'packages' | 'classes';
+  label: string;
+  centavos: number;
+  count: number;
+}
+
+export interface AdminOverview {
+  generatedAt: string;
+  queues: {
+    facilitatorApplications: number;
+    reviewsPending: number;
+    eventProposals: number;
+    classRefundsOwed: number;
+    bookingRefundsOwed: number;
+    overdueRegistrations: number;
+    stuckOrders: number;
+  };
+  money: {
+    days: number;
+    since: string;
+    basis: string;
+    currency: string;
+    totalCentavos: number;
+    bySource: RevenueLine[];
+  };
+}
+
+export const adminGetOverview = (adminKey: string, days = 7) =>
+  apiFetch<AdminOverview>(`/admin/overview?days=${days}`, adminInit(adminKey));
+
 /** The CSV export is a download, so it bypasses apiFetch and its JSON parsing. */
 export const adminRosterCsvUrl = (eventId: string) => `/admin/events/${eventId}/roster.csv`;
 

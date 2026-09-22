@@ -171,13 +171,16 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // The user pool itself — the accounts People cannot show because they have
     // no Postgres row yet. Read-only; the IAM policy below grants only list/get.
     const adminCognito = makeFn('AdminCognitoFn', 'handlers/admin-cognito.ts', 'handler');
+    // The dashboard: one count-only read per queue, using the same predicates
+    // as the screens those queues link to. See lib/admin-queues.ts.
+    const adminOverview = makeFn('AdminOverviewFn', 'handlers/admin-overview.ts', 'handler');
 
     // ---- grants ----
     for (const fn of [
       facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations,
       adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
-      classes,
+      classes, adminOverview,
     ]) {
       supabaseSecret.grantRead(fn);
     }
@@ -223,6 +226,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     adminKeySecret.grantRead(adminRegistrations);
     adminKeySecret.grantRead(adminPeople);
     adminKeySecret.grantRead(adminCognito);
+    adminKeySecret.grantRead(adminOverview);
 
     // Reads the pool's region and id from the shared Cognito secret, then lists
     // and gets users. No write actions — see the header comment in
@@ -492,6 +496,8 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/cognito/users', [GET]],
       ['/admin/cognito/users/{username}', [GET]],
     ]);
+
+    attach(adminOverview, 'AdminOverviewInt', [['/admin/overview', [GET]]]);
 
     attach(eventRegistrations, 'EventRegistrationsInt', [
       ['/events/{eventId}/register', [POST]],

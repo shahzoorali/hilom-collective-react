@@ -34,6 +34,9 @@ import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
 import { sendFacilitatorApproved, sendFacilitatorPublished, sendBookingCancelled, sendPayoutPaid } from '../lib/booking-email.js';
 import { syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { refundForCancellation } from '../lib/booking-domain.js';
+// The dashboard counts these same queues. Shared so a count and the screen it
+// links to cannot drift — see lib/admin-queues.ts.
+import { refundOwed, reviewsAwaitingModeration } from '../lib/admin-queues.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
 import {
   normalizeSlug,
@@ -172,7 +175,7 @@ async function reviews(
     // Defaults to the queue rather than to everything — that is what this
     // screen is for, and "all" is one click away.
     if (status) query = query.eq('status', status);
-    else query = query.eq('status', 'pending');
+    else query = reviewsAwaitingModeration(query);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -515,7 +518,7 @@ async function listBookings(
   if (status) query = query.eq('status', status);
   // The queue that costs someone real money if it is not worked: refunds the
   // policy has promised and nobody has sent yet.
-  if (refund === 'due') query = query.gt('refund_centavos', 0).is('refunded_at', null);
+  if (refund === 'due') query = refundOwed(query);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -1035,7 +1038,7 @@ async function classRegistrations(
     // Oldest first when working a queue: the refund somebody has been waiting
     // on for a week is the urgent one, and the help centre tells them to chase
     // us at exactly that point.
-    query = query.gt('refund_centavos', 0).is('refunded_at', null).order('cancelled_at', { ascending: true });
+    query = refundOwed(query).order('cancelled_at', { ascending: true });
   }
 
   // The embedded relations defeat PostgREST's inferred row type, as on every

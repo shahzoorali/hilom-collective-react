@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   adminListOrders, adminListProducts, adminRetryEnrollment, adminRevokeAccess,
   adminSyncCourses, adminUpdateProduct, listCourses,
@@ -73,7 +74,10 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [onlyStuck, setOnlyStuck] = useState(false);
+  // `?stuck=1` is how the dashboard hands over: its "orders" card links here
+  // with the paid-not-fulfilled filter already on.
+  const [searchParams] = useSearchParams();
+  const [onlyStuck, setOnlyStuck] = useState(searchParams.get('stuck') === '1');
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
