@@ -4,9 +4,15 @@ Four facilitator reports, checked against the live site, the API and the databas
 before writing this. Two are confirmed bugs in last week's work, one is a fair
 feature request, one report doesn't reproduce but uncovered a real bug underneath it.
 
-Status: **planned, nothing built.** Ordered by severity — the two things that are
-flatly broken first, then the one that lies to a facilitator on screen, then the
-feature request. Build and deploy one at a time; each is independently shippable.
+Status: **1–3 built and deployed, 2026-09-23. 4 not started.** Ordered by
+severity — the two things that are flatly broken first, then the one that lies
+to a facilitator on screen, then the feature request. Built and deployed one
+at a time; each was independently shippable.
+
+Item 4 (pay-what-you-want for classes) is still open behind the question in
+its own section: whether a newly scheduled date should always pull the
+class's current price, or the facilitator should be able to override it
+per-date at scheduling time.
 
 | # | Fix | Kind | Size |
 |---|---|---|---|
