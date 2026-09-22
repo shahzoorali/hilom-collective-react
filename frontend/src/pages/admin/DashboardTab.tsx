@@ -100,7 +100,7 @@ export default function DashboardTab({ adminKey }: { adminKey: string }) {
     {
       label: 'Orders',
       count: q.stuckOrders,
-      to: '/admin/commerce?stuck=1',
+      to: '/admin/orders?status=paid_pending_enrollment',
       hint: 'paid, not fulfilled',
     },
   ];

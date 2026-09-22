@@ -1,21 +1,22 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  adminListOrders, adminListProducts, adminRetryEnrollment, adminRevokeAccess,
-  adminSyncCourses, adminUpdateProduct, listCourses,
-  type AdminOrder, type AdminProduct, type CourseSummary,
+  adminListProducts, adminSyncCourses, adminUpdateProduct, listCourses,
+  type AdminProduct, type CourseSummary,
 } from '../../lib/api';
 import { money } from '../../components/Layout';
 import type { MediaAsset } from '../../lib/cms';
 import { MediaPickerModal } from './MediaLibrary';
-import OrderDetail from './OrderDetail';
 
 /**
- * Course sync, product pricing, and orders.
+ * Admin -> Products & Courses: the catalogue.
  *
- * This was the whole of Admin.tsx before the admin grew tabs; behaviour is
- * unchanged, and the only difference is that the admin key now arrives as a
- * prop instead of being local state with its own sign-in form.
+ * Split out of the old Commerce screen (docs/admin-dashboard-plan.md section 4),
+ * which did three unrelated jobs in one tab. Course sync lives here as an
+ * action on the catalogue because that is what it is for: pulling Moodle's
+ * course list so the products built on it stay in step. The order ledger moved
+ * to OrdersTab.
+ *
+ * The product-editing code below moved unchanged from CommerceTab.
  */
 
 /** A price draft is valid if it parses to a finite, non-negative number. */
@@ -46,17 +47,7 @@ function isSlugValid(raw: string) {
   return s.length > 0 && s.length <= 80 && SLUG_RE.test(s);
 }
 
-function StatusPill({ status }: { status: string }) {
-  const cls =
-    status === 'fulfilled' ? 'pill pill-ok'
-    : status === 'failed' ? 'pill pill-bad'
-    : status === 'refunded' ? 'pill pill-bad'
-    : 'pill pill-warn';
-  return <span className={cls}>{status.replace(/_/g, ' ')}</span>;
-}
-
-export default function CommerceTab({ adminKey }: { adminKey: string }) {
-  const [orders, setOrders] = useState<AdminOrder[]>([]);
+export default function ProductsTab({ adminKey }: { adminKey: string }) {
   const [products, setProducts] = useState<AdminProduct[]>([]);
   // Price inputs are held as pesos-as-typed strings, not numbers: parsing on
   // every keystroke fights the user mid-edit (e.g. "1499." or a cleared field).
@@ -66,7 +57,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   // fight the user. Validated on blur/save, not per keystroke.
   const [slugDrafts, setSlugDrafts] = useState<Record<string, string>>({});
   // Per-product image override. null = "use the Moodle course image". Set here,
-  // it survives a course sync — the mirrored Moodle image does not.
+  // it survives a course sync; the mirrored Moodle image does not.
   const [thumbDrafts, setThumbDrafts] = useState<Record<string, string | null>>({});
   const [pickingThumbFor, setPickingThumbFor] = useState<string | null>(null);
   const [courses, setCourses] = useState<CourseSummary[]>([]);
@@ -74,49 +65,25 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // `?stuck=1` is how the dashboard hands over: its "orders" card links here
-  // with the paid-not-fulfilled filter already on.
-  const [searchParams] = useSearchParams();
-  const [onlyStuck, setOnlyStuck] = useState(searchParams.get('stuck') === '1');
-  const [query, setQuery] = useState('');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const load = useCallback(
-    async (key: string, stuckOnly: boolean) => {
-      setError(null);
-      const rows = await adminListOrders(key, stuckOnly ? 'paid_pending_enrollment' : undefined);
-      setOrders(rows);
-      const c = await listCourses();
-      setCourses(c.courses);
-      setLastSynced(c.last_synced_at);
-      const prods = await adminListProducts(key);
-      setProducts(prods);
-      setPriceDrafts(
-        Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
-      );
-      setDescriptionDrafts(Object.fromEntries(prods.map((p) => [p.id, p.description ?? ''])));
-      setSlugDrafts(Object.fromEntries(prods.map((p) => [p.id, p.slug])));
-      setThumbDrafts(Object.fromEntries(prods.map((p) => [p.id, p.thumbnail_url])));
-    },
-    [],
-  );
-
-  useEffect(() => {
-    load(adminKey, onlyStuck).catch((e: Error) => setError(e.message));
-    // Runs once for the key this tab was opened with.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const load = useCallback(async (key: string) => {
+    setError(null);
+    const c = await listCourses();
+    setCourses(c.courses);
+    setLastSynced(c.last_synced_at);
+    const prods = await adminListProducts(key);
+    setProducts(prods);
+    setPriceDrafts(
+      Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
+    );
+    setDescriptionDrafts(Object.fromEntries(prods.map((p) => [p.id, p.description ?? ''])));
+    setSlugDrafts(Object.fromEntries(prods.map((p) => [p.id, p.slug])));
+    setThumbDrafts(Object.fromEntries(prods.map((p) => [p.id, p.thumbnail_url])));
   }, []);
 
-  async function refresh(stuckOnly = onlyStuck) {
-    try {
-      setBusy(true);
-      await load(adminKey, stuckOnly);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  useEffect(() => {
+    load(adminKey).catch((e: Error) => setError(e.message));
+  }, [adminKey, load]);
 
   async function onSync() {
     setBusy(true);
@@ -128,23 +95,9 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
           + `(${r.drafted.map((d) => d.name).join(', ')}) — hidden and unpriced until you set them up.`
         : '';
       setNotice(`Synced ${r.synced} courses from Moodle.${draftNote}`);
-      await load(adminKey, onlyStuck);
+      await load(adminKey);
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onRetry(orderId: string) {
-    setBusy(true);
-    setNotice(null);
-    try {
-      const r = await adminRetryEnrollment(adminKey, orderId);
-      setNotice(`Order ${orderId.slice(0, 8)}… → ${r.status}`);
-      await load(adminKey, onlyStuck);
-    } catch (e) {
-      setError(`Retry failed: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -214,7 +167,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
         parts.push(`URL → /${updated.slug}`);
       }
       setNotice(`${updated.name}: ${parts.join(', ')}.`);
-      await load(adminKey, onlyStuck);
+      await load(adminKey);
     } catch (e) {
       setError(`Update failed: ${(e as Error).message}`);
     } finally {
@@ -237,7 +190,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     try {
       const updated = await adminUpdateProduct(adminKey, product.id, { is_active: !product.is_active });
       setNotice(`${updated.name} is now ${updated.is_active ? 'visible' : 'hidden'} in the catalog.`);
-      await load(adminKey, onlyStuck);
+      await load(adminKey);
     } catch (e) {
       setError(`Update failed: ${(e as Error).message}`);
     } finally {
@@ -245,50 +198,7 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
     }
   }
 
-  async function onRevoke(order: AdminOrder) {
-    // Revoking takes a paying customer's access away, so it asks first —
-    // unlike Retry, which is harmless to click twice.
-    const confirmed = window.confirm(
-      `Revoke course access for ${order.buyer_email} and mark this order refunded?\n\n` +
-        `Process the refund in the PayMongo dashboard first — this does not move any money.`,
-    );
-    if (!confirmed) return;
-
-    setBusy(true);
-    setNotice(null);
-    try {
-      const r = await adminRevokeAccess(adminKey, order.id);
-      const kept = r.retainedCourseIds.length
-        ? ` Kept ${r.retainedCourseIds.join(', ')} — still covered by another order.`
-        : '';
-      setNotice(
-        `Order ${order.id.slice(0, 8)}… → ${r.status}. ` +
-          `Unenrolled from ${r.revokedCourseIds.length} course(s).${kept}`,
-      );
-      await load(adminKey, onlyStuck);
-    } catch (e) {
-      setError(`Revoke failed: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const visibleCount = products.filter((p) => p.is_active).length;
-
-  /**
-   * Client-side because the endpoint returns at most 100 rows anyway, so there
-   * is nothing here the browser does not already hold. If that limit ever grows
-   * into real pagination this has to move server-side, or search will silently
-   * only cover the first page.
-   */
-  const filteredOrders = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter((o) =>
-      [o.buyer_email, o.paymongo_payment_id, o.id, o.product_name ?? '']
-        .some((field) => field.toLowerCase().includes(q)),
-    );
-  }, [orders, query]);
 
   const staleness = lastSynced
     ? `${Math.round((Date.now() - new Date(lastSynced).getTime()) / 3_600_000)}h ago`
@@ -529,118 +439,6 @@ export default function CommerceTab({ adminKey }: { adminKey: string }) {
                   </article>
                 );
               })}
-            </div>
-          )}
-        </div>
-
-        <div className="panel">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-            <h2 style={{ fontSize: '1.15rem', margin: 0 }}>Orders</h2>
-            <label className="small" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', margin: 0 }}>
-              <input
-                type="checkbox" style={{ width: 'auto' }} checked={onlyStuck}
-                onChange={(e) => {
-                  setOnlyStuck(e.target.checked);
-                  refresh(e.target.checked);
-                }}
-              />
-              Stuck only
-            </label>
-            <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => refresh()} disabled={busy}>
-              Refresh
-            </button>
-          </div>
-
-          {/* Support arrives with an email address or a payment id from the
-              customer, not with a date. Without this the only way to find their
-              order was to read down a hundred rows. */}
-          <div className="ord-search">
-            <input
-              type="search"
-              value={query}
-              placeholder="Search buyer email, payment id, or order id…"
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Search orders"
-            />
-            {query && (
-              <span className="small muted">
-                {filteredOrders.length} of {orders.length}
-              </span>
-            )}
-          </div>
-
-          {orders.length === 0 ? (
-            <p className="muted" style={{ marginTop: '1rem' }}>No orders{onlyStuck ? ' needing attention' : ''}.</p>
-          ) : filteredOrders.length === 0 ? (
-            <p className="muted" style={{ marginTop: '1rem' }}>
-              No orders match “{query}”.
-            </p>
-          ) : (
-            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
-              <table className="ord-table">
-                <thead>
-                  <tr>
-                    <th aria-label="Expand" /><th>Created</th><th>Buyer</th><th>Product</th>
-                    <th>Amount</th><th>Status</th><th>Problem</th><th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredOrders.map((o) => {
-                    const open = expandedId === o.id;
-                    return (
-                      <Fragment key={o.id}>
-                        <tr className={open ? 'ord-row is-open' : 'ord-row'}>
-                          <td>
-                            <button
-                              type="button"
-                              className="ord-expand"
-                              aria-expanded={open}
-                              aria-label={open ? 'Hide order detail' : 'Show order detail'}
-                              onClick={() => setExpandedId(open ? null : o.id)}
-                            >
-                              <span className={open ? 'ord-caret is-open' : 'ord-caret'}>▸</span>
-                            </button>
-                          </td>
-                          <td className="small">{new Date(o.created_at).toLocaleString()}</td>
-                          <td className="small">{o.buyer_email}</td>
-                          <td className="small">
-                            {o.product_name ?? <span className="muted">unknown</span>}
-                          </td>
-                          <td className="small">{money(o.amount_centavos, o.currency)}</td>
-                          <td><StatusPill status={o.status} /></td>
-                          <td className="small mono ord-problem">
-                            {o.error_detail ? o.error_detail.slice(0, 160) : '—'}
-                          </td>
-                          <td style={{ whiteSpace: 'nowrap' }}>
-                            {o.status !== 'fulfilled' && o.status !== 'refunded' && (
-                              <button className="btn btn-ghost small" onClick={() => onRetry(o.id)} disabled={busy}>
-                                Retry
-                              </button>
-                            )}
-                            {o.status !== 'refunded' && (
-                              <button
-                                className="btn btn-ghost small"
-                                style={{ marginLeft: '0.35rem', color: '#8c2f1d', borderColor: '#f5c6bd' }}
-                                onClick={() => onRevoke(o)}
-                                disabled={busy}
-                              >
-                                Revoke
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                        {open && (
-                          <tr className="ord-detail-row">
-                            <td colSpan={8}>
-                              <OrderDetail adminKey={adminKey} order={o} />
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
             </div>
           )}
         </div>

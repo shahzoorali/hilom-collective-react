@@ -4,7 +4,8 @@ import { adminListPages, ADMIN_ACTOR_STORAGE } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import DashboardTab from './admin/DashboardTab';
 import AuditLogTab from './admin/AuditLogTab';
-import CommerceTab from './admin/CommerceTab';
+import OrdersTab from './admin/OrdersTab';
+import ProductsTab from './admin/ProductsTab';
 import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
 import FacilitatorEditor from './admin/FacilitatorEditor';
@@ -65,7 +66,8 @@ const NAV_GROUPS = [
   {
     label: 'Commerce',
     items: [
-      { label: 'Commerce', path: 'commerce', icon: '💳' },
+      { label: 'Orders', path: 'orders', icon: '💳' },
+      { label: 'Products & Courses', path: 'products', icon: '📦' },
       { label: 'Promo Codes', path: 'promo-codes', icon: '🏷️' },
       { label: 'Payouts', path: 'payouts', icon: '🏦' },
     ],
@@ -75,6 +77,11 @@ const NAV_GROUPS = [
     items: [{ label: 'Audit Log', path: 'audit-log', icon: '📜' }],
   },
 ] as const;
+
+function CommerceRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/admin/orders${search}`} replace />;
+}
 
 function PageEditorRoute({ adminKey }: { adminKey: string }) {
   const { pageId } = useParams<{ pageId: string }>();
@@ -373,7 +380,12 @@ export default function Admin() {
           <Route path="menus" element={<MenusTab adminKey={adminKey} />} />
           <Route path="footer" element={<FooterTab adminKey={adminKey} />} />
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
-          <Route path="commerce" element={<CommerceTab adminKey={adminKey} />} />
+          <Route path="orders" element={<OrdersTab adminKey={adminKey} />} />
+          <Route path="products" element={<ProductsTab adminKey={adminKey} />} />
+          {/* Commerce was split in two. `/admin/commerce` is somebody's pinned
+              tab, so it keeps working: it lands on the ledger, query intact
+              (the dashboard's old `?stuck=1` still selects the Stuck filter). */}
+          <Route path="commerce" element={<CommerceRedirect />} />
           <Route path="promo-codes" element={<PromoCodesTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
           <Route
