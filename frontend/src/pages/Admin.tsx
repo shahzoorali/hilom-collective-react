@@ -7,6 +7,7 @@ import AuditLogTab from './admin/AuditLogTab';
 import OrdersTab from './admin/OrdersTab';
 import ProductsTab from './admin/ProductsTab';
 import ClassesTab from './admin/ClassesTab';
+import SettingsTab from './admin/SettingsTab';
 import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
 import FacilitatorEditor from './admin/FacilitatorEditor';
@@ -15,8 +16,6 @@ import ReviewsTab from './admin/ReviewsTab';
 import BookingsTab from './admin/BookingsTab';
 import PagesTab from './admin/PagesTab';
 import PageEditor from './admin/PageEditor';
-import MenusTab from './admin/MenusTab';
-import FooterTab from './admin/FooterTab';
 import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
 import RegistrationsTab from './admin/RegistrationsTab';
@@ -42,26 +41,28 @@ const NAV_GROUPS = [
       { label: 'Pages', path: 'pages', icon: '📄' },
       { label: 'Posts', path: 'posts', icon: '✍️' },
       { label: 'Events', path: 'events', icon: '📅' },
+      // Not in the plan's Content row verbatim, but placed here deliberately:
+      // §6 names Reviews and the event proposal queue as "both moderation
+      // queues [that] live nowhere near each other", and the proposal queue
+      // is a filter on Events, right above. Filing Reviews under People
+      // (where Facilitators sits) would repeat the exact problem being fixed.
+      { label: 'Reviews', path: 'reviews', icon: '⭐' },
       { label: 'Help Centre', path: 'knowledge-base', icon: '💡' },
       { label: 'Media', path: 'media', icon: '🖼️' },
-      { label: 'Menus', path: 'menus', icon: '🧭' },
-      { label: 'Footer', path: 'footer', icon: '🧱' },
     ],
   },
   {
-    label: 'Engagement',
+    label: 'People',
     items: [
-      { label: 'Forms', path: 'forms', icon: '📋' },
-      { label: 'Bookings', path: 'bookings', icon: '🗓️' },
-      { label: 'Registrations', path: 'registrations', icon: '🎟️' },
-      { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
-      { label: 'Reviews', path: 'reviews', icon: '⭐' },
-      // Last in the group because it is the read across the four above it,
-      // not a fifth thing alongside them.
+      // Last in its old group because it is the read across the ones above
+      // it — kept first here since Accounts and Facilitators are its own
+      // raw sources, not siblings of it.
       { label: 'People', path: 'people', icon: '👥' },
       // People derived from transactions; Accounts is the raw Cognito pool,
       // including sign-ups that have never transacted.
       { label: 'Accounts', path: 'accounts', icon: '🔑' },
+      { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
+      { label: 'Forms', path: 'forms', icon: '📋' },
     ],
   },
   {
@@ -69,6 +70,8 @@ const NAV_GROUPS = [
     items: [
       { label: 'Orders', path: 'orders', icon: '💳' },
       { label: 'Products & Courses', path: 'products', icon: '📦' },
+      { label: 'Bookings', path: 'bookings', icon: '🗓️' },
+      { label: 'Registrations', path: 'registrations', icon: '🎟️' },
       { label: 'Classes', path: 'classes', icon: '🧘' },
       { label: 'Promo Codes', path: 'promo-codes', icon: '🏷️' },
       { label: 'Payouts', path: 'payouts', icon: '🏦' },
@@ -76,13 +79,21 @@ const NAV_GROUPS = [
   },
   {
     label: 'System',
-    items: [{ label: 'Audit Log', path: 'audit-log', icon: '📜' }],
+    items: [
+      { label: 'Settings', path: 'settings', icon: '⚙️' },
+      { label: 'Audit Log', path: 'audit-log', icon: '📜' },
+    ],
   },
 ] as const;
 
 function CommerceRedirect() {
   const { search } = useLocation();
   return <Navigate to={`/admin/orders${search}`} replace />;
+}
+
+/** `/admin/menus` and `/admin/footer` -> Settings, on the section that used to be their own screen. */
+function SettingsRedirect({ section }: { section: 'menus' | 'footer' }) {
+  return <Navigate to={`/admin/settings?section=${section}`} replace />;
 }
 
 function PageEditorRoute({ adminKey }: { adminKey: string }) {
@@ -379,8 +390,11 @@ export default function Admin() {
               </div>
             }
           />
-          <Route path="menus" element={<MenusTab adminKey={adminKey} />} />
-          <Route path="footer" element={<FooterTab adminKey={adminKey} />} />
+          {/* Menus and Footer moved under Settings (§6) — old bookmarks land on
+              the same screen they always did, just through the redirect. */}
+          <Route path="menus" element={<SettingsRedirect section="menus" />} />
+          <Route path="footer" element={<SettingsRedirect section="footer" />} />
+          <Route path="settings" element={<SettingsTab adminKey={adminKey} />} />
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
           <Route path="orders" element={<OrdersTab adminKey={adminKey} />} />
           <Route path="products" element={<ProductsTab adminKey={adminKey} />} />
