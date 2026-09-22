@@ -38,6 +38,7 @@ interface PersonRow extends Record<string, unknown> {
   events_attending: number;
   bookings: number;
   enquiries: number;
+  classes: number;
   lifetime_centavos: number;
   first_seen_at: string;
   last_seen_at: string;
@@ -68,7 +69,20 @@ interface BookingSummary extends Record<string, unknown> {
   refunded_at: string | null;
 }
 
-const SOURCES = ['course_order', 'event_registration', 'event_attendee', 'booking', 'enquiry'] as const;
+/** Same two-column refund ledger as a booking — see 0051. */
+interface ClassRegistrationSummary extends Record<string, unknown> {
+  refund_centavos: number | null;
+  refunded_at: string | null;
+}
+
+const SOURCES = [
+  'course_order',
+  'event_registration',
+  'event_attendee',
+  'booking',
+  'enquiry',
+  'class_registration',
+] as const;
 type Source = (typeof SOURCES)[number];
 
 const isSource = (value: string): value is Source => (SOURCES as readonly string[]).includes(value);
@@ -201,7 +215,7 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
   if (error) throw error;
   if (!person) return notFound('Nobody here by that address.');
 
-  const [orders, registrations, bookings, enquiries] = await Promise.all([
+  const [orders, registrations, bookings, enquiries, classRegistrations] = await Promise.all([
     supabase
       .from('orders')
       .select(
@@ -237,9 +251,18 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
       .eq('is_spam', false)
       .order('created_at', { ascending: false })
       .limit(50),
+    supabase
+      .from('class_registrations')
+      .select(
+        'id, session_id, status, seat_no, price_centavos, currency, created_at, ' +
+          'refund_centavos, refunded_at, refund_reference, ' +
+          'facilitators(display_name), facilitator_class_sessions(starts_at, ends_at, facilitator_classes(title))',
+      )
+      .ilike('client_email', email)
+      .order('created_at', { ascending: false }),
   ]);
 
-  for (const result of [orders, registrations, bookings, enquiries]) {
+  for (const result of [orders, registrations, bookings, enquiries, classRegistrations]) {
     if (result.error) throw result.error;
   }
 
@@ -276,6 +299,7 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
   });
 
   const bookingRows = (bookings.data ?? []) as unknown as BookingSummary[];
+  const classRegistrationRows = (classRegistrations.data ?? []) as unknown as ClassRegistrationSummary[];
 
   return ok({
     person,
@@ -283,6 +307,7 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
     registrations: withCharges,
     bookings: bookingRows,
     enquiries: matchedEnquiries,
+    classRegistrations: classRegistrations.data ?? [],
     // Computed here rather than in the browser so the screen and the numbers
     // can never disagree about which statuses count as money received. The
     // directory's own `lifetime_centavos` answers a different question — it is
@@ -299,6 +324,10 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
         ) +
         withCharges.reduce(
           (a, r) => a + (r.refunded_at ? 0 : Number(r.refund_centavos ?? 0)),
+          0,
+        ) +
+        classRegistrationRows.reduce(
+          (a, c) => a + (c.refunded_at ? 0 : Number(c.refund_centavos ?? 0)),
           0,
         ),
     },
@@ -372,7 +401,7 @@ async function peopleCsv(
   const rows = data ?? [];
   const header = [
     'Email', 'Name', 'Has account', 'Sources', 'Course orders', 'Event registrations',
-    'Events attending', 'Bookings', 'Enquiries', 'Lifetime paid', 'First seen', 'Last seen',
+    'Events attending', 'Bookings', 'Classes', 'Enquiries', 'Lifetime paid', 'First seen', 'Last seen',
   ];
   const lines = rows.map((p) => [
     p.email,
@@ -383,6 +412,7 @@ async function peopleCsv(
     p.event_registrations,
     p.events_attending,
     p.bookings,
+    p.classes,
     p.enquiries,
     (Number(p.lifetime_centavos ?? 0) / 100).toFixed(2),
     p.first_seen_at,

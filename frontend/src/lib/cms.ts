@@ -1048,7 +1048,8 @@ export type PersonSource =
   | 'event_registration'
   | 'event_attendee'
   | 'booking'
-  | 'enquiry';
+  | 'enquiry'
+  | 'class_registration';
 
 export interface Person {
   email: string;
@@ -1061,6 +1062,7 @@ export interface Person {
   events_attending: number;
   bookings: number;
   enquiries: number;
+  classes: number;
   lifetime_centavos: number;
   first_seen_at: string;
   last_seen_at: string;
@@ -1149,6 +1151,24 @@ export interface PersonDetail {
     refunded_at: string | null;
     refund_reference: string | null;
     facilitators: { display_name: string } | null;
+  }[];
+  classRegistrations: {
+    id: string;
+    session_id: string;
+    status: string;
+    seat_no: number;
+    price_centavos: number;
+    currency: string;
+    created_at: string;
+    refund_centavos: number | null;
+    refunded_at: string | null;
+    refund_reference: string | null;
+    facilitators: { display_name: string } | null;
+    facilitator_class_sessions: {
+      starts_at: string;
+      ends_at: string;
+      facilitator_classes: { title: string } | null;
+    } | null;
   }[];
   enquiries: {
     id: string;

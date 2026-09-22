@@ -39,6 +39,7 @@ const SOURCE_LABELS: Record<PersonSource, string> = {
   event_attendee: 'Event attendee',
   booking: 'Booking client',
   enquiry: 'Enquiry',
+  class_registration: 'Class attendee',
 };
 
 const SOURCE_FILTERS: { key: '' | PersonSource; label: string }[] = [
@@ -47,6 +48,7 @@ const SOURCE_FILTERS: { key: '' | PersonSource; label: string }[] = [
   { key: 'event_registration', label: 'Event payers' },
   { key: 'event_attendee', label: 'Event attendees' },
   { key: 'booking', label: 'Booking clients' },
+  { key: 'class_registration', label: 'Class attendees' },
   { key: 'enquiry', label: 'Enquiries only' },
 ];
 
@@ -329,9 +331,13 @@ function PersonRow({
 }
 
 function PersonHistory({ detail }: { detail: PersonDetail }) {
-  const { person, orders, registrations, bookings, enquiries, money: totals } = detail;
+  const { person, orders, registrations, bookings, classRegistrations, enquiries, money: totals } = detail;
   const nothing =
-    orders.length === 0 && registrations.length === 0 && bookings.length === 0 && enquiries.length === 0;
+    orders.length === 0 &&
+    registrations.length === 0 &&
+    bookings.length === 0 &&
+    classRegistrations.length === 0 &&
+    enquiries.length === 0;
 
   return (
     <div style={{ display: 'grid', gap: 16, marginTop: 14 }}>
@@ -463,6 +469,32 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
                 : undefined
             }
             right={money(b.price_centavos, b.currency)}
+          />
+        ))}
+      </Section>
+
+      <Section title="Classes" count={classRegistrations.length}>
+        {classRegistrations.map((c) => (
+          <Line
+            key={c.id}
+            left={
+              c.facilitator_class_sessions?.facilitator_classes?.title ??
+              c.facilitators?.display_name ??
+              'Class'
+            }
+            sub={
+              (c.facilitator_class_sessions ? `${manilaDate(c.facilitator_class_sessions.starts_at)} · ` : '') +
+              `seat ${c.seat_no} · ${c.status.replace(/_/g, ' ')}`
+            }
+            note={
+              c.refund_centavos != null && c.refund_centavos > 0
+                ? `Refund ${money(c.refund_centavos, c.currency)} ` +
+                  (c.refunded_at
+                    ? `sent ${manilaDate(c.refunded_at)}${c.refund_reference ? ` · ${c.refund_reference}` : ''}`
+                    : '— owed, not yet sent')
+                : undefined
+            }
+            right={money(c.price_centavos, c.currency)}
           />
         ))}
       </Section>
