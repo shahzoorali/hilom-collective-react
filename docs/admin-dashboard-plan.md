@@ -5,9 +5,12 @@ Written after the Sept 20 feature work, which added two screens' worth of
 functionality and exposed how little the panel does to tell an operator what
 needs them.
 
-Status: **planned, nothing built.** Phases are ordered so each ships on its own
-and leaves the panel working. Build one at a time, same as
-[the main plan](hilom-development-plan.md).
+Status: **all six phases built and deployed, 2026-09-23.** Phases shipped one
+at a time, each leaving the panel working, same as
+[the main plan](hilom-development-plan.md). Auditing phases 1-4 after the fact
+also surfaced and fixed a pre-existing bug: voiding a facilitator payout
+released its 1:1 bookings back to the unpaid pool but not its group-class
+seats, so a voided batch's class earnings could never be paid.
 
 | # | Phase | Kind | Size |
 |---|---|---|---|
