@@ -34,8 +34,21 @@ export const CHARGE_COLUMNS =
   'id, registration_id, seq, label, is_deposit, amount_centavos, currency, due_at, status, paid_at, ' +
   'paid_method, paid_reference, receipt_no, flagged_at, voided_at, void_reason, paymongo_payment_id';
 
-/** Statuses that hold, or have held, a place. */
-export const LIVE = ['pending_payment', 'confirmed'];
+/**
+ * Statuses that hold, or have held, a place -- as opposed to cancelled or
+ * expired, which never took it or gave it back.
+ *
+ * `completed` belongs here and its absence was a real bug: registration-sweep.ts
+ * moves a `confirmed` registration to `completed` once the event's date has
+ * passed, which is correct and is what marks a session as delivered. But every
+ * money total on the roster screen, and the CSV export, are built by filtering
+ * on this list -- so the moment an event finished, its attendees dropped out of
+ * "live" and the roster read Places 0 of 20, Collected P0.00, on an event eight
+ * people had actually paid for and attended. sendJoinDetails, lower in this
+ * same file, already treats 'confirmed' and 'completed' as the same live
+ * status for the purpose of emailing attendees; this list just never matched.
+ */
+export const LIVE = ['pending_payment', 'confirmed', 'completed'];
 
 export interface RegistrationRow extends Record<string, unknown> {
   id: string;
