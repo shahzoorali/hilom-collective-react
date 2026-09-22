@@ -2,9 +2,12 @@
  * Admin → Audit Log: every sensitive action, in one reverse-chronological
  * table.
  *
- * `admin_audit_log` has recorded refunds, cancellations, price overrides,
- * waived charges, facilitator approvals and event decisions since 0017 —
- * `GET /admin/audit-log` has existed the whole time — and until this screen
+ * `admin_audit_log` has recorded event-registration money actions (refunds,
+ * cancellations, price overrides, waived charges) and event decisions since
+ * 0017. Booking and class refunds, payouts, facilitator decisions and course
+ * order/product changes were not audited at all until 23 Sep 2026, so older
+ * actions of those kinds are absent, and the subtitle says so. `GET
+ * /admin/audit-log` has existed the whole time, and until this screen
  * the only place any of it was visible was a fragment at the bottom of a
  * single registration. "Who unpublished that event, and when?" had an exact
  * answer sitting in a table with no door. See
@@ -29,17 +32,30 @@ import { adminListAuditLog, type AuditEntry } from '../../lib/cms';
  *  the backend as-is — this list only saves an operator from guessing the
  *  exact spelling. */
 const KNOWN_ACTIONS = [
+  'booking.cancel',
+  'booking.refund_sent',
   'charge.mark_paid_offline',
   'charge.waive',
   'charge.void',
+  'class_registration.refund_sent',
   'event.approved',
   'event.rejected',
   'event.status_changed',
   'event.ticketing_updated',
   'event.join_details_sent',
   'event.roster_exported',
+  'facilitator.status_changed',
+  'order.retry_enrollment',
+  'order.revoked',
+  'payout.created',
+  'payout.approved',
+  'payout.paid',
+  'payout.void',
+  'payout.updated',
   'people.exported',
   'plan.replaced',
+  'product.price_changed',
+  'product.visibility_changed',
   'registration.cancel',
   'registration.cancellation_declined',
   'registration.nudged',
@@ -59,8 +75,23 @@ const manilaDateTime = (iso: string) =>
     minute: '2-digit',
   }).format(new Date(iso));
 
-/** yyyy-mm-dd, what a date input reads and writes, and what `?from=`/`?to=` want. */
-const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+/** Today in Manila as yyyy-mm-dd, which is what a date input reads and writes. */
+const manilaToday = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+
+/**
+ * A picked calendar day, as the UTC instant its Manila day starts or ends.
+ *
+ * The table shows Manila time, so the picker must mean Manila days. Sending
+ * the bare date would be read as UTC midnight — eight hours late — and a pick
+ * of "Sep 21" would drop that morning's entries and include the next one's.
+ * Manila has no daylight saving, so a fixed +08:00 is exact.
+ */
+const manilaDayStart = (day: string) => new Date(`${day}T00:00:00.000+08:00`).toISOString();
+const manilaDayEnd = (day: string) => new Date(`${day}T23:59:59.999+08:00`).toISOString();
+
+/** The backend's cap. Always asked for, so the screen never silently shows its default 100. */
+const ROW_LIMIT = 500;
 
 export default function AuditLogTab({ adminKey }: { adminKey: string }) {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
@@ -77,11 +108,11 @@ export default function AuditLogTab({ adminKey }: { adminKey: string }) {
     setBusy(true);
     setError(null);
     try {
-      const params: Record<string, string> = {};
+      const params: Record<string, string> = { limit: String(ROW_LIMIT) };
       if (action) params.action = action;
       if (moneyOnly) params.money = '1';
-      if (from) params.from = from;
-      if (to) params.to = `${to}T23:59:59.999Z`;
+      if (from) params.from = manilaDayStart(from);
+      if (to) params.to = manilaDayEnd(to);
       if (targetId.trim()) params.targetId = targetId.trim();
       setEntries(await adminListAuditLog(adminKey, params));
     } catch (e) {
@@ -107,8 +138,11 @@ export default function AuditLogTab({ adminKey }: { adminKey: string }) {
     <div className="panel">
       <h2 style={{ fontSize: '1.15rem', marginTop: 0, marginBottom: '0.25rem' }}>Audit Log</h2>
       <p className="small muted" style={{ marginTop: 0, marginBottom: '0.75rem' }}>
-        Every refund, cancellation, price override, waived charge and approval decision, most
-        recent first. <ActorLegend />
+        Money and access decisions — refunds, cancellations, charge overrides, payouts, order
+        revokes, price changes, and facilitator and event approvals — most recent first. Payouts,
+        booking and class refunds, facilitator decisions and order/product changes were only
+        recorded from 23 Sep 2026; earlier ones of those kinds are not here. Dates are Manila
+        time. <ActorLegend />
       </p>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
@@ -136,7 +170,7 @@ export default function AuditLogTab({ adminKey }: { adminKey: string }) {
           <input
             type="date"
             value={from}
-            max={to || isoDate(new Date())}
+            max={to || manilaToday()}
             onChange={(e) => setFrom(e.target.value)}
             style={{ maxWidth: 150 }}
           />
@@ -147,7 +181,7 @@ export default function AuditLogTab({ adminKey }: { adminKey: string }) {
             type="date"
             value={to}
             min={from || undefined}
-            max={isoDate(new Date())}
+            max={manilaToday()}
             onChange={(e) => setTo(e.target.value)}
             style={{ maxWidth: 150 }}
           />
@@ -196,9 +230,9 @@ export default function AuditLogTab({ adminKey }: { adminKey: string }) {
         </div>
       )}
 
-      {entries && entries.length >= 500 && (
+      {entries && entries.length >= ROW_LIMIT && (
         <p className="small muted" style={{ marginTop: 10 }}>
-          Showing the most recent 500 — narrow the filters above to see further back.
+          Showing the most recent {ROW_LIMIT} — narrow the filters above to see further back.
         </p>
       )}
     </div>
@@ -258,7 +292,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
  */
 function ActorBadge({ entry }: { entry: AuditEntry }) {
   const pillClass =
-    entry.actor_source === 'cognito' ? 'pill pill-ok' : entry.actor_source === 'system' ? 'pill pill-bad' : 'pill pill-warn';
+    entry.actor_source === 'cognito' ? 'pill pill-ok' : entry.actor_source === 'system' ? 'pill' : 'pill pill-warn';
   const badgeLabel =
     entry.actor_source === 'cognito' ? 'cognito' : entry.actor_source === 'system' ? 'automatic' : 'shared key';
 

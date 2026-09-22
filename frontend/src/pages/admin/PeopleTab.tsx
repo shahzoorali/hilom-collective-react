@@ -124,7 +124,7 @@ export default function PeopleTab({ adminKey }: { adminKey: string }) {
     <div>
       <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>People</h2>
       <p className="small muted" style={{ marginTop: '-0.25rem', marginBottom: '1.25rem' }}>
-        {scope || 'Everyone with an order, registration, booking or enquiry.'}
+        {scope || 'Everyone with an order, registration, booking, class or enquiry.'}
       </p>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
@@ -197,7 +197,7 @@ export default function PeopleTab({ adminKey }: { adminKey: string }) {
           <p style={{ margin: 0 }}>
             {term || source
               ? 'Nobody matches that. Remember this lists people who have transacted or enquired — an account on its own does not appear here.'
-              : 'Nobody yet. People appear here after their first order, registration, booking or enquiry.'}
+              : 'Nobody yet. People appear here after their first order, registration, booking, class or enquiry.'}
           </p>
         </div>
       )}

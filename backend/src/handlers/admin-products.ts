@@ -9,6 +9,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { getSupabase } from '../lib/supabase.js';
 import { normalizeSlugFormat, SlugError } from '../lib/slug.js';
 import { ok, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
+import { actorFromEvent, recordAudit } from '../lib/audit.js';
 
 /** GET /admin/products — every product, including inactive ones. */
 export async function list(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -103,6 +104,13 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
 
   try {
     const supabase = await getSupabase();
+    // Read first so the audit row can say what the price or visibility was.
+    const { data: before } = await supabase
+      .from('products')
+      .select('name, price_centavos, currency, is_active')
+      .eq('id', productId)
+      .maybeSingle<{ name: string; price_centavos: number; currency: string; is_active: boolean }>();
+
     const { data, error } = await supabase
       .from('products')
       .update(patch)
@@ -122,6 +130,26 @@ export async function update(event: APIGatewayProxyEventV2): Promise<APIGatewayP
     // Deliberately does not touch existing orders: they store amount_centavos
     // at time of purchase, so a later price change never rewrites what someone
     // was actually charged.
+
+    // Price and visibility only: those change what customers pay and whether
+    // they can buy at all. Copy, slug and image edits are not audited.
+    const priceChanged = before && patch.price_centavos !== undefined && patch.price_centavos !== before.price_centavos;
+    const visibilityChanged = before && patch.is_active !== undefined && patch.is_active !== before.is_active;
+    if (before && (priceChanged || visibilityChanged)) {
+      await recordAudit(actorFromEvent(event), {
+        action: priceChanged ? 'product.price_changed' : 'product.visibility_changed',
+        targetTable: 'products',
+        targetId: productId,
+        amountCentavos: priceChanged ? (patch.price_centavos as number) : null,
+        currency: before.currency,
+        before: { price_centavos: before.price_centavos, is_active: before.is_active },
+        after: {
+          price_centavos: patch.price_centavos ?? before.price_centavos,
+          is_active: patch.is_active ?? before.is_active,
+        },
+        note: before.name,
+      });
+    }
     return ok({ product: data });
   } catch (err) {
     return serverError('adminProducts.update', err);

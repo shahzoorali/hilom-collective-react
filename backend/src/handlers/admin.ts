@@ -11,6 +11,7 @@ import { fulfillOrder } from '../lib/fulfillment.js';
 import { revokeOrderAccess } from '../lib/revocation.js';
 import { slugify } from '../lib/slug.js';
 import { ok, json, badRequest, notFound, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
+import { actorFromEvent, recordAudit } from '../lib/audit.js';
 
 const s3 = new S3Client({});
 
@@ -241,6 +242,15 @@ export async function retryEnrollment(
 
   try {
     const result = await fulfillOrder(orderId);
+    // Recorded even though a retry is safe to repeat: it re-runs an enrolment
+    // against a real customer's Moodle account, and "who kicked this, when?"
+    // is the first question when one goes wrong.
+    await recordAudit(actorFromEvent(event), {
+      action: 'order.retry_enrollment',
+      targetTable: 'orders',
+      targetId: orderId,
+      after: { status: (result as { status?: string }).status ?? null },
+    });
     return ok(result);
   } catch (err) {
     if (err instanceof Error && err.message === `Order ${orderId} not found`) {
@@ -269,6 +279,27 @@ export async function revokeAccess(event: APIGatewayProxyEventV2): Promise<APIGa
 
   try {
     const result = await revokeOrderAccess(orderId);
+    // Only a real transition is recorded; a second click on an already
+    // refunded order changed nothing and would read as a second refund.
+    if (result.status === 'refunded') {
+      const supabase = await getSupabase();
+      const { data: order } = await supabase
+        .from('orders')
+        .select('buyer_email, amount_centavos, currency')
+        .eq('id', orderId)
+        .maybeSingle<{ buyer_email: string; amount_centavos: number; currency: string }>();
+      await recordAudit(actorFromEvent(event), {
+        action: 'order.revoked',
+        targetTable: 'orders',
+        targetId: orderId,
+        // What the PayMongo refund is for — this endpoint moves no money
+        // itself, but this is the row a reconciliation will look for.
+        amountCentavos: order?.amount_centavos ?? null,
+        currency: order?.currency ?? 'PHP',
+        after: { status: 'refunded', revoked_course_ids: result.revokedCourseIds },
+        note: order ? `${order.buyer_email}: access removed` : 'access removed',
+      });
+    }
     return ok(result);
   } catch (err) {
     if (err instanceof Error && err.message === `Order ${orderId} not found`) {

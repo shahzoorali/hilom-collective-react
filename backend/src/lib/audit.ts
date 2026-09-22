@@ -22,6 +22,7 @@
  */
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { getSupabase } from './supabase.js';
+import { requireUser } from './auth.js';
 
 export type AuditActorSource = 'shared_key' | 'cognito' | 'system';
 
@@ -68,6 +69,34 @@ export function actorFromEvent(event: APIGatewayProxyEventV2): AuditActor {
     ip: event.requestContext?.http?.sourceIp ?? null,
     userAgent: agent || null,
   };
+}
+
+/**
+ * The actor for an endpoint authorized with `isAdminCaller`, which accepts a
+ * Cognito admin token as well as the shared key.
+ *
+ * `actorFromEvent` alone would label a verified, signed-in admin as a
+ * `shared_key` attestation — the exact misreading `actor_source` exists to
+ * prevent, in the other direction. So the token is tried first, in the same
+ * order `isAdminCaller` tries it, and only a request with no valid admin token
+ * falls back to the typed-in name.
+ */
+export async function adminActorFromEvent(event: APIGatewayProxyEventV2): Promise<AuditActor> {
+  try {
+    const user = await requireUser(event);
+    if (user.groups.includes('admin')) {
+      return {
+        source: 'cognito',
+        label: user.email,
+        sub: user.sub,
+        ip: event.requestContext?.http?.sourceIp ?? null,
+        userAgent: String(event.headers?.['user-agent'] ?? '').slice(0, 500) || null,
+      };
+    }
+  } catch {
+    // No token or not a valid one: the shared key authorized this request.
+  }
+  return actorFromEvent(event);
 }
 
 /** The actor for something a registrant did to their own registration. */

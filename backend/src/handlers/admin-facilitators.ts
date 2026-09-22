@@ -38,6 +38,7 @@ import { refundForCancellation } from '../lib/booking-domain.js';
 // links to cannot drift — see lib/admin-queues.ts.
 import { refundOwed, reviewsAwaitingModeration } from '../lib/admin-queues.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
+import { adminActorFromEvent, recordAudit, type AuditActor } from '../lib/audit.js';
 import {
   normalizeSlug,
   slugify,
@@ -85,19 +86,23 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   // via createFacilitator's validation error doing exactly that.
   try {
     const supabase = await getSupabase();
+    // Built once per request. Every write below records who made it, and a
+    // signed-in admin is recorded as a verified identity rather than as a
+    // typed-in name — see adminActorFromEvent.
+    const actor = await adminActorFromEvent(event);
 
     if (path.includes('/admin/reviews')) return await reviews(supabase, event, method);
-    if (path.includes('/admin/payouts')) return await payouts(supabase, event, method);
+    if (path.includes('/admin/payouts')) return await payouts(supabase, event, method, actor);
     if (path.includes('/admin/class-registrations')) {
-      return await classRegistrations(supabase, event, method, path);
+      return await classRegistrations(supabase, event, method, path, actor);
     }
     if (path.includes('/admin/bookings')) {
       const bookingId = event.pathParameters?.bookingId;
       if (bookingId && path.endsWith('/cancel')) {
-        return await adminCancelBooking(supabase, bookingId, parseBody(event));
+        return await adminCancelBooking(supabase, bookingId, parseBody(event), actor);
       }
       if (bookingId && path.endsWith('/refund')) {
-        return await markRefundSent(supabase, bookingId, parseBody(event));
+        return await markRefundSent(supabase, bookingId, parseBody(event), actor);
       }
       return await listBookings(supabase, event);
     }
@@ -112,7 +117,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await getCertificateUrl(supabase, facilitatorId);
     }
     if (method === 'GET') return await getFacilitator(supabase, facilitatorId);
-    if (method === 'PATCH') return await patchFacilitator(supabase, facilitatorId, parseBody(event));
+    if (method === 'PATCH') return await patchFacilitator(supabase, facilitatorId, parseBody(event), actor);
     return badRequest(`Unsupported method ${method}`);
   } catch (err) {
     if (err instanceof FacilitatorInputError || err instanceof SlugError) return badRequest(err.message);
@@ -371,6 +376,7 @@ async function patchFacilitator(
   supabase: SupabaseClient,
   facilitatorId: string,
   body: Record<string, unknown>,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const { data: existing, error: readError } = await supabase
     .from('facilitators')
@@ -499,6 +505,19 @@ async function patchFacilitator(
     await sendFacilitatorPublished(existing.email, existing.display_name, existing.slug);
   }
 
+  // Status only: that is the decision (approve, reject, suspend, publish) the
+  // log exists to answer "who did this?" about. Profile copy edits are not.
+  if (patch.status !== undefined && patch.status !== existing.status) {
+    await recordAudit(actor, {
+      action: 'facilitator.status_changed',
+      targetTable: 'facilitators',
+      targetId: facilitatorId,
+      before: { status: existing.status },
+      after: { status: patch.status },
+      note: `${existing.display_name}: ${existing.status} → ${String(patch.status)}`,
+    });
+  }
+
   return ok({ facilitator: data });
 }
 
@@ -542,6 +561,7 @@ async function adminCancelBooking(
   supabase: SupabaseClient,
   bookingId: string,
   body: Record<string, unknown>,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const { data: booking, error } = await supabase
     .from('bookings')
@@ -625,6 +645,18 @@ async function adminCancelBooking(
     );
   }
 
+  await recordAudit(actor, {
+    action: 'booking.cancel',
+    targetTable: 'bookings',
+    targetId: bookingId,
+    // The refund this cancellation promised — what the queue now owes.
+    amountCentavos: decision.refundCentavos,
+    currency: 'PHP',
+    before: { status: 'confirmed' },
+    after: { status: 'cancelled_by_facilitator', refund_centavos: decision.refundCentavos },
+    note: `${booking.client_email}: ${reason}`,
+  });
+
   return ok({
     bookingId,
     status: 'cancelled_by_facilitator',
@@ -648,6 +680,7 @@ async function markRefundSent(
   supabase: SupabaseClient,
   bookingId: string,
   body: Record<string, unknown>,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const reference = typeof body.reference === 'string' ? body.reference.trim().slice(0, 200) : '';
   if (!reference) return badRequest('A payment or bank reference is required');
@@ -680,6 +713,16 @@ async function markRefundSent(
   if (updateError) throw updateError;
   if (!marked) return json(409, { error: 'This refund is already recorded as sent.' });
 
+  await recordAudit(actor, {
+    action: 'booking.refund_sent',
+    targetTable: 'bookings',
+    targetId: bookingId,
+    amountCentavos: booking.refund_centavos,
+    currency: 'PHP',
+    after: { refunded_at: marked.refunded_at },
+    note: `reference ${marked.refund_reference}`,
+  });
+
   return ok({ bookingId, refundedAt: marked.refunded_at, reference: marked.refund_reference });
 }
 
@@ -690,6 +733,7 @@ async function payouts(
   supabase: SupabaseClient,
   event: APIGatewayProxyEventV2,
   method: string,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const payoutId = event.pathParameters?.payoutId;
 
@@ -702,11 +746,11 @@ async function payouts(
       if (error) throw error;
       return ok({ payouts: data ?? [] });
     }
-    if (method === 'POST') return buildPayout(supabase, parseBody(event));
+    if (method === 'POST') return buildPayout(supabase, parseBody(event), actor);
     return badRequest(`Unsupported method ${method}`);
   }
 
-  if (method === 'PATCH') return updatePayout(supabase, payoutId, parseBody(event));
+  if (method === 'PATCH') return updatePayout(supabase, payoutId, parseBody(event), actor);
   return badRequest(`Unsupported method ${method}`);
 }
 
@@ -734,6 +778,7 @@ async function payouts(
 async function buildPayout(
   supabase: SupabaseClient,
   body: Record<string, unknown>,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const facilitatorId = typeof body.facilitator_id === 'string' ? body.facilitator_id : '';
   if (!facilitatorId) return badRequest('facilitator_id is required');
@@ -882,6 +927,7 @@ async function buildPayout(
       lost: reconciled.lost,
     });
 
+    await auditPayoutBuilt(actor, corrected ?? payout, claimedRows.length);
     return ok({
       payout: corrected ?? payout,
       sessionCount: claimedRows.length,
@@ -890,6 +936,7 @@ async function buildPayout(
     });
   }
 
+  await auditPayoutBuilt(actor, payout, claimedRows.length);
   return ok({
     payout,
     sessionCount: claimedRows.length,
@@ -898,10 +945,32 @@ async function buildPayout(
   });
 }
 
+/** One audit row for a newly built payout batch, whichever return path built it. */
+async function auditPayoutBuilt(actor: AuditActor, payout: unknown, sessionCount: number): Promise<void> {
+  const row = (payout ?? {}) as {
+    id?: string;
+    facilitator_id?: string;
+    net_centavos?: number;
+    currency?: string;
+    period_start?: string;
+    period_end?: string;
+  };
+  await recordAudit(actor, {
+    action: 'payout.created',
+    targetTable: 'facilitator_payouts',
+    targetId: row.id ?? null,
+    amountCentavos: row.net_centavos ?? null,
+    currency: row.currency ?? 'PHP',
+    after: { facilitator_id: row.facilitator_id, status: 'draft' },
+    note: `${sessionCount} session${sessionCount === 1 ? '' : 's'}, ${row.period_start ?? '?'} to ${row.period_end ?? '?'}`,
+  });
+}
+
 async function updatePayout(
   supabase: SupabaseClient,
   payoutId: string,
   body: Record<string, unknown>,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const patch: Record<string, unknown> = {};
 
@@ -981,6 +1050,21 @@ async function updatePayout(
     });
   }
 
+  await recordAudit(actor, {
+    action: patch.status !== undefined && patch.status !== before.status
+      ? `payout.${String(patch.status)}`
+      : 'payout.updated',
+    targetTable: 'facilitator_payouts',
+    targetId: payoutId,
+    // The amount travels only with the transition that moves money, so the
+    // money view shows "paid ₱X" once rather than on every note edit.
+    amountCentavos: patch.status === 'paid' && before.status !== 'paid' ? data.net_centavos : null,
+    currency: data.currency,
+    before: { status: before.status },
+    after: patch,
+    note: data.reference ? `reference ${data.reference}` : null,
+  });
+
   return ok({ payout: data });
 }
 
@@ -1012,12 +1096,13 @@ async function classRegistrations(
   event: APIGatewayProxyEventV2,
   method: string,
   path: string,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const registrationId = event.pathParameters?.registrationId;
 
   if (registrationId && path.endsWith('/refund')) {
     if (method !== 'POST') return badRequest(`Unsupported method ${method}`);
-    return await markClassRefundSent(supabase, registrationId, parseBody(event));
+    return await markClassRefundSent(supabase, registrationId, parseBody(event), actor);
   }
 
   if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
@@ -1071,6 +1156,7 @@ async function markClassRefundSent(
   supabase: SupabaseClient,
   registrationId: string,
   body: Record<string, unknown>,
+  actor: AuditActor,
 ): Promise<APIGatewayProxyResultV2> {
   const reference = typeof body.reference === 'string' ? body.reference.trim().slice(0, 200) : '';
   if (!reference) return badRequest('A payment or bank reference is required');
@@ -1100,6 +1186,16 @@ async function markClassRefundSent(
 
   if (updateError) throw updateError;
   if (!marked) return json(409, { error: 'This refund is already recorded as sent.' });
+
+  await recordAudit(actor, {
+    action: 'class_registration.refund_sent',
+    targetTable: 'class_registrations',
+    targetId: registrationId,
+    amountCentavos: registration.refund_centavos,
+    currency: 'PHP',
+    after: { refunded_at: marked.refunded_at },
+    note: `reference ${marked.refund_reference}`,
+  });
 
   return ok({
     registrationId,

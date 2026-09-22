@@ -189,7 +189,7 @@ async function people(query: Record<string, string | undefined>): Promise<APIGat
     people: truncated ? rows.slice(0, limit) : rows,
     truncated,
     scope:
-      'Everyone with an order, registration, booking or enquiry. Cognito accounts ' +
+      'Everyone with an order, registration, booking, class or enquiry. Cognito accounts ' +
       'that have never transacted do not appear.',
   });
 }

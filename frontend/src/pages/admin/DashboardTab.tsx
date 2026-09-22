@@ -94,7 +94,7 @@ export default function DashboardTab({ adminKey }: { adminKey: string }) {
     {
       label: 'Registration instalments',
       count: q.overdueRegistrations,
-      to: '/admin/registrations',
+      to: '/admin/registrations?filter=overdue',
       hint: 'overdue',
     },
     {
@@ -135,7 +135,7 @@ export default function DashboardTab({ adminKey }: { adminKey: string }) {
             style={{
               textAlign: 'left',
               cursor: 'pointer',
-              border: card.count > 0 ? '1px solid var(--accent, #6b5ce0)' : undefined,
+              border: card.count > 0 ? '1px solid var(--forest-dark)' : undefined,
             }}
           >
             <div

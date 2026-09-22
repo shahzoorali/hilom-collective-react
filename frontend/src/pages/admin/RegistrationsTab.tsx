@@ -38,14 +38,18 @@ import {
   type RefundAssessment,
 } from '../../lib/cms';
 
-type Filter = 'attention' | 'all' | 'confirmed' | 'cancelled';
+type Filter = 'attention' | 'overdue' | 'all' | 'confirmed' | 'cancelled';
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'attention', label: 'Needs attention' },
+  { key: 'overdue', label: 'Overdue' },
   { key: 'confirmed', label: 'Confirmed' },
   { key: 'cancelled', label: 'Cancelled' },
   { key: 'all', label: 'Everything' },
 ];
+
+/** Kept in step with LIVE_REGISTRATION_STATUSES in backend/src/lib/admin-queues.ts. */
+const OVERDUE_LIVE_STATUSES = ['pending_payment', 'confirmed', 'completed'];
 
 const manilaDate = (iso: string) =>
   new Intl.DateTimeFormat('en-PH', {
@@ -67,7 +71,11 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
   // Arriving from a specific event means "show me this roster", so the default
   // "needs attention" filter would answer a question nobody asked — and an
   // empty screen is a poor reply to a link that promised twelve people.
-  const [filter, setFilter] = useState<Filter>(linkedEventId ? 'all' : 'attention');
+  // `?filter=overdue` is the dashboard's hand-over. It must land on exactly
+  // the set the dashboard counted, not the broader "needs attention" queue,
+  // or the card says 2 and the screen shows 5.
+  const linkedFilter = FILTERS.find((f) => f.key === searchParams.get('filter'))?.key;
+  const [filter, setFilter] = useState<Filter>(linkedFilter ?? (linkedEventId ? 'all' : 'attention'));
   const [registrations, setRegistrations] = useState<AdminRegistration[] | null>(null);
   const [money_, setMoney] = useState<RosterMoney | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -80,7 +88,10 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
       .then((all) => {
         const ticketed = all.filter((e) => e.ticketing_enabled);
         setEvents(ticketed);
-        if (ticketed.length > 0 && !eventId) setEventId(ticketed[0]!.id);
+        // Not when arriving with `?filter=`: the dashboard counted across every
+        // event, so dropping the operator into one event's roster would show a
+        // subset of what the card promised.
+        if (ticketed.length > 0 && !eventId && !linkedFilter) setEventId(ticketed[0]!.id);
       })
       .catch((e: Error) => setError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,6 +120,12 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
     if (filter === 'all') return all;
     if (filter === 'confirmed') return all.filter((r) => r.status === 'confirmed');
     if (filter === 'cancelled') return all.filter((r) => r.status === 'cancelled');
+    // Same rule as the dashboard's count (backend/src/lib/admin-queues.ts,
+    // countOverdueRegistrations): an overdue instalment on a seat still held.
+    // A cancelled or expired place owes nothing anybody is chasing.
+    if (filter === 'overdue') {
+      return all.filter((r) => r.overdueCount > 0 && OVERDUE_LIVE_STATUSES.includes(r.status));
+    }
     return all.filter(
       (r) =>
         r.flagged_at !== null ||
