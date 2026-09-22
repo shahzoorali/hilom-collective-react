@@ -25,6 +25,7 @@ import type {
 // payload the admin roster renders — same backend function, same derived money
 // figures. Importing the types rather than restating them is what keeps that
 // true. See backend/src/lib/event-roster.ts.
+import { adminActor } from './cms';
 import type { AdminRegistration, RosterMoney } from './cms';
 
 /** The bearer header, or a thrown error that reads as a prompt to sign in. */
@@ -1065,6 +1066,95 @@ export const adminUpdatePayout = (
     headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   }).then((r) => r.payout);
+
+// ---- admin: the Classes screen (docs/admin-dashboard-plan.md §5) ----
+
+/** One row of the Classes list. */
+export interface AdminClass {
+  id: string;
+  facilitator_id: string;
+  title: string;
+  description: string | null;
+  duration_minutes: number;
+  price_centavos: number;
+  currency: string;
+  max_joiners: number;
+  min_joiners: number;
+  meeting_url: string | null;
+  is_active: boolean;
+  created_at: string;
+  facilitators: { slug: string; display_name: string; email: string } | null;
+  upcomingSessionCount: number;
+  nextSessionAt: string | null;
+  nextSessionSeatsTaken: number | null;
+}
+
+/** One seat on a session, as the roster shows it — live or already cancelled. */
+export interface AdminClassSeat {
+  id: string;
+  session_id: string;
+  client_email: string;
+  client_name: string | null;
+  client_notes: string | null;
+  status: string;
+  seat_no: number;
+  refund_centavos: number | null;
+  refunded_at: string | null;
+}
+
+/** One scheduled occurrence, with its roster. */
+export interface AdminClassSession {
+  id: string;
+  class_id: string;
+  starts_at: string;
+  ends_at: string;
+  price_centavos: number;
+  currency: string;
+  capacity: number;
+  min_joiners: number;
+  status: 'scheduled' | 'cancelled' | 'completed';
+  meeting_url: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  roster: AdminClassSeat[];
+  seatsTaken: number;
+  meetsMinimum: boolean;
+}
+
+export const adminListClasses = (adminKey: string) =>
+  apiFetch<{ classes: AdminClass[] }>('/admin/classes', {
+    headers: { 'x-admin-key': adminKey },
+  }).then((r) => r.classes);
+
+export const adminGetClassSessions = (adminKey: string, classId: string) =>
+  apiFetch<{ class: AdminClass; sessions: AdminClassSession[] }>(
+    `/admin/classes/${encodeURIComponent(classId)}/sessions`,
+    { headers: { 'x-admin-key': adminKey } },
+  );
+
+/**
+ * Cancels one occurrence. Goes through the exact function the facilitator's
+ * own cancel calls (backend/src/lib/class-cancellation.ts) — see that file
+ * for why an admin cancellation must not be a second implementation.
+ */
+export const adminCancelClassSession = (adminKey: string, sessionId: string, reason?: string) =>
+  apiFetch<{
+    cancelled: boolean;
+    registrationsCancelled: number;
+    refundsOwed: number;
+    refundTotalCentavos: number;
+  }>(`/admin/classes/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+    method: 'POST',
+    // The attestation the audit log shows next to this action — see
+    // ADMIN_ACTOR_STORAGE in cms.ts, which every other write-side admin
+    // screen sends and this one should too.
+    headers: {
+      'x-admin-key': adminKey,
+      'Content-Type': 'application/json',
+      ...(adminActor() ? { 'x-admin-actor': adminActor() } : {}),
+    },
+    body: JSON.stringify({ reason }),
+  });
 
 // ---------------------------------------------------------------------------
 // Shared formatting

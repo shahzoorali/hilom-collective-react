@@ -174,13 +174,18 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // The dashboard: one count-only read per queue, using the same predicates
     // as the screens those queues link to. See lib/admin-queues.ts.
     const adminOverview = makeFn('AdminOverviewFn', 'handlers/admin-overview.ts', 'handler');
+    // The admin lever over group classes the panel never had (0049 shipped
+    // with no admin screen at all). Cancellation calls the same
+    // lib/class-cancellation.ts the facilitator portal calls, so it needs the
+    // same SES grant below.
+    const adminClasses = makeFn('AdminClassesFn', 'handlers/admin-classes.ts', 'handler');
 
     // ---- grants ----
     for (const fn of [
       facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations,
       adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
-      classes, adminOverview,
+      classes, adminOverview, adminClasses,
     ]) {
       supabaseSecret.grantRead(fn);
     }
@@ -227,6 +232,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     adminKeySecret.grantRead(adminPeople);
     adminKeySecret.grantRead(adminCognito);
     adminKeySecret.grantRead(adminOverview);
+    adminKeySecret.grantRead(adminClasses);
 
     // Reads the pool's region and id from the shared Cognito secret, then lists
     // and gets users. No write actions — see the header comment in
@@ -257,7 +263,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // the pool id and SPA client id to build the verifier.
     for (const fn of [
       bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations, adminFacilitators,
-      eventRegistrations, classes,
+      eventRegistrations, classes, adminClasses,
     ]) {
       fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
       fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
@@ -291,6 +297,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     for (const fn of [
       bookings, facilitatorPortal, adminFacilitators, bookingSweep,
       eventRegistrations, adminRegistrations, registrationSweep, classes,
+      adminClasses,
     ]) {
       fn.addToRolePolicy(sesSendPolicy(this));
     }
@@ -504,6 +511,12 @@ export class HilomMarketplaceStack extends cdk.Stack {
     ]);
 
     attach(adminOverview, 'AdminOverviewInt', [['/admin/overview', [GET]]]);
+
+    attach(adminClasses, 'AdminClassesInt', [
+      ['/admin/classes', [GET]],
+      ['/admin/classes/{classId}/sessions', [GET]],
+      ['/admin/classes/sessions/{sessionId}/cancel', [POST]],
+    ]);
 
     attach(eventRegistrations, 'EventRegistrationsInt', [
       ['/events/{eventId}/register', [POST]],

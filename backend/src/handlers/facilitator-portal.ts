@@ -50,7 +50,8 @@ import {
   EXCLUSION_VIOLATION,
   UNIQUE_VIOLATION,
 } from '../lib/booking-domain.js';
-import { sendBookingCancelled, sendRescheduleProposed, sendClassCancelled } from '../lib/booking-email.js';
+import { sendBookingCancelled, sendRescheduleProposed } from '../lib/booking-email.js';
+import { cancelClassSession as cancelClassSessionShared } from '../lib/class-cancellation.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import {
   listMessages,
@@ -2287,14 +2288,6 @@ async function submitProposal(
 // A class is never deleted, only deactivated, for the reason the FK says: its
 // sessions carry seats people paid for.
 
-/** One seat released by a cancellation, and who to tell about it. */
-interface CancelledSeat {
-  id: string;
-  price_centavos: number;
-  currency: string | null;
-  client_email: string | null;
-  client_name: string | null;
-}
 
 /** What a facilitator may set on a class. Everything else is derived. */
 function classInput(body: Record<string, unknown>): Record<string, unknown> {
@@ -2586,12 +2579,10 @@ async function listClassSessions(
 /**
  * Cancels one occurrence.
  *
- * Deliberately does **not** refund. Refunds on this platform are manual by
- * design — the same locked decision that governs course refunds and 1:1
- * cancellations — so this records the cancellation, frees the seats, and
- * reports how many people are owed money so that an admin can act on it. A
- * handler that quietly issued refunds would be the only automatic money
- * movement in the codebase.
+ * A thin wrapper: the actual cancellation lives in lib/class-cancellation.ts,
+ * shared with the admin panel's Classes screen, so a facilitator's cancel and
+ * an admin's cancel record identical refunds and send identical emails. See
+ * that file's header for why this could not be two implementations.
  */
 async function cancelClassSession(
   supabase: SupabaseClient,
@@ -2602,116 +2593,7 @@ async function cancelClassSession(
   const body = parseBody(ev);
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 1000) : null;
 
-  const { data, error } = await supabase
-    .from('facilitator_class_sessions')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      cancellation_reason: reason,
-    })
-    .eq('id', sessionId)
-    .eq('facilitator_id', facilitator.id)
-    .eq('status', 'scheduled')
-    .select('id, starts_at, price_centavos')
-    .maybeSingle<{ id: string; starts_at: string; price_centavos: number }>();
-  if (error) throw error;
-  if (!data) return notFound('Session not found, or already cancelled');
-
-  // Two writes, split by what the person actually held rather than by price.
-  //
-  // Every seat on a session was sold at the same price — claim_class_seat
-  // stamps the session's price onto each one (0049) — so "was this paid for"
-  // is a property of the session, not of the row. That makes the split clean:
-  // confirmed seats are the people who were coming, pending ones are people
-  // who started a checkout and never finished.
-  //
-  // `refund_centavos` is set here because this is the only moment the amount
-  // is unambiguous, and setting it is what puts the row in the admin refund
-  // queue at all — that queue is `refund_centavos > 0 and refunded_at is null`
-  // (0051). A free class leaves it null: "nothing was charged" and "a refund
-  // of zero" are different facts and the queue must not show the first.
-  const sessionPrice = Number(data.price_centavos ?? 0);
-
-  const { data: confirmedSeats, error: paidError } = await supabase
-    .from('class_registrations')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      cancelled_by: 'facilitator',
-      cancellation_reason: reason,
-      refund_centavos: sessionPrice > 0 ? sessionPrice : null,
-    })
-    .eq('session_id', sessionId)
-    .eq('status', 'confirmed')
-    .select('id, price_centavos, currency, client_email, client_name')
-    .returns<CancelledSeat[]>();
-  if (paidError) throw paidError;
-
-  // Holds that never completed payment. Cancelled so the seat is not left
-  // dangling, owed nothing, and deliberately not emailed — a cancellation
-  // notice would be the first they ever heard about any of it.
-  const { error: regError } = await supabase
-    .from('class_registrations')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      cancelled_by: 'facilitator',
-      cancellation_reason: reason,
-    })
-    .eq('session_id', sessionId)
-    .eq('status', 'pending_payment');
-  if (regError) throw regError;
-
-  const affected = confirmedSeats ?? [];
-  // Owed only when the class was actually paid for.
-  const owed = sessionPrice > 0 ? affected : [];
-
-  // Tell everyone, and do not let a failed send undo a cancellation that has
-  // already happened. Best-effort throughout this codebase for that reason:
-  // the class is off either way, and a bounced address must not leave the
-  // session half-cancelled.
-  //
-  // Only people who still had a live place are written to. A lapsed hold is
-  // someone who considered coming and never paid; mailing them about a
-  // cancellation would be the first they had heard of any of it.
-  //
-  // Sequential rather than Promise.all: a class is at most a few dozen seats,
-  // and SES has a per-second send quota that a burst can trip.
-  const cls = await supabase
-    .from('facilitator_class_sessions')
-    .select('facilitator_classes(title)')
-    .eq('id', sessionId)
-    .maybeSingle<{ facilitator_classes: { title: string } | null }>();
-  const className = cls.data?.facilitator_classes?.title ?? 'your class';
-
-  for (const seat of affected) {
-    if (!seat.client_email) continue;
-    try {
-      await sendClassCancelled({
-        to: seat.client_email,
-        clientName: seat.client_name,
-        className,
-        facilitatorName: facilitator.display_name,
-        startsAt: data.starts_at,
-        timezone: facilitator.timezone,
-        refundCentavos: Number(seat.price_centavos ?? 0),
-        currency: String(seat.currency ?? 'PHP'),
-        reason,
-      });
-    } catch (err) {
-      console.error('[facilitatorPortal.cancelClassSession] cancellation email failed', {
-        registrationId: seat.id,
-        err,
-      });
-    }
-  }
-
-  return ok({
-    cancelled: true,
-    registrationsCancelled: (affected ?? []).length,
-    // What an admin has to action by hand. Named `refundsOwed` rather than
-    // `refunded` because nothing here moved any money.
-    refundsOwed: owed.length,
-    refundTotalCentavos: owed.reduce((sum, r) => sum + Number(r.price_centavos), 0),
-  });
+  const result = await cancelClassSessionShared(supabase, facilitator, sessionId, reason, 'facilitator');
+  if (!result) return notFound('Session not found, or already cancelled');
+  return ok(result);
 }

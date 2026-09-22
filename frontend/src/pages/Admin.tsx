@@ -6,6 +6,7 @@ import DashboardTab from './admin/DashboardTab';
 import AuditLogTab from './admin/AuditLogTab';
 import OrdersTab from './admin/OrdersTab';
 import ProductsTab from './admin/ProductsTab';
+import ClassesTab from './admin/ClassesTab';
 import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
 import FacilitatorEditor from './admin/FacilitatorEditor';
@@ -68,6 +69,7 @@ const NAV_GROUPS = [
     items: [
       { label: 'Orders', path: 'orders', icon: '💳' },
       { label: 'Products & Courses', path: 'products', icon: '📦' },
+      { label: 'Classes', path: 'classes', icon: '🧘' },
       { label: 'Promo Codes', path: 'promo-codes', icon: '🏷️' },
       { label: 'Payouts', path: 'payouts', icon: '🏦' },
     ],
@@ -382,6 +384,7 @@ export default function Admin() {
           <Route path="forms" element={<FormsTab adminKey={adminKey} />} />
           <Route path="orders" element={<OrdersTab adminKey={adminKey} />} />
           <Route path="products" element={<ProductsTab adminKey={adminKey} />} />
+          <Route path="classes" element={<ClassesTab adminKey={adminKey} />} />
           {/* Commerce was split in two. `/admin/commerce` is somebody's pinned
               tab, so it keeps working: it lands on the ledger, query intact
               (the dashboard's old `?stuck=1` still selects the Stuck filter). */}
