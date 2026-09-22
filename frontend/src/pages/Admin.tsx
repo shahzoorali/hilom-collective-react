@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useParams, Link } fr
 import { adminListPages, ADMIN_ACTOR_STORAGE } from '../lib/cms';
 import hilomLogo from '../assets/hilom-logo.png';
 import DashboardTab from './admin/DashboardTab';
+import AuditLogTab from './admin/AuditLogTab';
 import CommerceTab from './admin/CommerceTab';
 import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
@@ -68,6 +69,10 @@ const NAV_GROUPS = [
       { label: 'Promo Codes', path: 'promo-codes', icon: '🏷️' },
       { label: 'Payouts', path: 'payouts', icon: '🏦' },
     ],
+  },
+  {
+    label: 'System',
+    items: [{ label: 'Audit Log', path: 'audit-log', icon: '📜' }],
   },
 ] as const;
 
@@ -381,6 +386,7 @@ export default function Admin() {
           <Route path="accounts" element={<CognitoUsersTab adminKey={adminKey} />} />
           <Route path="reviews" element={<ReviewsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
+          <Route path="audit-log" element={<AuditLogTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Routes>
       </main>

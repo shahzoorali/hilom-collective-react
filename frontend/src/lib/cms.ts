@@ -831,6 +831,8 @@ export interface AuditEntry {
   id: string;
   actor_source: 'shared_key' | 'cognito' | 'system';
   actor_label: string;
+  /** Cognito subject, only when actor_source is 'cognito' — a verified identity, not an attestation. */
+  actor_sub: string | null;
   source_ip: string | null;
   action: string;
   target_table: string;
@@ -838,6 +840,8 @@ export interface AuditEntry {
   event_id: string | null;
   amount_centavos: number | null;
   currency: string | null;
+  before: unknown;
+  after: unknown;
   note: string | null;
   created_at: string;
 }

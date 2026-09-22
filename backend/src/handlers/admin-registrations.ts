@@ -14,7 +14,7 @@
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/mark-paid
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/waive
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/void
- *   GET  /admin/audit-log
+ *   GET  /admin/audit-log     ?eventId= ?targetId= ?action= ?from= ?to= ?money=1 ?limit=
  *
  * Authorized with the shared admin key (`isAuthorizedAdmin`), matching every
  * other admin surface here. Consequence worth stating: the key identifies an
@@ -773,6 +773,11 @@ async function auditLog(query: Record<string, string | undefined>): Promise<APIG
 
   if (query.eventId) builder = builder.eq('event_id', query.eventId);
   if (query.targetId) builder = builder.eq('target_id', query.targetId);
+  if (query.action) builder = builder.eq('action', query.action);
+  // Inclusive on both ends: `to` is a date picker's last day, and a caller
+  // expects that whole day's rows, not everything strictly before midnight.
+  if (query.from) builder = builder.gte('created_at', query.from);
+  if (query.to) builder = builder.lte('created_at', query.to);
   // The money view: everything that moved a number, which is the subset anyone
   // reconciling actually wants.
   if (query.money === '1') builder = builder.not('amount_centavos', 'is', null);
