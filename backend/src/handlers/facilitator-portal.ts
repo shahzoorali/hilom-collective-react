@@ -1844,8 +1844,14 @@ async function earnings(
  * the token, never by an id in the path.
  */
 const HOSTED_EVENT_COLUMNS =
-  'id, title, subtitle, excerpt, image_url, image_alt, location, starts_at, ends_at, status, ' +
-  'ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions, ' +
+  // `description` is here for submitProposal, which refuses to submit without
+  // one. Its absence made that check read `undefined` on every event and
+  // reject every submission ever attempted, including events that had a
+  // description saved — the facilitator saw their own text on screen and was
+  // told to add it. Any column a guard reads has to be a column the read asks
+  // for; nothing else in this file needs it.
+  'id, title, subtitle, excerpt, description, image_url, image_alt, location, starts_at, ends_at, ' +
+  'status, ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions, ' +
   'review_status, submitted_at, reviewed_at, review_note, submitted_by';
 
 /**

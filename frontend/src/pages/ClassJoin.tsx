@@ -106,9 +106,14 @@ export default function ClassJoin() {
             {formatInZone(session.starts_at, zone, { dateStyle: 'full', timeStyle: 'short' })} is
             confirmed.
           </p>
+          {/* This sentence was here before the email it describes existed, which
+              made the one screen someone sees after joining the one screen that
+              lied to them. It is true as of the confirmation email in
+              class-fulfillment.ts; if that send is ever removed, remove this
+              with it. */}
           <p>
-            The joining details are on <Link to="/account">your account</Link>, and we have emailed
-            them to you.
+            We've emailed you the joining details. They're also on{' '}
+            <Link to="/account">your account</Link>, under Group classes.
           </p>
         </div>
       </section>

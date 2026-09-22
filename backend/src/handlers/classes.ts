@@ -29,6 +29,7 @@ import { ok, badRequest, notFound, serverError, unauthorized, json } from '../li
 import { requireUser, UnauthorizedError } from '../lib/auth.js';
 import { createHostedCheckout } from '../lib/paymongo-checkout.js';
 import { splitFee } from '../lib/booking-domain.js';
+import { confirmClassSeat } from '../lib/class-fulfillment.js';
 import {
   validateReview,
   reviewerLabel,
@@ -272,11 +273,11 @@ async function join(
   // A free class is confirmed outright — there is nothing to pay and no reason
   // to send someone to a checkout for ₱0.
   if (fee.priceCentavos === 0) {
-    await supabase
-      .from('class_registrations')
-      .update({ status: 'confirmed', hold_expires_at: null })
-      .eq('id', registrationId);
-    return ok({ registrationId, free: true, status: 'confirmed' });
+    // Through the shared path, so a free joiner gets the same confirmation
+    // email a paying one does. It is the only message they will ever get --
+    // there is no payment receipt behind it.
+    const result = await confirmClassSeat(supabase, registrationId);
+    return ok({ registrationId, free: true, status: result.status });
   }
 
   const origin = process.env.FRONTEND_URL ?? 'https://www.hilomcollective.com';

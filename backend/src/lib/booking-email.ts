@@ -1201,3 +1201,126 @@ export async function sendEventProposalDecision(input: {
     html,
   );
 }
+
+/**
+ * Confirms a place in a group class (0049).
+ *
+ * This did not exist until it was reported missing, and its absence was worse
+ * than a gap: the confirmation screen told people "we have emailed them to
+ * you" while nothing was sent. Someone who joined a free class got no record
+ * of it at all -- no time, no link, nothing to find later -- and the one place
+ * the details lived was a page they had already navigated away from.
+ *
+ * ## It carries the joining link
+ *
+ * For an online class this is the whole point of the email. It is the same
+ * rule events follow for `join_url` (0045) and services for `meeting_url`
+ * (0011): the link is withheld from every public read and released only to
+ * someone whose place is confirmed. This send is that release, so it must not
+ * be called for a seat that is still `pending_payment`.
+ *
+ * ## A free class gets the same email as a paid one
+ *
+ * Free classes confirm instantly with no checkout, so this is the only message
+ * a free joiner will ever receive. It would be easy to treat it as the lesser
+ * case and send a stub; it is actually the case that depends on this email
+ * most, because there is no payment receipt behind it.
+ */
+export async function sendClassJoined(input: {
+  to: string;
+  clientName: string | null;
+  className: string;
+  classDescription: string | null;
+  facilitatorName: string;
+  startsAt: string;
+  durationMinutes: number;
+  /** The facilitator's zone. A class has no per-client timezone the way a booking does. */
+  timezone: string;
+  deliveryMode: string;
+  location: string | null;
+  /** Released here and only here among the class emails. Null for an in-person class. */
+  meetingUrl: string | null;
+  pricePaidCentavos: number;
+  currency: string;
+}): Promise<void> {
+  const {
+    to,
+    clientName,
+    className,
+    classDescription,
+    facilitatorName,
+    startsAt,
+    durationMinutes,
+    timezone,
+    deliveryMode,
+    location,
+    meetingUrl,
+    pricePaidCentavos,
+    currency,
+  } = input;
+
+  const when = new Intl.DateTimeFormat('en-PH', {
+    timeZone: timezone || 'Asia/Manila',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(startsAt));
+
+  const greeting = clientName ? `Hi ${escapeHtml(shortName(clientName))},` : 'Hi,';
+
+  const rows = [
+    { label: 'Class', value: escapeHtml(className) },
+    { label: 'With', value: escapeHtml(facilitatorName) },
+    { label: 'When', value: escapeHtml(when) },
+    { label: 'Length', value: `${durationMinutes} minutes` },
+    ...(deliveryMode !== 'online' && location
+      ? [{ label: 'Where', value: escapeHtml(location) }]
+      : []),
+    {
+      label: 'Paid',
+      value: pricePaidCentavos > 0 ? escapeHtml(peso(pricePaidCentavos, currency)) : 'Free',
+    },
+  ];
+
+  // The button is the link, and the bare URL is printed underneath it, because
+  // people copy this into a calendar entry by hand and a button cannot be
+  // copied. Same reasoning as the event registration screen.
+  const joinBlock = meetingUrl
+    ? button('Join the class', meetingUrl) +
+      p(
+        `<span style="word-break:break-all">${escapeHtml(meetingUrl)}</span>`,
+      ) +
+      note('Keep this link -- it is also on your account, under Group classes.')
+    : note('Your place is on your account, under Group classes.');
+
+  const html = renderEmail({
+    preheader: `${className} with ${facilitatorName}, ${when}.`,
+    heading: "You're in",
+    body:
+      p(greeting) +
+      p(`Your place at <strong>${escapeHtml(className)}</strong> is confirmed.`) +
+      details(rows) +
+      (classDescription ? p(escapeHtml(classDescription)) : '') +
+      joinBlock,
+  });
+
+  const text = renderText("You're in", [
+    clientName ? `Hi ${shortName(clientName)},` : 'Hi,',
+    '',
+    `Your place at ${className} is confirmed.`,
+    '',
+    `With: ${facilitatorName}`,
+    `When: ${when}`,
+    `Length: ${durationMinutes} minutes`,
+    ...(deliveryMode !== 'online' && location ? [`Where: ${location}`] : []),
+    `Paid: ${pricePaidCentavos > 0 ? peso(pricePaidCentavos, currency) : 'Free'}`,
+    '',
+    ...(meetingUrl
+      ? ['Join the class:', meetingUrl, '', 'It is also on your account, under Group classes.']
+      : ['Your place is on your account, under Group classes.']),
+  ]);
+
+  await send(to, `You're in: ${className}`, text, html);
+}

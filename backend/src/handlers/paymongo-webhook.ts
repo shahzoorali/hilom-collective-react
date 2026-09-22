@@ -23,6 +23,7 @@ import { getSupabase } from '../lib/supabase.js';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
 import { confirmPackage } from '../lib/packages.js';
+import { confirmClassSeat } from '../lib/class-fulfillment.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import { enqueueRetry } from '../lib/retry-queue.js';
 import { ok, badRequest, serverError } from '../lib/http.js';
@@ -288,24 +289,8 @@ async function handleClassSeat(
 
   try {
     const supabase = await getSupabase();
-    const { data, error } = await supabase
-      .from('class_registrations')
-      .update({
-        status: 'confirmed',
-        hold_expires_at: null,
-        paymongo_payment_id: paymentId ?? null,
-      })
-      .eq('id', registrationId)
-      .eq('status', 'pending_payment')
-      .select('id')
-      .maybeSingle<{ id: string }>();
-    if (error) throw error;
-
-    return ok({
-      received: true,
-      handled: true,
-      status: data ? 'confirmed' : 'already_confirmed',
-    });
+    const result = await confirmClassSeat(supabase, registrationId, paymentId);
+    return ok({ received: true, handled: true, status: result.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[paymongo-webhook] class seat confirmation failed, queuing retry', {

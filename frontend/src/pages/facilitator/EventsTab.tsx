@@ -92,6 +92,9 @@ export default function EventsTab() {
   const [error, setError] = useState<string | null>(null);
   /** null = list, 'new' = a blank proposal, otherwise the id being edited. */
   const [composing, setComposing] = useState<string | null>(null);
+  // Set by the form on its way out, shown on the list. The form cannot say
+  // "sent" itself: succeeding is what closes it.
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     listMyHostedEvents()
@@ -117,7 +120,7 @@ export default function EventsTab() {
     return (
       <EventProposalForm
         existing={composing === 'new' ? null : events.find((e) => e.id === composing) ?? null}
-        onDone={(saved) => {
+        onDone={(saved, message) => {
           setEvents((list) =>
             list === null
               ? [saved]
@@ -125,6 +128,7 @@ export default function EventsTab() {
                 ? list.map((e) => (e.id === saved.id ? saved : e))
                 : [saved, ...list],
           );
+          setNotice(message ?? null);
           setComposing(null);
         }}
         onCancel={() => setComposing(null)}
@@ -140,6 +144,8 @@ export default function EventsTab() {
           Propose an event
         </button>
       </div>
+
+      {notice && <div className="alert alert-success">{notice}</div>}
 
       {events.length === 0 && (
         <p className="muted">
@@ -465,7 +471,7 @@ function EventProposalForm({
   onCancel,
 }: {
   existing: MyHostedEvent | null;
-  onDone: (saved: MyHostedEvent) => void;
+  onDone: (saved: MyHostedEvent, message?: string) => void;
   onCancel: () => void;
 }) {
   // `datetime-local` wants 'YYYY-MM-DDTHH:mm' with no zone, and the stored
@@ -508,7 +514,18 @@ function EventProposalForm({
     image: draft.image_url ? { id: null, url: draft.image_url, alt: draft.image_alt } : null,
   });
 
-  async function save(): Promise<MyHostedEvent | null> {
+  /**
+   * `keepOpen` exists because `onDone` unmounts this form.
+   *
+   * The parent renders the form only while `composing` is set, and `onDone`
+   * clears it. That is right for a plain save -- the work is done, go back to
+   * the list -- and wrong in the middle of saveAndSubmit, where the submit has
+   * not happened yet. Calling it there tore the form down mid-flow, so the
+   * error from a failed submit was set on a component that no longer existed
+   * and was never rendered. The facilitator saw the list come back with no
+   * message, which is indistinguishable from nothing having happened.
+   */
+  async function save(keepOpen = false): Promise<MyHostedEvent | null> {
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -516,7 +533,7 @@ function EventProposalForm({
       const saved = existing
         ? await saveMyHostedEvent(existing.id, payload())
         : await createMyHostedEvent(payload());
-      onDone(saved);
+      if (!keepOpen) onDone(saved);
       return saved;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -532,12 +549,18 @@ function EventProposalForm({
    * typing safely on the server.
    */
   async function saveAndSubmit() {
-    const saved = await save();
+    // Saved without unmounting, so that a refused submit still has a screen to
+    // report itself on -- and the typing is already safely on the server
+    // either way, which is why this is two round-trips rather than one.
+    const saved = await save(true);
     if (!saved) return;
     setBusy(true);
+    setError(null);
     try {
-      onDone(await submitMyHostedEvent(saved.id));
-      setNotice('Sent to Hilom for review.');
+      const submitted = await submitMyHostedEvent(saved.id);
+      // Only now: the submit worked, so leaving the form is the right move.
+      // The message travels with it, because this screen is about to unmount.
+      onDone(submitted, 'Sent to Hilom for review.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not submit');
     } finally {

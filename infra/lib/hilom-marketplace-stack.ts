@@ -282,9 +282,15 @@ export class HilomMarketplaceStack extends cdk.Stack {
     //
     // paymongoWebhook and enrollmentRetryConsumer are absent because they live
     // in the core stack and are granted the same statement there.
+    // `classes` sends the joining confirmation for a *free* class, which
+    // confirms inline rather than through the webhook. The paid path is
+    // granted in the core stack with paymongoWebhook, so only this half needs
+    // adding here -- and omitting it would have meant free joiners silently
+    // getting nothing while paid ones got their email, which is the hardest
+    // shape of this bug to notice.
     for (const fn of [
       bookings, facilitatorPortal, adminFacilitators, bookingSweep,
-      eventRegistrations, adminRegistrations, registrationSweep,
+      eventRegistrations, adminRegistrations, registrationSweep, classes,
     ]) {
       fn.addToRolePolicy(sesSendPolicy(this));
     }

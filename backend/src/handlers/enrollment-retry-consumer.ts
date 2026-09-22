@@ -13,6 +13,7 @@ import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import { confirmPackage } from '../lib/packages.js';
+import { confirmClassSeat } from '../lib/class-fulfillment.js';
 import { getSupabase } from '../lib/supabase.js';
 import type { RetryKind } from '../lib/retry-queue.js';
 
@@ -50,16 +51,11 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
       } else if (kind === 'class') {
         // `orderId` carries the class_registrations id — the field keeps its
         // original name for in-flight compatibility, as retry-queue.ts
-        // explains. Filtered on pending_payment so a retry that races the
-        // original webhook cannot un-confirm anything (0049).
-        const supabase = await getSupabase();
-        const { error } = await supabase
-          .from('class_registrations')
-          .update({ status: 'confirmed', hold_expires_at: null })
-          .eq('id', message.orderId)
-          .eq('status', 'pending_payment');
-        if (error) throw error;
-        console.log(`[enrollment-retry-consumer] class seat ${message.orderId} -> confirmed`);
+        // explains. confirmClassSeat filters on pending_payment, so a retry
+        // that races the webhook it is retrying for cannot confirm twice or
+        // email twice (0049).
+        const result = await confirmClassSeat(await getSupabase(), message.orderId);
+        console.log(`[enrollment-retry-consumer] class seat ${message.orderId} -> ${result.status}`);
       } else if (kind === 'registration_charge') {
         // `orderId` carries the charge id — the field keeps its original name
         // for in-flight compatibility, as retry-queue.ts explains. No payment
