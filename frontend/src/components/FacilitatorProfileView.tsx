@@ -1039,6 +1039,17 @@ function GroupClassCard({ cls, preview }: { cls: PublicGroupClass; preview?: boo
                 minute: '2-digit',
               }).format(new Date(s.starts_at))}
             </span>
+            {/* A session snapshots the class's price when it is scheduled
+                (0049), so an older date can carry a different number than the
+                class shows above — shown only when they actually differ,
+                since that is the case docs/class-and-event-bugfixes-plan.md
+                §3 found nothing told a browsing client about. */}
+            {s.price_centavos !== cls.price_centavos && (
+              <span className="muted">
+                {' '}
+                · {s.price_centavos === 0 ? 'free' : displayPrice(s.price_centavos, s.currency)}
+              </span>
+            )}
             {s.full ? (
               <span className="muted"> · full</span>
             ) : (

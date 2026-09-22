@@ -401,7 +401,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/classes', [GET, POST]],
       ['/facilitator/classes/{classId}', [PUT, DELETE]],
       ['/facilitator/classes/{classId}/sessions', [GET, POST]],
-      ['/facilitator/classes/sessions/{sessionId}', [DELETE]],
+      ['/facilitator/classes/sessions/{sessionId}', [DELETE, PUT]],
     ]);
 
     // A separate function from the portal above, following this stack's rule

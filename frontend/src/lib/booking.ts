@@ -1963,6 +1963,18 @@ export const scheduleMyClassSession = (classId: string, startsAt: string) =>
  * can action it by hand, which is the same manual-refund rule the rest of the
  * platform follows.
  */
+/**
+ * Corrects one scheduled session's price — the session, not the class it
+ * belongs to. Only works while nobody has a seat on it yet; see the backend
+ * handler for why.
+ */
+export const updateMyClassSessionPrice = (sessionId: string, priceCentavos: number) =>
+  apiFetch<{ session: ClassSession }>(`/facilitator/classes/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PUT',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ price_centavos: priceCentavos }),
+  }).then((r) => r.session);
+
 export const cancelMyClassSession = (sessionId: string, reason: string) =>
   apiFetch<{
     cancelled: boolean;

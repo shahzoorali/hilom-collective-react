@@ -37,6 +37,7 @@ import {
   listMyClassSessions,
   scheduleMyClassSession,
   cancelMyClassSession,
+  updateMyClassSessionPrice,
   viewerTimezone,
   formatInZone,
   type GroupClass,
@@ -227,6 +228,39 @@ function SessionList({
     }
   }
 
+  /**
+   * A session snapshots the class's price when it is scheduled, so editing
+   * the class afterwards leaves earlier dates carrying the old number —
+   * silently, until this. Only reachable while nobody has joined (the row
+   * below only shows the control then), and the backend re-checks it.
+   */
+  async function fixPrice(session: ClassSession) {
+    const current = (session.price_centavos / 100).toFixed(2);
+    const raw = window.prompt(
+      `Correct the price for ${formatInZone(session.starts_at, zone, { dateStyle: 'medium', timeStyle: 'short' })}.\n\n` +
+        `This changes only this date, not the class.`,
+      current,
+    );
+    if (raw === null) return;
+    const pesos = Number(raw);
+    if (!Number.isFinite(pesos) || pesos < 0) {
+      setError(`"${raw}" is not a valid price.`);
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      await updateMyClassSessionPrice(session.id, Math.round(pesos * 100));
+      reload();
+      setNotice('Price corrected for that date.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update that price');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--line)', paddingTop: '0.75rem' }}>
       {error && <div className="alert alert-error">{error}</div>}
@@ -283,6 +317,35 @@ function SessionList({
                   {/* Reported, never acted on. */}
                   {s.min_joiners > 1 && !s.meetsMinimum && (
                     <span> · below your {s.min_joiners}, still going ahead</span>
+                  )}
+                </p>
+                {/* The class's price is written once and a date is scheduled
+                    against it most weeks — this is what stops that snapshot
+                    from going stale invisibly. This date's own price is what
+                    it actually charges; the class's current price is shown
+                    only when the two have come apart. */}
+                <p className="small" style={{ margin: '0.15rem 0 0' }}>
+                  {s.price_centavos === 0 ? 'Free' : money(s.price_centavos)}
+                  {s.price_centavos !== cls.price_centavos && (
+                    <span className="muted">
+                      {' '}
+                      — the class is now{' '}
+                      {cls.price_centavos === 0 ? 'free' : money(cls.price_centavos)}
+                    </span>
+                  )}
+                  {s.status === 'scheduled' && s.seatsTaken === 0 && (
+                    <>
+                      {' '}
+                      ·{' '}
+                      <button
+                        type="button"
+                        className="linklike small"
+                        disabled={busy}
+                        onClick={() => void fixPrice(s)}
+                      >
+                        Fix
+                      </button>
+                    </>
                   )}
                 </p>
               </div>

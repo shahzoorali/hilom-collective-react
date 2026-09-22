@@ -2284,6 +2284,7 @@ async function submitProposal(
 //   POST   /facilitator/classes/{classId}/sessions     — schedule an occurrence
 //   GET    /facilitator/classes/{classId}/sessions     — its occurrences + rosters
 //   DELETE /facilitator/classes/sessions/{sessionId}   — cancel one occurrence
+//   PUT    /facilitator/classes/sessions/{sessionId}   — correct a session's price
 //
 // A class is never deleted, only deactivated, for the reason the FK says: its
 // sessions carry seats people paid for.
@@ -2354,6 +2355,7 @@ async function classes(
 
   if (sessionId) {
     if (method === 'DELETE') return await cancelClassSession(supabase, facilitator, sessionId, ev);
+    if (method === 'PUT') return await updateClassSessionPrice(supabase, facilitator, sessionId, parseBody(ev));
     return badRequest(`Unsupported method ${method}`);
   }
 
@@ -2596,4 +2598,68 @@ async function cancelClassSession(
   const result = await cancelClassSessionShared(supabase, facilitator, sessionId, reason, 'facilitator');
   if (!result) return notFound('Session not found, or already cancelled');
   return ok(result);
+}
+
+/**
+ * Corrects one scheduled session's price.
+ *
+ * A session snapshots the class's price at the moment it is scheduled, on
+ * purpose (see the header on facilitator_class_sessions in 0049): editing a
+ * class later must not move the ground under a date someone already paid
+ * for. What that decision left with no answer is a session scheduled *before*
+ * the class was priced correctly — Prem's "Online HIIT Pilates Express" sat
+ * at price_centavos = 0 on every September date after he set the class to
+ * ₱15, and nothing told him or a browsing client the two numbers had come
+ * apart (docs/class-and-event-bugfixes-plan.md §3).
+ *
+ * Allowed only while `seatsTaken = 0` — the moment someone holds a seat, the
+ * snapshot rule has to hold for them same as anyone who paid outright. This
+ * mirrors the existing rule that a class's own description is only editable
+ * while a proposal is a draft: editable until someone has acted on it.
+ */
+async function updateClassSessionPrice(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  sessionId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const price = Number(body.price_centavos);
+  if (!Number.isInteger(price) || price < 0) {
+    throw new FacilitatorInputError('That price is not a number of centavos.');
+  }
+
+  const { data: session, error } = await supabase
+    .from('facilitator_class_sessions')
+    .select('id, status')
+    .eq('id', sessionId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<{ id: string; status: string }>();
+  if (error) throw error;
+  if (!session) return notFound('Session not found');
+  if (session.status !== 'scheduled') {
+    return badRequest('Only a scheduled session can have its price corrected.');
+  }
+
+  const { count, error: seatError } = await supabase
+    .from('class_registrations')
+    .select('id', { count: 'exact', head: true })
+    .eq('session_id', sessionId)
+    .in('status', ['pending_payment', 'confirmed']);
+  if (seatError) throw seatError;
+  if ((count ?? 0) > 0) {
+    return badRequest(
+      'This session already has someone in it — its price is locked in for them and cannot change.',
+    );
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from('facilitator_class_sessions')
+    .update({ price_centavos: price })
+    .eq('id', sessionId)
+    .select('*')
+    .maybeSingle();
+  if (updateError) throw updateError;
+  if (!updated) return notFound('Session not found');
+
+  return ok({ session: updated });
 }
