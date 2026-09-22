@@ -146,3 +146,46 @@ export function payoutCurrency(...sources: readonly (readonly PayableRow[])[]): 
   }
   return 'PHP';
 }
+
+// ---------------------------------------------------------------------------
+// Voiding a batch
+// ---------------------------------------------------------------------------
+
+/**
+ * Every table whose rows `buildPayout` stamps with a `payout_id`.
+ *
+ * Voiding a batch must release *all* of them, or the rows left behind keep
+ * pointing at a void batch, fail every later `payout_id is null` claim, and
+ * that work is never paid. This list is the one place that says what "all" is:
+ * 0051 added `class_registrations` as a second source and the void path went
+ * on releasing only `bookings` — class earnings in a voided batch were
+ * silently unpayable. A third source added to `buildPayout` goes here too.
+ */
+export const PAYOUT_CLAIM_TABLES = ['bookings', 'class_registrations'] as const;
+
+export type VoidDecision = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Whether a batch in `currentStatus` may be voided.
+ *
+ * `paid` is refused. The money has left, and releasing that work back into the
+ * unpaid pool would put it in the next batch: the same sessions, paid twice.
+ * The admin screen already hides Void on a paid batch; this makes the API say
+ * the same rather than trust the button.
+ *
+ * `void` is allowed. Re-voiding does nothing to the batch and re-runs the
+ * release, so it is the recovery path for a void that failed half-way, and
+ * the handler releases rows *before* it marks the batch void for the same
+ * reason (see updatePayout).
+ */
+export function canVoidPayout(currentStatus: string): VoidDecision {
+  if (currentStatus === 'paid') {
+    return {
+      ok: false,
+      reason:
+        'A paid payout cannot be voided — the money has already been sent, and voiding would ' +
+        'release its sessions to be paid again in the next batch.',
+    };
+  }
+  return { ok: true };
+}

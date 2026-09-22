@@ -28,7 +28,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
-import { sumPayable, reconcileClaim, payoutCurrency, type PayableRow } from '../lib/payout-domain.js';
+import {
+  sumPayable,
+  reconcileClaim,
+  payoutCurrency,
+  canVoidPayout,
+  PAYOUT_CLAIM_TABLES,
+  type PayableRow,
+} from '../lib/payout-domain.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
 import { addUserToGroup, removeUserFromGroup } from '../lib/cognito.js';
 import { sendFacilitatorApproved, sendFacilitatorPublished, sendBookingCancelled, sendPayoutPaid } from '../lib/booking-email.js';
@@ -861,8 +868,12 @@ async function buildPayout(
   // being claimed twice; reading back what was actually won is what stops this
   // batch *paying* for work another batch took — the filter prevents the
   // double claim, not the double payment.
+  //
+  // The table type is PAYOUT_CLAIM_TABLES, the same list updatePayout releases
+  // on void, so a new source cannot be stamped here without being released
+  // there too.
   const stamp = async (
-    table: 'bookings' | 'class_registrations',
+    table: (typeof PAYOUT_CLAIM_TABLES)[number],
     ids: string[],
   ) => {
     if (ids.length === 0) return [];
@@ -1002,6 +1013,30 @@ async function updatePayout(
   if (beforeError) throw beforeError;
   if (!before) return notFound('Payout not found');
 
+  // Voiding releases the batch's work back into the unpaid pool, so a mistaken
+  // batch can be rebuilt rather than leaving that money unpayable.
+  //
+  // Released *before* the batch is marked void, for the reason buildPayout
+  // orders its writes: choose the failure that stays visible and fixable. If a
+  // release fails after the status write, the batch reads `void`, the admin
+  // screen stops offering Void, and the rows still stamped with it are excluded
+  // from every future batch with no way back. Released first, a failure leaves
+  // the batch in its old status with Void still on offer, and re-voiding (which
+  // canVoidPayout allows) finishes the job. The window between the two writes
+  // is harmless: a batch being voided was never going to be paid.
+  if (patch.status === 'void') {
+    const decision = canVoidPayout(before.status);
+    if (!decision.ok) return json(409, { error: decision.reason });
+
+    for (const table of PAYOUT_CLAIM_TABLES) {
+      const { error: releaseError } = await supabase
+        .from(table)
+        .update({ payout_id: null })
+        .eq('payout_id', payoutId);
+      if (releaseError) throw releaseError;
+    }
+  }
+
   const { data, error } = await supabase
     .from('facilitator_payouts')
     .update(patch)
@@ -1019,16 +1054,6 @@ async function updatePayout(
     }>();
   if (error) throw error;
   if (!data) return notFound('Payout not found');
-
-  // Voiding releases the sessions back into the unpaid pool, so a mistaken
-  // batch can be rebuilt rather than leaving that money unpayable.
-  if (patch.status === 'void') {
-    const { error: releaseError } = await supabase
-      .from('bookings')
-      .update({ payout_id: null })
-      .eq('payout_id', payoutId);
-    if (releaseError) throw releaseError;
-  }
 
   if (patch.status === 'paid' && before.status !== 'paid' && before.facilitators) {
     // Best-effort, like every other notification here: the money has moved and

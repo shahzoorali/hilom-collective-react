@@ -1,6 +1,13 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { sumPayable, reconcileClaim, payoutCurrency, type PayableRow } from './payout-domain.js';
+import {
+  sumPayable,
+  reconcileClaim,
+  payoutCurrency,
+  canVoidPayout,
+  PAYOUT_CLAIM_TABLES,
+  type PayableRow,
+} from './payout-domain.js';
 
 /** A booking or class seat at a given price, with Hilom's default 15% split. */
 const row = (id: string, price: number, currency = 'PHP'): PayableRow => ({
@@ -172,5 +179,29 @@ describe('payoutCurrency', () => {
   test('defaults to PHP when nothing carries one', () => {
     const noCurrency = { id: 'x', price_centavos: 0, platform_fee_centavos: 0, facilitator_net_centavos: 0 };
     assert.equal(payoutCurrency([noCurrency], []), 'PHP');
+  });
+});
+
+describe('voiding a payout', () => {
+  test('releases every table buildPayout stamps, class seats included', () => {
+    // The regression: from 0051 until this fix, voiding released only
+    // `bookings`, so class seats in a voided batch were never payable again.
+    assert.deepEqual([...PAYOUT_CLAIM_TABLES].sort(), ['bookings', 'class_registrations']);
+  });
+
+  test('refuses to void a paid batch', () => {
+    // Releasing already-paid work would put it in the next batch: paid twice.
+    const decision = canVoidPayout('paid');
+    assert.equal(decision.ok, false);
+    assert.match(decision.ok ? '' : decision.reason, /already been sent/);
+  });
+
+  test('allows a draft or approved batch', () => {
+    assert.deepEqual(canVoidPayout('draft'), { ok: true });
+    assert.deepEqual(canVoidPayout('approved'), { ok: true });
+  });
+
+  test('allows re-voiding, which is how a half-finished void is completed', () => {
+    assert.deepEqual(canVoidPayout('void'), { ok: true });
   });
 });
