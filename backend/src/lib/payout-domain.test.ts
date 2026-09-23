@@ -2,11 +2,13 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sumPayable,
+  sumClawback,
   reconcileClaim,
   payoutCurrency,
   canVoidPayout,
   PAYOUT_CLAIM_TABLES,
   PAYOUT_PRICE_COLUMN,
+  PAYOUT_CLAWBACK_COLUMN,
   type PayableRow,
 } from './payout-domain.js';
 
@@ -78,6 +80,13 @@ describe('sumPayable', () => {
     assert.equal(totals.count, 3);
     assert.equal(totals.gross, 150000 + 80000 + 500000);
     assert.equal(totals.net, booking.facilitator_net_centavos + classSeat.facilitator_net_centavos + 400000);
+  });
+
+  test('sumClawback totals what a set of refunded, already-paid rows takes back (0059)', () => {
+    const a = row('paid-then-refunded-1', 200000);
+    const b = row('paid-then-refunded-2', 50000);
+    assert.equal(sumClawback([a, b]), a.facilitator_net_centavos + b.facilitator_net_centavos);
+    assert.equal(sumClawback([]), 0);
   });
 
   test('treats null and undefined money as zero', () => {
@@ -213,6 +222,12 @@ describe('voiding a payout', () => {
       [...PAYOUT_CLAIM_TABLES].sort(),
       ['bookings', 'class_registrations', 'registration_charges'],
     );
+  });
+
+  test('the clawback column name is the same on every claim table', () => {
+    // sumClawback and the void-release loop both assume one name works for
+    // bookings, class seats and event charges alike (0059).
+    assert.equal(PAYOUT_CLAWBACK_COLUMN, 'clawed_back_payout_id');
   });
 
   test('every claim table has a price column mapping, event charges aliased', () => {

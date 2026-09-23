@@ -30,11 +30,13 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
 import {
   sumPayable,
+  sumClawback,
   reconcileClaim,
   payoutCurrency,
   canVoidPayout,
   PAYOUT_CLAIM_TABLES,
   PAYOUT_PRICE_COLUMN,
+  PAYOUT_CLAWBACK_COLUMN,
   type PayableRow,
 } from '../lib/payout-domain.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
@@ -735,7 +737,9 @@ async function markRefundSent(
 }
 
 const PAYOUT_COLUMNS =
-  'id, facilitator_id, period_start, period_end, gross_centavos, platform_fee_centavos, processing_fee_centavos, net_centavos, currency, status, paid_at, reference, notes, created_at';
+  'id, facilitator_id, period_start, period_end, gross_centavos, platform_fee_centavos, processing_fee_centavos, ' +
+  // 0059. Zero on every batch that reclaimed nothing, which is most of them.
+  'clawback_centavos, net_centavos, currency, status, paid_at, reference, notes, created_at';
 
 async function payouts(
   supabase: SupabaseClient,
@@ -845,14 +849,20 @@ async function buildPayout(
       .from('registration_charges')
       .select(
         'id, price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
-          'currency, events!inner(facilitator_id, delivered_at), event_registrations!inner(status)',
+          'currency, events!inner(facilitator_id, delivered_at), event_registrations!inner(status, refunded_at)',
       )
       .eq('status', 'paid')
       .is('payout_id', null)
-      .is('refunded_at', null)
       .not('facilitator_net_centavos', 'is', null)
-      // A seat that was cancelled earns nothing, however it was paid for.
+      // A seat that was cancelled earns nothing, however it was paid for. The
+      // refund flag lives on the *registration*, not the charge — a paid
+      // charge never changes status when its registration is later refunded
+      // (see the note on cancelEventDate: paid charges are left exactly as
+      // they are). Most refunds also cancel the registration, which the
+      // status check alone would catch, but a partial refund from
+      // priceOverride() can leave it `confirmed` with money owed back.
       .eq('event_registrations.status', 'confirmed')
+      .is('event_registrations.refunded_at', null)
       .eq('events.facilitator_id', facilitatorId)
       .gte('events.delivered_at', periodStart.toISOString())
       .lt('events.delivered_at', periodEnd.toISOString())
@@ -865,14 +875,65 @@ async function buildPayout(
   const bookings = bookingRes.data ?? [];
   const classSeats = classRes.data ?? [];
   const eventCharges = eventRes.data ?? [];
-  if (bookings.length === 0 && classSeats.length === 0 && eventCharges.length === 0) {
-    return badRequest('No unpaid sessions, classes or event tickets in that period');
+
+  // Clawbacks (0059): work an earlier, already-*paid* batch paid for, that has
+  // since been refunded. Not period-filtered like the three sources above —
+  // a clawback has no period of its own to wait for, and surfaces in whichever
+  // batch this facilitator's next one happens to be.
+  const [bookingClawbackRes, classClawbackRes, chargeClawbackRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
+      .eq('facilitator_id', facilitatorId)
+      .not('payout_id', 'is', null)
+      .gt('refund_centavos', 0)
+      .not('refunded_at', 'is', null)
+      .is(PAYOUT_CLAWBACK_COLUMN, null),
+    supabase
+      .from('class_registrations')
+      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
+      .eq('facilitator_id', facilitatorId)
+      .not('payout_id', 'is', null)
+      .gt('refund_centavos', 0)
+      .not('refunded_at', 'is', null)
+      .is(PAYOUT_CLAWBACK_COLUMN, null),
+    // The refund flag is on the registration, not the charge (see the note
+    // above on why the earnings read checks it the same way).
+    supabase
+      .from('registration_charges')
+      .select(
+        'id, price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
+          'currency, events!inner(facilitator_id), event_registrations!inner(refunded_at)',
+      )
+      .not('payout_id', 'is', null)
+      .not('facilitator_net_centavos', 'is', null)
+      .eq('events.facilitator_id', facilitatorId)
+      .not('event_registrations.refunded_at', 'is', null)
+      .is(PAYOUT_CLAWBACK_COLUMN, null)
+      .returns<PayableRow[]>(),
+  ]);
+  const clawbackError = bookingClawbackRes.error ?? classClawbackRes.error ?? chargeClawbackRes.error;
+  if (clawbackError) throw clawbackError;
+
+  const clawbackBookings = bookingClawbackRes.data ?? [];
+  const clawbackClasses = classClawbackRes.data ?? [];
+  const clawbackCharges = chargeClawbackRes.data ?? [];
+  const clawbackRows = [...clawbackBookings, ...clawbackClasses, ...clawbackCharges];
+
+  if (
+    bookings.length === 0 &&
+    classSeats.length === 0 &&
+    eventCharges.length === 0 &&
+    clawbackRows.length === 0
+  ) {
+    return badRequest('No unpaid sessions, classes or event tickets in that period, and nothing to claw back');
   }
 
   // One reducer over all three sources — the column names are identical by
   // design (0051, and aliased for charges in 0054). Lives in payout-domain.ts,
   // with the tests that make the reconciliation below trustworthy.
   const totals = sumPayable([...bookings, ...classSeats, ...eventCharges]);
+  const clawbackTotal = sumClawback(clawbackRows);
 
   const processingFee = Number(body.processing_fee_centavos ?? 0);
 
@@ -885,8 +946,9 @@ async function buildPayout(
       gross_centavos: totals.gross,
       platform_fee_centavos: totals.fees,
       processing_fee_centavos: processingFee,
-      net_centavos: totals.net - processingFee,
-      currency: payoutCurrency(bookings, classSeats, eventCharges),
+      clawback_centavos: clawbackTotal,
+      net_centavos: totals.net - processingFee - clawbackTotal,
+      currency: payoutCurrency(bookings, classSeats, eventCharges, clawbackRows),
       status: 'draft',
       notes: typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null,
     })
@@ -907,14 +969,15 @@ async function buildPayout(
   // there too.
   const stamp = async (
     table: (typeof PAYOUT_CLAIM_TABLES)[number],
+    column: 'payout_id' | typeof PAYOUT_CLAWBACK_COLUMN,
     ids: string[],
   ) => {
     if (ids.length === 0) return [];
     const { data, error: stampError } = await supabase
       .from(table)
-      .update({ payout_id: payout.id })
+      .update({ [column]: payout.id })
       .in('id', ids)
-      .is('payout_id', null)
+      .is(column, null)
       .select(
         `id, price_centavos:${PAYOUT_PRICE_COLUMN[table]}, platform_fee_centavos, facilitator_net_centavos`,
       )
@@ -927,10 +990,29 @@ async function buildPayout(
   // are already stamped to a batch that exists and is visible, which is
   // recoverable by voiding it. Running both at once and failing one leaves the
   // same state with no ordering to reason about.
-  const claimedBookings = await stamp('bookings', bookings.map((b) => b.id as string));
-  const claimedClasses = await stamp('class_registrations', classSeats.map((c) => c.id as string));
-  const claimedCharges = await stamp('registration_charges', eventCharges.map((c) => c.id as string));
+  const claimedBookings = await stamp('bookings', 'payout_id', bookings.map((b) => b.id as string));
+  const claimedClasses = await stamp('class_registrations', 'payout_id', classSeats.map((c) => c.id as string));
+  const claimedCharges = await stamp('registration_charges', 'payout_id', eventCharges.map((c) => c.id as string));
   const claimedRows = [...claimedBookings, ...claimedClasses, ...claimedCharges];
+
+  const claimedClawbackBookings = await stamp(
+    'bookings',
+    PAYOUT_CLAWBACK_COLUMN,
+    clawbackBookings.map((b) => b.id as string),
+  );
+  const claimedClawbackClasses = await stamp(
+    'class_registrations',
+    PAYOUT_CLAWBACK_COLUMN,
+    clawbackClasses.map((c) => c.id as string),
+  );
+  const claimedClawbackCharges = await stamp(
+    'registration_charges',
+    PAYOUT_CLAWBACK_COLUMN,
+    clawbackCharges.map((c) => c.id as string),
+  );
+  const claimedClawbackRows = [...claimedClawbackBookings, ...claimedClawbackClasses, ...claimedClawbackCharges];
+  const actualClawback = sumClawback(claimedClawbackRows);
+
   // What this batch actually won, decided by the tested reconciliation in
   // payout-domain.ts rather than inline here. `claimedRows` is deliberately
   // the read-back from the stamping update, not the initial read: passing the
@@ -942,55 +1024,58 @@ async function buildPayout(
     processingFeeCentavos: processingFee,
   });
 
-  // Lost every row to a concurrent batch. Void rather than leave an empty
-  // draft that reads as a real, approvable payout.
-  if (reconciled.outcome === 'empty') {
+  // Lost every row to a concurrent batch, *and* nothing to claw back either —
+  // void rather than leave an empty draft that reads as a real, approvable
+  // payout. A batch that only claws back is not empty; it still owes Hilom
+  // that write, so it is left standing even with zero new earnings.
+  if (reconciled.outcome === 'empty' && claimedClawbackRows.length === 0) {
     await supabase.from('facilitator_payouts').update({ status: 'void' }).eq('id', payout.id);
     return json(409, {
-      error: 'That work was claimed by another payout batch. Nothing left to pay in this period.',
+      error: 'That work was claimed by another payout batch. Nothing left to pay or claw back in this period.',
     });
   }
 
-  // Re-total from what was actually claimed. Identical to the provisional
-  // figures above unless a concurrent batch took some, which is exactly the
-  // case this exists to get right.
-  if (reconciled.outcome === 'partial') {
-    const { data: corrected, error: correctionError } = await supabase
-      .from('facilitator_payouts')
-      .update({
-        gross_centavos: reconciled.totals.gross,
-        platform_fee_centavos: reconciled.totals.fees,
-        net_centavos: reconciled.netAfterProcessing,
-      })
-      .eq('id', payout.id)
-      .select(PAYOUT_COLUMNS)
-      .maybeSingle();
-    if (correctionError) throw correctionError;
+  // Re-total from what was actually claimed on both sides. Identical to the
+  // provisional figures above unless a concurrent batch took some — of either
+  // the earnings or the clawbacks — which is exactly the case this exists to
+  // get right. Written unconditionally rather than only on a partial earnings
+  // claim, because the clawback side can drift independently of it.
+  const finalTotals = reconciled.outcome === 'empty' ? { gross: 0, fees: 0 } : reconciled.totals;
+  const finalNet =
+    (reconciled.outcome === 'empty' ? 0 : reconciled.netAfterProcessing) - actualClawback;
 
+  const { data: corrected, error: correctionError } = await supabase
+    .from('facilitator_payouts')
+    .update({
+      gross_centavos: finalTotals.gross,
+      platform_fee_centavos: finalTotals.fees,
+      clawback_centavos: actualClawback,
+      net_centavos: finalNet,
+    })
+    .eq('id', payout.id)
+    .select(PAYOUT_COLUMNS)
+    .maybeSingle();
+  if (correctionError) throw correctionError;
+
+  if (reconciled.outcome === 'partial' || actualClawback !== clawbackTotal) {
     console.warn('[adminFacilitators.buildPayout] concurrent batch claimed some work', {
       payoutId: payout.id,
       expected: bookings.length + classSeats.length + eventCharges.length,
       claimed: claimedRows.length,
-      lost: reconciled.lost,
-    });
-
-    await auditPayoutBuilt(actor, corrected ?? payout, claimedRows.length);
-    return ok({
-      payout: corrected ?? payout,
-      sessionCount: claimedRows.length,
-      bookingCount: claimedBookings.length,
-      classCount: claimedClasses.length,
-      eventCount: claimedCharges.length,
+      expectedClawback: clawbackRows.length,
+      claimedClawback: claimedClawbackRows.length,
     });
   }
 
-  await auditPayoutBuilt(actor, payout, claimedRows.length);
+  await auditPayoutBuilt(actor, corrected ?? payout, claimedRows.length);
   return ok({
-    payout,
+    payout: corrected ?? payout,
     sessionCount: claimedRows.length,
     bookingCount: claimedBookings.length,
     classCount: claimedClasses.length,
     eventCount: claimedCharges.length,
+    clawbackCount: claimedClawbackRows.length,
+    clawbackCentavos: actualClawback,
   });
 }
 
@@ -1072,6 +1157,16 @@ async function updatePayout(
         .update({ payout_id: null })
         .eq('payout_id', payoutId);
       if (releaseError) throw releaseError;
+
+      // The clawback claim (0059) is a separate column, so it needs its own
+      // release — voiding a batch must undo both what it paid *and* what it
+      // took back, or a voided clawback stays permanently unclaimable by any
+      // future batch even though the money it was reclaiming was never sent.
+      const { error: clawbackReleaseError } = await supabase
+        .from(table)
+        .update({ [PAYOUT_CLAWBACK_COLUMN]: null })
+        .eq(PAYOUT_CLAWBACK_COLUMN, payoutId);
+      if (clawbackReleaseError) throw clawbackReleaseError;
     }
   }
 

@@ -51,8 +51,8 @@ function printStatement(name: string, rows: AdminPayout[]) {
 h1{font-family:Georgia,serif;color:#2f5e3e;font-size:22px;margin:0}table{width:100%;border-collapse:collapse;margin:20px 0;font-size:13px}
 th,td{padding:6px 4px;border-bottom:1px solid #e7e0cc;text-align:left}td.n,th.n{text-align:right}.muted{color:#6b7568;font-size:13px}</style></head><body>
 <h1>Hilom Collective — Payout statement</h1><div class="muted">${esc(name)} · generated ${esc(new Date().toLocaleDateString('en-PH', { dateStyle: 'long' }))}</div>
-<table><tr><th>Period</th><th class="n">Gross</th><th class="n">Hilom fee</th><th class="n">Processing</th><th class="n">Net</th><th>Status</th><th>Reference</th></tr>
-${live.map((r) => `<tr><td>${d(r.period_start)} – ${d(r.period_end)}</td><td class="n">${esc(money(r.gross_centavos))}</td><td class="n">${esc(money(r.platform_fee_centavos))}</td><td class="n">${esc(money(r.processing_fee_centavos))}</td><td class="n"><b>${esc(money(r.net_centavos))}</b></td><td>${r.status}</td><td>${esc(r.reference ?? '')}</td></tr>`).join('')}
+<table><tr><th>Period</th><th class="n">Gross</th><th class="n">Hilom fee</th><th class="n">Processing</th><th class="n">Clawback</th><th class="n">Net</th><th>Status</th><th>Reference</th></tr>
+${live.map((r) => `<tr><td>${d(r.period_start)} – ${d(r.period_end)}</td><td class="n">${esc(money(r.gross_centavos))}</td><td class="n">${esc(money(r.platform_fee_centavos))}</td><td class="n">${esc(money(r.processing_fee_centavos))}</td><td class="n">${r.clawback_centavos > 0 ? esc(money(r.clawback_centavos)) : '—'}</td><td class="n"><b>${esc(money(r.net_centavos))}</b></td><td>${r.status}</td><td>${esc(r.reference ?? '')}</td></tr>`).join('')}
 </table><p><b>Paid to date:</b> ${esc(money(paid))} &nbsp; · &nbsp; <b>Outstanding:</b> ${esc(money(due))}</p>
 <script>window.onload=()=>window.print()</script></body></html>`);
   w.document.close();
@@ -109,7 +109,11 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
         period_end: period.end,
         processing_fee_centavos: Math.round(Number(processingFeePesos || 0) * 100),
       });
-      setNotice(`Batch created from ${result.sessionCount} session(s)`);
+      setNotice(
+        result.clawbackCount > 0
+          ? `Batch created from ${result.sessionCount} session(s), and clawed back ${money(result.clawbackCentavos)} from ${result.clawbackCount} refunded item(s) paid out earlier.`
+          : `Batch created from ${result.sessionCount} session(s)`,
+      );
       setProcessingFeePesos('');
       reload();
     } catch (err) {
@@ -227,11 +231,21 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
           </p>
 
           {/* The full arithmetic, not just the total — this is the number a
-              facilitator will ask about, and it should be answerable here. */}
+              facilitator will ask about, and it should be answerable here.
+              The clawback term (0059) only appears when it is nonzero, so an
+              ordinary batch's line reads exactly as it always has. */}
           <p className="small mono" style={{ margin: '0 0 0.5rem' }}>
             gross {money(p.gross_centavos)} − Hilom {money(p.platform_fee_centavos)} − processing{' '}
-            {money(p.processing_fee_centavos)} = <strong>{money(p.net_centavos)}</strong>
+            {money(p.processing_fee_centavos)}
+            {p.clawback_centavos > 0 && <> − clawback {money(p.clawback_centavos)}</>}
+            {' '}= <strong>{money(p.net_centavos)}</strong>
           </p>
+          {p.clawback_centavos > 0 && (
+            <p className="small muted" style={{ margin: '0 0 0.5rem' }}>
+              Clawback: work paid out in an earlier batch that was refunded since — this batch takes
+              that share back.
+            </p>
+          )}
 
           {p.facilitators?.payout_details && Object.keys(p.facilitators.payout_details).length > 0 && (
             <p className="small muted" style={{ margin: '0 0 0.5rem' }}>

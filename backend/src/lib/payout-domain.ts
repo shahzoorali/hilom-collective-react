@@ -177,6 +177,28 @@ export const PAYOUT_PRICE_COLUMN: Record<(typeof PAYOUT_CLAIM_TABLES)[number], s
   registration_charges: 'amount_centavos',
 };
 
+/**
+ * The column every claim table also uses to record a clawback (0059) — one
+ * name because it means the same thing on all three: the batch that took
+ * this row's net back out of a facilitator's hands after a refund arrived
+ * once `payout_id` had already paid for it. Voiding a batch releases both
+ * columns for the same reason it releases `payout_id`.
+ */
+export const PAYOUT_CLAWBACK_COLUMN = 'clawed_back_payout_id';
+
+/**
+ * Totals what a set of clawback rows takes back.
+ *
+ * Reuses `PayableRow` — a clawback row is read with the same columns a
+ * payable one is, just filtered to work that was paid out and has since been
+ * refunded — so this is `sumPayable(rows).net`, named for what the number
+ * means at the call site: money leaving the facilitator's net, not entering
+ * it.
+ */
+export function sumClawback(rows: readonly PayableRow[]): number {
+  return sumPayable(rows).net;
+}
+
 export type VoidDecision = { ok: true } | { ok: false; reason: string };
 
 /**

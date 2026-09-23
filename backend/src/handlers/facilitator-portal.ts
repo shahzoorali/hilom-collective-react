@@ -2237,6 +2237,113 @@ function hostFields(body: Record<string, unknown>): Record<string, unknown> {
   return picked;
 }
 
+// ---------------------------------------------------------------------------
+// Trust & safety (0054)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many proposals a facilitator may have in flight at once — draft or
+ * submitted, single dates and series counted the same regardless of how many
+ * dates a series holds.
+ *
+ * Without a cap, one facilitator queuing dozens of half-finished proposals
+ * either buries the admin review queue for everyone else or, worse, is a way
+ * to probe the system with volume. Five is generous for the real case (a
+ * facilitator planning their next few offerings) and still a wall for spam.
+ */
+const MAX_ACTIVE_PROPOSALS = 5;
+
+async function countActiveProposals(supabase: SupabaseClient, facilitatorId: string): Promise<number> {
+  const [eventsRes, seriesRes] = await Promise.all([
+    // `series_id is null`: a series' own dates are not counted a second time
+    // here — the series row below is what counts the whole series as one.
+    supabase
+      .from('events')
+      .select('id', { count: 'exact', head: true })
+      .eq('submitted_by', facilitatorId)
+      .is('series_id', null)
+      .in('review_status', ['draft', 'submitted']),
+    supabase
+      .from('event_series')
+      .select('id', { count: 'exact', head: true })
+      .eq('facilitator_id', facilitatorId)
+      .in('review_status', ['draft', 'submitted']),
+  ]);
+  if (eventsRes.error) throw eventsRes.error;
+  if (seriesRes.error) throw seriesRes.error;
+  return (eventsRes.count ?? 0) + (seriesRes.count ?? 0);
+}
+
+async function assertUnderProposalLimit(supabase: SupabaseClient, facilitatorId: string): Promise<void> {
+  const active = await countActiveProposals(supabase, facilitatorId);
+  if (active >= MAX_ACTIVE_PROPOSALS) {
+    throw new FacilitatorInputError(
+      `You have ${MAX_ACTIVE_PROPOSALS} proposals already in progress (draft or with Hilom). ` +
+        'Submit or delete one before starting another.',
+    );
+  }
+}
+
+/** How long an event with no `ends_at` is assumed to run, for the clash check below only. */
+const ASSUMED_EVENT_DURATION_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Refuses a proposed date that overlaps a booking the facilitator already
+ * holds on their own 1:1 calendar.
+ *
+ * A facilitator hosting a workshop cannot also be running a client session
+ * at the same hour — this is the same double-booking `bookings_no_overlap`
+ * prevents between two clients, just never checked against an *event*
+ * because events did not have a host until 0045, and nothing has read this
+ * table for a clash since.
+ *
+ * Only checked against the facilitator's own bookings, not their other
+ * events — co-hosting or overlapping programmes is a real, occasionally
+ * intended case (a retreat with parallel tracks), and a client waiting on a
+ * session is not.
+ */
+async function assertNoBookingClash(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  dates: readonly { starts_at: string; ends_at: string | null }[],
+): Promise<void> {
+  if (dates.length === 0) return;
+
+  const windows = dates.map((d) => {
+    const start = new Date(d.starts_at);
+    const end = d.ends_at ? new Date(d.ends_at) : new Date(start.getTime() + ASSUMED_EVENT_DURATION_MS);
+    return { start, end };
+  });
+  const spanStart = new Date(Math.min(...windows.map((w) => w.start.getTime())));
+  const spanEnd = new Date(Math.max(...windows.map((w) => w.end.getTime())));
+
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('starts_at, ends_at')
+    .eq('facilitator_id', facilitatorId)
+    .in('status', ['confirmed', 'completed'])
+    .lt('starts_at', spanEnd.toISOString())
+    .gt('ends_at', spanStart.toISOString())
+    .returns<{ starts_at: string; ends_at: string }[]>();
+  if (error) throw error;
+
+  const bookings = (data ?? []).map((b) => ({ start: new Date(b.starts_at), end: new Date(b.ends_at) }));
+
+  for (const w of windows) {
+    const clash = bookings.find((b) => w.start < b.end && w.end > b.start);
+    if (clash) {
+      const when = new Intl.DateTimeFormat('en-PH', {
+        timeZone: 'Asia/Manila',
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(w.start);
+      throw new FacilitatorInputError(
+        `${when} overlaps a session you already have booked. Pick another time, or ask the client to reschedule first.`,
+      );
+    }
+  }
+}
+
 /**
  * A new proposal, always as a draft.
  *
@@ -2256,11 +2363,17 @@ async function createProposal(
   if (facilitator.status !== 'published') {
     return badRequest('Your profile needs to be published before you can propose an event.');
   }
+  await assertUnderProposalLimit(supabase, facilitator.id);
+
+  const content = proposalFields(body);
+  await assertNoBookingClash(supabase, facilitator.id, [
+    { starts_at: content.starts_at as string, ends_at: (content.ends_at as string | null) ?? null },
+  ]);
 
   const { data, error } = await supabase
     .from('events')
     .insert({
-      ...proposalFields(body),
+      ...content,
       ...hostFields(body),
       status: 'draft',
       review_status: 'draft',
@@ -2339,6 +2452,11 @@ async function saveProposal(
         return badRequest(
           'A change to this event is already waiting on Hilom. Wait for that decision before proposing another.',
         );
+      }
+      if (changed.includes('starts_at') || changed.includes('ends_at')) {
+        await assertNoBookingClash(supabase, facilitator.id, [
+          { starts_at: content.starts_at as string, ends_at: (content.ends_at as string | null) ?? null },
+        ]);
       }
       patch.pending_changes = Object.fromEntries(changed.map((f) => [f, content[f]]));
       patch.edit_submitted_at = new Date().toISOString();
@@ -2624,10 +2742,12 @@ async function createSeries(
   if (facilitator.status !== 'published') {
     return badRequest('Your profile needs to be published before you can propose an event.');
   }
+  await assertUnderProposalLimit(supabase, facilitator.id);
 
   const dates = seriesDates(body);
   const firstDate = dates[0];
   if (!firstDate) throw new FacilitatorInputError('Add at least one date.');
+  await assertNoBookingClash(supabase, facilitator.id, dates);
   const content = seriesContentFields(body, firstDate.starts_at);
   const { price, capacity } = proposedMoney(body);
 
@@ -2765,6 +2885,7 @@ async function replaceSeriesDates(
   if (!template) return notFound('Series not found');
 
   const dates = seriesDates(body);
+  await assertNoBookingClash(supabase, facilitator.id, dates);
   const content: Record<string, unknown> = {};
   for (const field of DRAFT_FIELDS) {
     if (field === 'starts_at' || field === 'ends_at') continue;

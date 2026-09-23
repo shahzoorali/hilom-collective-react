@@ -396,6 +396,8 @@ export interface Payout {
   gross_centavos: number;
   platform_fee_centavos: number;
   processing_fee_centavos: number;
+  /** Work refunded after an earlier, already-paid batch paid it out (0059). Zero on most batches. */
+  clawback_centavos: number;
   net_centavos: number;
   status: 'draft' | 'approved' | 'paid' | 'void';
   paid_at: string | null;
@@ -1070,7 +1072,13 @@ export const adminBuildPayout = (
     notes?: string;
   },
 ) =>
-  apiFetch<{ payout: AdminPayout; sessionCount: number }>('/admin/payouts', {
+  apiFetch<{
+    payout: AdminPayout;
+    sessionCount: number;
+    /** Refunded, already-paid-out rows this batch clawed back (0059). Zero on most batches. */
+    clawbackCount: number;
+    clawbackCentavos: number;
+  }>('/admin/payouts', {
     method: 'POST',
     headers: { 'x-admin-key': adminKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
