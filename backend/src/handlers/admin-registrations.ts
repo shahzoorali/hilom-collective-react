@@ -1389,7 +1389,11 @@ async function seriesReview(
     targetTable: 'event_series',
     targetId: seriesId,
     amountCentavos: decision === 'approve' ? priceCentavos : null,
-    before: { review_status: series.review_status, platform_fee_bps: series.proposed_price_centavos },
+    before: {
+      review_status: series.review_status,
+      proposed_price_centavos: series.proposed_price_centavos,
+      proposed_capacity: series.proposed_capacity,
+    },
     after: patch,
     note: decision === 'approve' ? `${dates.length} date(s) approved at ${platformFeeBps}bps` : note,
   });

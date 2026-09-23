@@ -2441,7 +2441,17 @@ async function saveProposal(
     // Changed against the *live* row, not merely present in the body — the
     // form resends every field on every save, and resaving unchanged values
     // must not open a review.
-    const changed = material.filter((f) => JSON.stringify(existing[f]) !== JSON.stringify(content[f]));
+    // Timestamps are compared as instants: Postgres returns `+00:00` and
+    // validateEvent returns `.000Z`, so a string compare always differs.
+    const same = (f: string) => {
+      const a = existing[f];
+      const b = content[f];
+      if ((f === 'starts_at' || f === 'ends_at') && a && b) {
+        return Date.parse(String(a)) === Date.parse(String(b));
+      }
+      return (a ?? null) === (b ?? null);
+    };
+    const changed = material.filter((f) => !same(f));
 
     for (const field of COSMETIC_FIELDS) {
       if (field in content) patch[field] = content[field];
@@ -2892,8 +2902,15 @@ async function replaceSeriesDates(
     content[field] = (template as unknown as Record<string, unknown>)[field];
   }
 
-  const { error: deleteError } = await supabase.from('events').delete().eq('series_id', seriesId);
-  if (deleteError) throw deleteError;
+  // Insert the new dates before deleting the old ones, so a failed insert
+  // leaves the series as it was rather than empty.
+  const { data: oldRows, error: oldError } = await supabase
+    .from('events')
+    .select('id')
+    .eq('series_id', seriesId)
+    .returns<{ id: string }[]>();
+  if (oldError) throw oldError;
+  const oldIds = (oldRows ?? []).map((r) => r.id);
 
   const rows = dates.map((d) => ({
     ...content,
@@ -2911,6 +2928,11 @@ async function replaceSeriesDates(
     .select(HOSTED_EVENT_COLUMNS)
     .returns<HostedEventRow[]>();
   if (insertError) throw insertError;
+
+  if (oldIds.length > 0) {
+    const { error: deleteError } = await supabase.from('events').delete().in('id', oldIds);
+    if (deleteError) throw deleteError;
+  }
 
   return ok({ series, dates: events ?? [] });
 }

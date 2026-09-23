@@ -26,6 +26,7 @@ import {
   saveMyHostedEvent,
   submitMyHostedEvent,
   listMyEventSeries,
+  getMyEventSeries,
   createMyEventSeries,
   saveMyEventSeries,
   replaceMyEventSeriesDates,
@@ -957,6 +958,37 @@ function SeriesProposalForm({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The series list carries no content fields, so an edit loads them from a
+  // date first. Saving before that lands would write blanks onto every date.
+  const [loaded, setLoaded] = useState(!seriesId);
+
+  useEffect(() => {
+    if (!seriesId) return;
+    let live = true;
+    getMyEventSeries(seriesId)
+      .then(({ dates: rows }) => {
+        if (!live) return;
+        const first = rows[0];
+        if (first) {
+          setDraft((d) => ({
+            ...d,
+            subtitle: first.subtitle ?? '',
+            excerpt: first.excerpt ?? '',
+            description: first.description ?? '',
+            location: first.location ?? '',
+            venue_details: first.venue_details ?? '',
+            format: first.format ?? '',
+            image_url: first.image_url ?? '',
+            image_alt: first.image_alt ?? '',
+          }));
+        }
+        setLoaded(true);
+      })
+      .catch((err: Error) => live && setError(err.message));
+    return () => {
+      live = false;
+    };
+  }, [seriesId]);
 
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -1035,10 +1067,10 @@ function SeriesProposalForm({
           <button type="button" className="btn btn-ghost small" onClick={onCancel}>
             Back
           </button>
-          <button type="button" className="btn btn-secondary small" disabled={busy} onClick={() => void save()}>
+          <button type="button" className="btn btn-secondary small" disabled={busy || !loaded} onClick={() => void save()}>
             {busy ? 'Saving…' : 'Save draft'}
           </button>
-          <button type="button" className="btn btn-accent small" disabled={busy} onClick={() => void saveAndSubmit()}>
+          <button type="button" className="btn btn-accent small" disabled={busy || !loaded} onClick={() => void saveAndSubmit()}>
             Send to Hilom
           </button>
         </div>
