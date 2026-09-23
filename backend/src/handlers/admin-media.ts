@@ -20,6 +20,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAuthorizedAdmin } from '../lib/http.js';
 import { stripTags } from '../lib/sanitize.js';
+import { IMMUTABLE_CACHE_CONTROL } from '../lib/media-cache.js';
 
 /**
  * SVG is deliberately excluded. An SVG is a document that can carry script, and
@@ -29,6 +30,7 @@ import { stripTags } from '../lib/sanitize.js';
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 const MAX_BYTES = 10 * 1024 * 1024;
 const PRESIGN_TTL_SECONDS = 300;
+
 
 const s3 = new S3Client({});
 const BUCKET = process.env.MEDIA_BUCKET ?? '';
@@ -101,15 +103,23 @@ async function createUploadUrl(body: Record<string, unknown>): Promise<APIGatewa
   const now = new Date();
   const key = `media/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${randomUUID()}-${safeName}`;
 
-  // ContentType and ContentLength are bound into the signature, so the returned
-  // URL cannot be reused to upload a different type or a much larger file.
+  // ContentType, ContentLength and CacheControl are bound into the signature,
+  // so the returned URL cannot be reused to upload a different type, a much
+  // larger file, or the same bytes without the cache header. The caller must
+  // echo all three on the PUT or S3 rejects it.
   const url = await getSignedUrl(
     s3,
-    new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType, ContentLength: bytes }),
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      ContentType: contentType,
+      ContentLength: bytes,
+      CacheControl: IMMUTABLE_CACHE_CONTROL,
+    }),
     { expiresIn: PRESIGN_TTL_SECONDS },
   );
 
-  return ok({ uploadUrl: url, key, publicUrl: `${CDN_BASE}/${key}`, contentType });
+  return ok({ uploadUrl: url, key, publicUrl: `${CDN_BASE}/${key}`, contentType, cacheControl: IMMUTABLE_CACHE_CONTROL });
 }
 
 async function confirm(body: Record<string, unknown>): Promise<APIGatewayProxyResultV2> {

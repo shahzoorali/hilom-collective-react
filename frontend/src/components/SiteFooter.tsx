@@ -70,7 +70,7 @@ function Widget({ widget, menus }: { widget: FooterWidget; menus: Record<string,
     case 'brand':
       return (
         <div className="cv-foot__cta">
-          <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" />
+          <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" width={320} height={152} />
           {widget.headline && <p className="cv-foot__headline">{widget.headline}</p>}
           {widget.cta_label && widget.cta_href && (
             <FooterHref className="btn btn-primary" href={widget.cta_href}>

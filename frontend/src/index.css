@@ -188,6 +188,13 @@ img { max-width: 100%; }
 
 /* generic sections */
 .section { padding: 3rem 0; }
+
+/* A CMS page's loading skeleton reserves a full viewport. The skeleton is one
+   screen tall and the page that replaces it is several, so without this the
+   footer renders just below the fold and is then shoved a whole page down —
+   a layout shift big enough to be the home page's entire CLS score. Holding
+   the height keeps the footer off-screen until the real blocks are in. */
+.cms-page--loading { min-height: 100vh; }
 .panel {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 1.75rem; box-shadow: var(--shadow);

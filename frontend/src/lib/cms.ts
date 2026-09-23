@@ -312,14 +312,27 @@ export async function adminUploadMedia(
   onCompressed?.(compressed);
   const file = compressed.file;
 
-  const { uploadUrl, key } = await apiFetch<{ uploadUrl: string; key: string }>(
+  const { uploadUrl, key, cacheControl } = await apiFetch<{
+    uploadUrl: string;
+    key: string;
+    cacheControl?: string;
+  }>(
     '/admin/media/upload-url',
     adminInit(adminKey, 'POST', { filename: file.name, contentType: file.type, bytes: file.size }),
   );
 
+  // Whatever the presign bound is bound into the signature, so it has to go out
+  // on the PUT verbatim or S3 rejects it. Cache-Control is what S3 then stores
+  // against the object and CloudFront serves to every visitor.
+  //
+  // Optional so this deploys safely ahead of the backend that started sending
+  // it: an older API returns no `cacheControl`, and sending the header anyway
+  // against a signature that never bound it is what would fail the upload.
   const put = await fetch(uploadUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': file.type },
+    headers: cacheControl
+      ? { 'Content-Type': file.type, 'Cache-Control': cacheControl }
+      : { 'Content-Type': file.type },
     body: file,
   });
   if (!put.ok) throw new Error(`Upload failed (${put.status})`);

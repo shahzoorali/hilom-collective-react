@@ -39,9 +39,15 @@ export default function CmsPage({ slug: slugProp }: { slug?: string } = {}) {
     path: page ? `/${slug}` : undefined,
   });
 
+  // `cms-page--loading` holds a viewport of height. The skeleton is one screen
+  // tall and a real page is several, so without it the footer sits just under
+  // the fold and then jumps a whole page down when the blocks arrive — which
+  // was the entire Cumulative Layout Shift score on the home page. Reserving
+  // the height puts the footer below the fold for the swap, where moving costs
+  // nothing, and costs a loading page nothing visible.
   if (state === 'loading') {
     return (
-      <section className="section">
+      <section className="section cms-page--loading">
         <SkeletonBoundary label="Loading page" className="container" style={{ display: 'grid', gap: '1.25rem' }}>
           <Skeleton height="2.6em" width="60%" />
           <SkeletonText lines={3} />

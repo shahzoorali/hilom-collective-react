@@ -462,7 +462,12 @@ export async function uploadFacilitatorFile(
   const file =
     kind === 'photo' ? (await compressImage(original, { maxDimension: 1600 })).file : original;
 
-  const presigned = await apiFetch<{ uploadUrl: string; key: string; publicUrl: string | null }>(
+  const presigned = await apiFetch<{
+    uploadUrl: string;
+    key: string;
+    publicUrl: string | null;
+    cacheControl?: string | null;
+  }>(
     '/facilitator/upload-url',
     {
       method: 'POST',
@@ -471,10 +476,15 @@ export async function uploadFacilitatorFile(
     },
   );
 
+  // Whatever the presign bound is bound into the signature, so it must go out
+  // exactly as set or S3 rejects the PUT. A certificate gets no cacheControl
+  // back, and so must send no Cache-Control header at all — as does an older
+  // API that predates the field, which is what lets this deploy first.
   const put = await fetch(presigned.uploadUrl, {
     method: 'PUT',
-    // Must match the type bound into the signature, or S3 rejects it.
-    headers: { 'Content-Type': file.type },
+    headers: presigned.cacheControl
+      ? { 'Content-Type': file.type, 'Cache-Control': presigned.cacheControl }
+      : { 'Content-Type': file.type },
     body: file,
   });
   if (!put.ok) throw new Error('That upload did not go through. Please try again.');

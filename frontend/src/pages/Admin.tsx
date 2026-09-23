@@ -333,7 +333,7 @@ export default function Admin() {
       {/* Left Sidebar Navigation (slides in as a drawer on mobile) */}
       <aside className={`admin-sidebar ${drawerOpen ? 'admin-sidebar--open' : ''}`}>
         <Link to="/admin/dashboard" className="admin-sidebar-brand">
-          <img src={hilomLogo} alt="Hilom" className="brand-logo" />
+          <img src={hilomLogo} alt="Hilom" className="brand-logo" width={320} height={152} />
           <div className="admin-brand-text">
             <span className="admin-brand-title">Hilom CMS</span>
             <span className="admin-brand-badge">Production Live</span>

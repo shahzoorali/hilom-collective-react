@@ -142,7 +142,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <header className="site-header">
         <div className="container inner">
           <Link className="brand" to="/">
-            <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" />
+            <img src={hilomLogo} alt="Hilom Collective" className="brand-logo" width={320} height={152} />
           </Link>
           <button
             className="nav-toggle"

@@ -41,6 +41,7 @@ import { ok, badRequest, unauthorized, serverError, notFound } from '../lib/http
 import { requireUser, UnauthorizedError } from '../lib/auth.js';
 import { stripTags } from '../lib/sanitize.js';
 import { CERT_PREFIX } from '../lib/facilitator-input.js';
+import { IMMUTABLE_CACHE_CONTROL } from '../lib/media-cache.js';
 
 /** SVG excluded for the same reason as the media library: it can carry script. */
 const PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif']);
@@ -171,8 +172,17 @@ async function createUploadUrl(
     ? `${config.prefix}${folder}/${randomUUID()}-${safeName}`
     : `${config.prefix}${user.sub}/${randomUUID()}-${safeName}`;
 
-  // ContentType and ContentLength are bound into the signature, so the URL
-  // cannot be reused to upload a different type or a much larger file.
+  // A public object's key carries a UUID, so its bytes never change and a year
+  // of caching is safe; without the header S3 serves no `Cache-Control` and
+  // every repeat visitor re-downloads the photo. Private certificates are
+  // deliberately left alone — they are fetched through short-lived signed URLs,
+  // and telling a browser to keep one for a year is the wrong instinct.
+  const cacheControl = config.public ? IMMUTABLE_CACHE_CONTROL : undefined;
+
+  // ContentType, ContentLength and CacheControl are bound into the signature,
+  // so the URL cannot be reused to upload a different type, a much larger file,
+  // or the same bytes without the cache header. The caller must echo whatever
+  // is set here on the PUT or S3 rejects it.
   const uploadUrl = await getSignedUrl(
     s3,
     new PutObjectCommand({
@@ -180,6 +190,7 @@ async function createUploadUrl(
       Key: key,
       ContentType: contentType,
       ContentLength: bytes,
+      CacheControl: cacheControl,
     }),
     { expiresIn: PRESIGN_TTL_SECONDS },
   );
@@ -187,6 +198,9 @@ async function createUploadUrl(
   return ok({
     uploadUrl,
     key,
+    // The caller must send this back verbatim on the PUT; `null` means send no
+    // Cache-Control header at all.
+    cacheControl: cacheControl ?? null,
     // Null for a certificate, and deliberately so: there is no public URL for
     // one, and returning something URL-shaped would invite a caller to render
     // it as a link.

@@ -45,6 +45,7 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
+import { IMMUTABLE_CACHE_CONTROL } from '../backend/src/lib/media-cache.js';
 
 const run = promisify(execFile);
 
@@ -150,6 +151,60 @@ async function body(key: string): Promise<Buffer> {
   return Buffer.from(await res.Body!.transformToByteArray());
 }
 
+/**
+ * Stamps `Cache-Control` onto every media object that is missing it.
+ *
+ * Separate from the compression loop on purpose. That loop only touches assets
+ * over `--min-kb` that actually shrink, so an object that is small, or that is
+ * already well compressed, would never get the header — and without it S3 sends
+ * none, CloudFront forwards none, and every repeat visitor re-downloads the
+ * image. The header is what the presign now binds on new uploads; this brings
+ * everything uploaded before that into line.
+ *
+ * Rewriting is a metadata-only `CopyObject` onto the same key, so the bytes are
+ * untouched and there is nothing to back up or restore. `ContentType` is
+ * carried across explicitly because `REPLACE` drops every header not restated.
+ */
+async function cacheHeaderPass(assets: Asset[], invalidate: string[]): Promise<void> {
+  const stale: Asset[] = [];
+  for (const asset of assets) {
+    if (!asset.key) continue;
+    const head = await s3
+      .send(new HeadObjectCommand({ Bucket: BUCKET, Key: asset.key }))
+      .catch(() => null);
+    if (!head) continue;
+    if (head.CacheControl === IMMUTABLE_CACHE_CONTROL) continue;
+    stale.push(asset);
+  }
+
+  if (stale.length === 0) {
+    console.log('\nCache-Control: every object already has it.');
+    return;
+  }
+
+  console.log(`\nCache-Control missing or stale on ${stale.length} object(s):`);
+  for (const asset of stale) console.log(`  ${asset.filename}`);
+
+  if (!APPLY) return;
+
+  for (const asset of stale) {
+    const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: asset.key }));
+    await s3.send(
+      new CopyObjectCommand({
+        Bucket: BUCKET,
+        CopySource: encodeURI(`${BUCKET}/${asset.key}`),
+        Key: asset.key,
+        MetadataDirective: 'REPLACE',
+        ContentType: head.ContentType ?? asset.content_type,
+        CacheControl: IMMUTABLE_CACHE_CONTROL,
+      }),
+    );
+    // An object the compression loop already rewrote is in the list once.
+    if (!invalidate.includes(`/${asset.key}`)) invalidate.push(`/${asset.key}`);
+  }
+  console.log(`Stamped ${stale.length} object(s).`);
+}
+
 async function main() {
   if (RESTORE) return restore();
 
@@ -167,7 +222,10 @@ async function main() {
   console.log(`Target: WebP q${QUALITY}, longest edge ${MAX_DIMENSION}px, same S3 key\n`);
 
   if (candidates.length === 0) {
-    console.log('Nothing to do.');
+    console.log('Nothing to compress.');
+    const only: string[] = [];
+    await cacheHeaderPass(data, only);
+    await invalidatePaths(only);
     return;
   }
 
@@ -253,7 +311,7 @@ async function main() {
         Key: asset.key,
         Body: output.data,
         ContentType: 'image/webp',
-        CacheControl: 'public, max-age=31536000, immutable',
+        CacheControl: IMMUTABLE_CACHE_CONTROL,
       }),
     );
 
@@ -268,26 +326,35 @@ async function main() {
   console.log('-'.repeat(84));
   console.log(`Total: ${fmt(before)} → ${fmt(after)} (${Math.round((1 - after / before) * 100)}% smaller), ${changed} file(s)`);
 
+  // Over every asset, not just the compression candidates — a small object
+  // needs the cache header as much as a large one does.
+  await cacheHeaderPass(data, invalidate);
+
   if (!APPLY) {
     console.log('\nDry run — nothing was written. Re-run with --apply to do it.');
     return;
   }
 
-  if (invalidate.length) {
-    // The objects are cached at the edge under the same paths, so without this
-    // the old heavy versions keep being served until the TTL expires.
-    const res = await cloudfront.send(
-      new CreateInvalidationCommand({
-        DistributionId: DISTRIBUTION_ID,
-        InvalidationBatch: {
-          CallerReference: `compress-media-${Date.now()}`,
-          Paths: { Quantity: invalidate.length, Items: invalidate },
-        },
-      }),
-    );
-    console.log(`\nCloudFront invalidation ${res.Invalidation?.Id} created for ${invalidate.length} path(s).`);
-  }
+  await invalidatePaths(invalidate);
   console.log(`Originals kept at s3://${BUCKET}/${BACKUP_PREFIX} — re-run with --restore to undo.`);
+}
+
+/**
+ * The objects are cached at the edge under the same paths, so without this the
+ * old heavy — or uncached — versions keep being served until the TTL expires.
+ */
+async function invalidatePaths(paths: string[]): Promise<void> {
+  if (!APPLY || paths.length === 0) return;
+  const res = await cloudfront.send(
+    new CreateInvalidationCommand({
+      DistributionId: DISTRIBUTION_ID,
+      InvalidationBatch: {
+        CallerReference: `compress-media-${Date.now()}`,
+        Paths: { Quantity: paths.length, Items: paths },
+      },
+    }),
+  );
+  console.log(`\nCloudFront invalidation ${res.Invalidation?.Id} created for ${paths.length} path(s).`);
 }
 
 /** Puts every backed-up original back, and restores its row. */
@@ -317,7 +384,7 @@ async function restore() {
         Key: asset.key,
         Body: original,
         ContentType: head.ContentType ?? 'application/octet-stream',
-        CacheControl: 'public, max-age=31536000, immutable',
+        CacheControl: IMMUTABLE_CACHE_CONTROL,
       }),
     );
     await sql(
