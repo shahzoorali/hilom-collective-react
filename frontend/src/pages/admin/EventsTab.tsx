@@ -1425,7 +1425,15 @@ function SeriesReviewDrawer({
   const [capacityInput, setCapacityInput] = useState(
     series.proposed_capacity !== null ? String(series.proposed_capacity) : '',
   );
-  const [commissionInput, setCommissionInput] = useState('20');
+  // Pre-filled from the facilitator's own default (0061) when they have one,
+  // otherwise blank rather than guessing — an admin who has never set a
+  // default for this person should be prompted to pick a rate, not shown a
+  // number that looks considered but is not.
+  const [commissionInput, setCommissionInput] = useState(
+    series.facilitators?.default_event_platform_fee_bps != null
+      ? (series.facilitators.default_event_platform_fee_bps / 100).toString()
+      : '',
+  );
   const [note, setNote] = useState('');
   const [publish, setPublish] = useState(true);
   const [busy, setBusy] = useState(false);

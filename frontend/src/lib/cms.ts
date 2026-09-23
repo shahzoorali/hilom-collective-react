@@ -650,7 +650,14 @@ export interface AdminEventSeries {
   proposed_capacity: number | null;
   platform_fee_bps: number | null;
   created_at: string;
-  facilitators: { email: string; display_name: string; short_name: string | null; timezone: string } | null;
+  facilitators: {
+    email: string;
+    display_name: string;
+    short_name: string | null;
+    timezone: string;
+    /** Pre-fills the review drawer's commission field (0061). Not a rate anything is paid against. */
+    default_event_platform_fee_bps: number | null;
+  } | null;
 }
 
 export interface AdminSeriesDate {

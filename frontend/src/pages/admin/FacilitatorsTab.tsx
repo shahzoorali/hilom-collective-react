@@ -195,6 +195,45 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
   }
 
   /**
+   * A starting point for the commission field when reviewing this
+   * facilitator's events (0061) — pre-fills it, never paid against directly.
+   * Blank clears it, which is different from 0%: a blank default prompts the
+   * admin to pick a rate each time rather than silently offering "free".
+   */
+  async function setDefaultEventFee(facilitatorId: string, current: number | null) {
+    const input = window.prompt(
+      "This facilitator's usual event commission, as a percentage. Only pre-fills the review drawer " +
+        "when approving their events — never paid against directly. Leave blank to clear it.",
+      current !== null ? String(current / 100) : '',
+    );
+    if (input === null) return;
+    if (input.trim() === '') {
+      try {
+        await adminPatchFacilitator(adminKey, facilitatorId, { default_event_platform_fee_bps: null });
+        setNotice('Default event commission cleared');
+        reload();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not update');
+      }
+      return;
+    }
+    const percent = Number(input);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      setError('Default event commission must be a percentage between 0 and 100, or blank');
+      return;
+    }
+    try {
+      await adminPatchFacilitator(adminKey, facilitatorId, {
+        default_event_platform_fee_bps: Math.round(percent * 100),
+      });
+      setNotice(`Default event commission set to ${percent}%`);
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update');
+    }
+  }
+
+  /**
    * Opens a credential document in a new tab.
    *
    * The signed URL is minted on click and lives five minutes, so it cannot be
@@ -507,6 +546,16 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
               onClick={() => void setFee(f.id, f.platform_fee_bps)}
             >
               Fee
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost small"
+              title="Pre-fills the commission field when reviewing this person's events"
+              onClick={() => void setDefaultEventFee(f.id, f.default_event_platform_fee_bps)}
+            >
+              Event rate
+              {f.default_event_platform_fee_bps != null &&
+                ` (${(f.default_event_platform_fee_bps / 100).toFixed(f.default_event_platform_fee_bps % 100 ? 2 : 0)}%)`}
             </button>
           </div>
         </div>

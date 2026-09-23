@@ -362,6 +362,8 @@ export interface OwnProfile extends Facilitator {
   legal_name: string | null;
   phone: string | null;
   platform_fee_bps: number;
+  /** Pre-fills the commission field when reviewing this facilitator's events (0061). Never paid against directly. */
+  default_event_platform_fee_bps: number | null;
   vacation_until: string | null;
   payout_details: Record<string, unknown>;
   applied_at: string;
@@ -940,7 +942,13 @@ export const adminGetFacilitator = (adminKey: string, facilitatorId: string) =>
   );
 
 export type AdminFacilitatorPatch =
-  | { status?: FacilitatorStatus; platform_fee_bps?: number; admin_notes?: string; short_name?: string | null }
+  | {
+      status?: FacilitatorStatus;
+      platform_fee_bps?: number;
+      default_event_platform_fee_bps?: number | null;
+      admin_notes?: string;
+      short_name?: string | null;
+    }
   | AdminFacilitatorProfilePatch;
 
 /** The full public profile, as the admin profile editor sends it. */

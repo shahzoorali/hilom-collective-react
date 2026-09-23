@@ -58,7 +58,7 @@ import {
 } from '../lib/slug.js';
 
 const ADMIN_FACILITATOR_COLUMNS =
-  'id, slug, email, cognito_sub, display_name, short_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at, ' +
+  'id, slug, email, cognito_sub, display_name, short_name, headline, bio, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, legal_name, phone, timezone, status, platform_fee_bps, default_event_platform_fee_bps, vacation_until, payout_details, admin_notes, applied_at, approved_at, created_at, updated_at, ' +
   // Intake, from the application form (0023). Read here and nowhere else —
   // none of it is in the public column grant, and none of it belongs on a
   // profile.
@@ -422,6 +422,19 @@ async function patchFacilitator(
     // Only affects bookings made from now on — the split is snapshotted onto
     // each booking row at the time it is taken.
     patch.platform_fee_bps = bps;
+  }
+
+  if (body.default_event_platform_fee_bps !== undefined) {
+    const raw = body.default_event_platform_fee_bps;
+    if (raw === null || raw === '') {
+      patch.default_event_platform_fee_bps = null;
+    } else {
+      const bps = Number(raw);
+      if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) {
+        return badRequest('default_event_platform_fee_bps must be a whole number between 0 and 10000, or blank');
+      }
+      patch.default_event_platform_fee_bps = bps;
+    }
   }
 
   if (body.admin_notes !== undefined) {

@@ -1167,7 +1167,13 @@ interface SeriesRow {
   facilitator_id: string;
   proposed_price_centavos: number | null;
   proposed_capacity: number | null;
-  facilitators?: { email: string; display_name: string; short_name: string | null; timezone: string } | null;
+  facilitators?: {
+    email: string;
+    display_name: string;
+    short_name: string | null;
+    timezone: string;
+    default_event_platform_fee_bps: number | null;
+  } | null;
 }
 
 interface SeriesDateRow {
@@ -1180,7 +1186,8 @@ interface SeriesDateRow {
 const SERIES_COLUMNS =
   'id, facilitator_id, title, review_status, submitted_at, reviewed_at, review_note, ' +
   'proposed_price_centavos, proposed_capacity, platform_fee_bps, created_at, ' +
-  'facilitators:facilitator_id(email, display_name, short_name, timezone)';
+  // 0061. Pre-fills the review drawer's commission field.
+  'facilitators:facilitator_id(email, display_name, short_name, timezone, default_event_platform_fee_bps)';
 
 async function seriesQueue(): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
