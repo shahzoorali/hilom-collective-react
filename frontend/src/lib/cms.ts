@@ -7,6 +7,7 @@
  */
 import { apiFetch } from './api';
 import type { Block } from '../cms/blocks';
+import { compressImage, type CompressResult } from './image-compress';
 
 // --- public ---
 
@@ -289,7 +290,28 @@ export const adminDeleteMedia = (adminKey: string, mediaId: string) =>
  * Presign → PUT straight to S3 → confirm. The file never passes through the
  * API, so a 10 MB upload doesn't have to fit in a Lambda request body.
  */
-export async function adminUploadMedia(adminKey: string, file: File): Promise<MediaAsset> {
+/**
+ * Uploads one image to the media library.
+ *
+ * The file is compressed to WebP first — before the presign, because the
+ * presigned URL binds ContentType and ContentLength, so anything re-encoded
+ * afterwards would be rejected by S3. `compressImage` hands back the original
+ * untouched for GIFs, undecodable files and cases where WebP came out bigger,
+ * so this path is always the same shape whether or not compression happened.
+ *
+ * The caller gets the compression outcome through `onCompressed`, which is how
+ * the media library reports "2.8 MB → 143 KB" without this function needing to
+ * know anything about the UI.
+ */
+export async function adminUploadMedia(
+  adminKey: string,
+  original: File,
+  onCompressed?: (result: CompressResult) => void,
+): Promise<MediaAsset> {
+  const compressed = await compressImage(original);
+  onCompressed?.(compressed);
+  const file = compressed.file;
+
   const { uploadUrl, key } = await apiFetch<{ uploadUrl: string; key: string }>(
     '/admin/media/upload-url',
     adminInit(adminKey, 'POST', { filename: file.name, contentType: file.type, bytes: file.size }),
@@ -303,8 +325,12 @@ export async function adminUploadMedia(adminKey: string, file: File): Promise<Me
   if (!put.ok) throw new Error(`Upload failed (${put.status})`);
 
   // S3 has no idea how big the image is in pixels; the browser does, and the
-  // library uses it to show sensible thumbnails.
-  const dimensions = await measure(file);
+  // library uses it to show sensible thumbnails. compressImage already decoded
+  // the file, so it hands the dimensions back rather than decoding twice.
+  const dimensions =
+    compressed.width && compressed.height
+      ? { width: compressed.width, height: compressed.height }
+      : await measure(file);
 
   const { media } = await apiFetch<{ media: MediaAsset }>(
     '/admin/media',

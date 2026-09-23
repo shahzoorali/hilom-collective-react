@@ -14,6 +14,7 @@
  */
 import { apiFetch } from './api';
 import { idToken } from './auth';
+import { compressImage } from './image-compress';
 import type {
   ContactMethod,
   ProgramStatus,
@@ -447,11 +448,20 @@ export const applyAsFacilitator = (body: FacilitatorApplication) =>
  * `kind` decides where the object lands and who can read it back:
  *   'photo'       → the public media bucket, and a media_assets row
  *   'certificate' → a private prefix, readable only through an admin-signed URL
+ *
+ * A photo is compressed to WebP first — applicants upload straight off a phone
+ * camera roll, and those files were the heaviest things in the library. It has
+ * to happen before the presign, which binds ContentType and ContentLength.
+ * A certificate is a PDF and is never touched.
  */
 export async function uploadFacilitatorFile(
   kind: 'photo' | 'certificate',
-  file: File,
+  original: File,
 ): Promise<{ mediaId: string | null; url: string | null; key: string; filename: string }> {
+  // 1600px is generous for a headshot rendered at a few hundred pixels.
+  const file =
+    kind === 'photo' ? (await compressImage(original, { maxDimension: 1600 })).file : original;
+
   const presigned = await apiFetch<{ uploadUrl: string; key: string; publicUrl: string | null }>(
     '/facilitator/upload-url',
     {

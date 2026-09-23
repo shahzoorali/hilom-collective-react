@@ -16,6 +16,10 @@ import {
   type MediaAsset,
 } from '../../lib/cms';
 
+import { adminConfirm, adminToast } from './ui/feedback';
+import { Icon } from './ui/Icon';
+import { describeSaving } from '../../lib/image-compress';
+
 /** Over this, an image is worth re-exporting before it slows a page down. */
 const HEAVY_BYTES = 800 * 1024;
 const HEAVY_WIDTH = 2400;
@@ -50,9 +54,6 @@ function useUsage(adminKey: string, enabled: boolean) {
   }, [adminKey, enabled]);
   return usage;
 }
-import { adminConfirm, adminToast } from './ui/feedback';
-import { Icon } from './ui/Icon';
-
 function useMediaLibrary(adminKey: string) {
   const [items, setItems] = useState<MediaAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -77,10 +78,17 @@ function useMediaLibrary(adminKey: string) {
     try {
       const list = Array.from(files);
       const failed: string[] = [];
+      // Totals across the batch, so the toast can say how much the compression
+      // actually saved rather than just "uploaded 4 images".
+      let before = 0;
+      let after = 0;
       setProgress({ done: 0, total: list.length });
       for (const [i, file] of list.entries()) {
         try {
-          await adminUploadMedia(adminKey, file);
+          await adminUploadMedia(adminKey, file, (r) => {
+            before += r.originalBytes;
+            after += r.file.size;
+          });
         } catch (e) {
           failed.push(`${file.name}: ${(e as Error).message}`);
         }
@@ -88,7 +96,14 @@ function useMediaLibrary(adminKey: string) {
       }
       await reload();
       const ok = list.length - failed.length;
-      if (ok) adminToast.success(`Uploaded ${ok} image${ok === 1 ? '' : 's'}`);
+      if (ok) {
+        const saved = before - after;
+        adminToast.success(
+          saved > 50 * 1024
+            ? `Uploaded ${ok} image${ok === 1 ? '' : 's'} · compressed ${describeSaving(before, after)}`
+            : `Uploaded ${ok} image${ok === 1 ? '' : 's'}`,
+        );
+      }
       if (failed.length) setError(failed.join(' · '));
     } catch (e) {
       setError((e as Error).message);
@@ -206,6 +221,9 @@ export function MediaGrid({
         </label>
         <p className="small muted" style={{ margin: '0.6rem 0 0' }}>
           Supported: JPEG, PNG, WebP, GIF, AVIF (up to 10 MB each). Served via CloudFront Global CDN.
+          <br />
+          Large images are converted to WebP in your browser before upload — usually a 70–95% saving.
+          Animated GIFs are left alone.
         </p>
       </div>
 
