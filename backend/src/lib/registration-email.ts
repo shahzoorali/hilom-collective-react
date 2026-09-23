@@ -1077,6 +1077,58 @@ export async function sendEventReminder(input: {
 }
 
 /**
+ * Tells a registrant that the title, time or place of their event changed
+ * (0058: an approved edit to a live event).
+ *
+ * Re-issues the calendar invite with the same UID and a larger sequence, the
+ * same way sendJoinDetails does, so a calendar that already holds the event
+ * moves it rather than keeping the old time alongside a new one.
+ */
+export async function sendEventChanged(input: {
+  to: string;
+  registrantName: string;
+  registrationId: string;
+  event: EmailEvent;
+  changed: string[];
+}): Promise<void> {
+  const { event } = input;
+  const heading = `${event.title} has changed`;
+  const what = input.changed.join(', ');
+
+  const body =
+    p(`Hi ${escapeHtml(input.registrantName)}, the ${escapeHtml(what)} for ${escapeHtml(event.title)} has changed. Your place is unaffected.`) +
+    details([
+      { label: 'Event', value: escapeHtml(event.title) },
+      { label: 'When', value: escapeHtml(whenEvent(event)) },
+      ...(event.location ? [{ label: 'Where', value: escapeHtml(event.location) }] : []),
+    ]) +
+    note("If the new details don't work for you, reply to this email.") +
+    button('View your registration', registrationUrl(input.registrationId));
+
+  const invite = registrationInvite({
+    registrationId: input.registrationId,
+    event,
+    attendeeEmail: input.to,
+    attendeeName: input.registrantName,
+    sequence: Math.floor(Date.now() / 1000),
+  });
+
+  await send(
+    input.to,
+    heading,
+    renderText(heading, [
+      `Hi ${input.registrantName}, the ${what} for ${event.title} has changed. Your place is unaffected.`,
+      `When: ${whenEvent(event)}`,
+      ...(event.location ? [`Where: ${event.location}`] : []),
+      '',
+      registrationUrl(input.registrationId),
+    ]),
+    renderEmail({ preheader: `${event.title} has changed.`, heading, body }),
+    invite ? [invite] : undefined,
+  );
+}
+
+/**
  * Confirms joining the waitlist for a sold-out date (0054, Phase 2).
  *
  * Sets the expectation plainly: this is a notify-me list, not a hold. See

@@ -130,6 +130,21 @@ export async function cancelEventDate(
     .eq('status', 'pending_payment');
   if (pendingError) throw pendingError;
 
+  // Every charge on this date that is still payable stops being payable —
+  // pending holds included. Voiding only the confirmed registrants' charges
+  // left a pending buyer's deposit `awaiting_payment` with a live checkout
+  // link, so finishing that checkout after the cancellation took money for a
+  // date that no longer exists. Paid charges are left exactly as they are:
+  // that money was received, and erasing the record of it is not the same as
+  // returning it. A payment that lands on a voided charge anyway is recorded
+  // and logged by applyChargePayment for an admin to refund.
+  const { error: voidError } = await supabase
+    .from('registration_charges')
+    .update({ status: 'void', voided_at: now, void_reason: 'event_cancelled', flagged_at: null })
+    .eq('event_id', eventId)
+    .in('status', ['scheduled', 'awaiting_payment']);
+  if (voidError) throw voidError;
+
   const affected = confirmed ?? [];
   if (affected.length === 0) {
     return { cancelled: true, title: event.title, registrationsCancelled: 0, refundsOwed: 0, refundTotalCentavos: 0, currency: event.currency };
@@ -143,20 +158,6 @@ export async function cancelEventDate(
     ...r,
     paid: paidCentavos(byRegistration.get(r.id) ?? []),
   }));
-
-  // Nothing further is owed on a place nobody holds. Paid charges are left
-  // exactly as they are — that money was received, and erasing the record of
-  // it is not the same as returning it.
-  const outstandingIds = affected.flatMap((r) =>
-    (byRegistration.get(r.id) ?? []).filter((c) => c.status === 'scheduled' || c.status === 'awaiting_payment').map((c) => c.id),
-  );
-  if (outstandingIds.length > 0) {
-    const { error: voidError } = await supabase
-      .from('registration_charges')
-      .update({ status: 'void', voided_at: now, void_reason: 'event_cancelled', flagged_at: null })
-      .in('id', outstandingIds);
-    if (voidError) throw voidError;
-  }
 
   // Refund is recorded on every confirmed registration, paid or free — a free
   // seat correctly gets `refund_centavos: null`, which is what keeps it out of

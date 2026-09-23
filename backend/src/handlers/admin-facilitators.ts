@@ -749,6 +749,16 @@ async function markRefundSent(
   return ok({ bookingId, refundedAt: marked.refunded_at, reference: marked.refund_reference });
 }
 
+/**
+ * The batch that originally paid a row, for the clawback reads (0059). A
+ * clawback only makes sense against money that actually left: a row still
+ * sitting in a draft or approved batch that is later voided goes back to
+ * unpaid, and clawing it back from the next batch would take back money the
+ * facilitator never received. Disambiguated by column because these tables
+ * carry two FKs to facilitator_payouts (payout_id and clawed_back_payout_id).
+ */
+const PAID_BATCH_EMBED = 'paid_batch:facilitator_payouts!payout_id!inner(status)';
+
 const PAYOUT_COLUMNS =
   'id, facilitator_id, period_start, period_end, gross_centavos, platform_fee_centavos, processing_fee_centavos, ' +
   // 0059. Zero on every batch that reclaimed nothing, which is most of them.
@@ -874,7 +884,9 @@ async function buildPayout(
       // they are). Most refunds also cancel the registration, which the
       // status check alone would catch, but a partial refund from
       // priceOverride() can leave it `confirmed` with money owed back.
-      .eq('event_registrations.status', 'confirmed')
+      // `completed` too: registration-sweep moves confirmed -> completed a day
+      // after the event ends, which is before any batch covering it is built.
+      .in('event_registrations.status', ['confirmed', 'completed'])
       .is('event_registrations.refunded_at', null)
       .eq('events.facilitator_id', facilitatorId)
       .gte('events.delivered_at', periodStart.toISOString())
@@ -896,29 +908,31 @@ async function buildPayout(
   const [bookingClawbackRes, classClawbackRes, chargeClawbackRes] = await Promise.all([
     supabase
       .from('bookings')
-      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
+      .select(`id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, ${PAID_BATCH_EMBED}`)
       .eq('facilitator_id', facilitatorId)
-      .not('payout_id', 'is', null)
+      .eq('paid_batch.status', 'paid')
       .gt('refund_centavos', 0)
       .not('refunded_at', 'is', null)
-      .is(PAYOUT_CLAWBACK_COLUMN, null),
+      .is(PAYOUT_CLAWBACK_COLUMN, null)
+      .returns<PayableRow[]>(),
     supabase
       .from('class_registrations')
-      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
+      .select(`id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, ${PAID_BATCH_EMBED}`)
       .eq('facilitator_id', facilitatorId)
-      .not('payout_id', 'is', null)
+      .eq('paid_batch.status', 'paid')
       .gt('refund_centavos', 0)
       .not('refunded_at', 'is', null)
-      .is(PAYOUT_CLAWBACK_COLUMN, null),
+      .is(PAYOUT_CLAWBACK_COLUMN, null)
+      .returns<PayableRow[]>(),
     // The refund flag is on the registration, not the charge (see the note
     // above on why the earnings read checks it the same way).
     supabase
       .from('registration_charges')
       .select(
         'id, price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
-          'currency, events!inner(facilitator_id), event_registrations!inner(refunded_at)',
+          `currency, events!inner(facilitator_id), event_registrations!inner(refunded_at), ${PAID_BATCH_EMBED}`,
       )
-      .not('payout_id', 'is', null)
+      .eq('paid_batch.status', 'paid')
       .not('facilitator_net_centavos', 'is', null)
       .eq('events.facilitator_id', facilitatorId)
       .not('event_registrations.refunded_at', 'is', null)

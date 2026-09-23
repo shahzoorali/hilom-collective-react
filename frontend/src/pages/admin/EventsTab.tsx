@@ -425,12 +425,28 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
       }
     }
 
+    // A facilitator's proposal is a revenue share: without a commission its
+    // sales never reach them (0054). Hilom's own events have no submitter.
+    let platformFeeBps: number | undefined;
+    if (decision === 'approve' && event.submitted_by) {
+      const typed = window.prompt(
+        `Hilom's commission on "${event.title}", as a percentage. The facilitator earns the rest of each ticket.`,
+      );
+      if (typed === null) return;
+      const pct = Number(typed);
+      if (!typed.trim() || !Number.isFinite(pct) || pct < 0 || pct > 100) {
+        return setError('Commission must be a percentage between 0 and 100.');
+      }
+      platformFeeBps = Math.round(pct * 100);
+    }
+
     setBusyRow(event.id);
     setError(null);
     try {
       await adminReviewEvent(adminKey, event.id, decision, {
         note: note || undefined,
         publish: decision === 'approve',
+        platformFeeBps,
       });
       await reload();
       flash(
@@ -1341,7 +1357,9 @@ function SeriesReviewPanel({
 
   const reload = () => {
     adminListEventSeries(adminKey)
-      .then((rows) => setSeries(rows.filter((s) => s.review_status === 'submitted' || s.review_status === 'rejected')))
+      // Submitted only: that is all the review endpoint accepts. A rejected
+      // series is back with its facilitator until they resubmit.
+      .then((rows) => setSeries(rows.filter((s) => s.review_status === 'submitted')))
       .catch((e: Error) => onError(e.message))
       .finally(() => setLoaded(true));
   };
@@ -1364,11 +1382,6 @@ function SeriesReviewPanel({
             <div>
               <strong>{s.title}</strong>{' '}
               <span className="small muted">by {s.facilitators?.display_name ?? 'Unknown'}</span>
-              {s.review_status === 'rejected' && (
-                <span className="pill pill-warn" style={{ marginLeft: '0.4rem', fontSize: '0.7rem' }}>
-                  resubmitted
-                </span>
-              )}
               {s.proposed_price_centavos !== null && (
                 <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
                   Asked {money(s.proposed_price_centavos)}/date

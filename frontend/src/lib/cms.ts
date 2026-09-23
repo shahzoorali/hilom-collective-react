@@ -596,11 +596,16 @@ export const adminReviewEvent = (
   adminKey: string,
   eventId: string,
   decision: 'approve' | 'reject',
-  options: { note?: string; publish?: boolean } = {},
+  options: { note?: string; publish?: boolean; platformFeeBps?: number } = {},
 ) =>
   apiFetch<{ event: AdminEvent }>(
     `/admin/events/${eventId}/review`,
-    adminInit(adminKey, 'PUT', { decision, ...options }),
+    adminInit(adminKey, 'PUT', {
+      decision,
+      note: options.note,
+      publish: options.publish,
+      platform_fee_bps: options.platformFeeBps,
+    }),
   ).then((r) => r.event);
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>

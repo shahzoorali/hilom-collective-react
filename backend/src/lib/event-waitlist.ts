@@ -15,6 +15,9 @@ const SEAT_STATUSES = ['pending_payment', 'confirmed'];
 
 export class WaitlistError extends Error {}
 
+/** How long a "a place opened up" notice keeps that seat spoken for before the next person is told. */
+const NOTICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 interface EventForWaitlist {
   id: string;
   title: string;
@@ -138,7 +141,22 @@ export async function notifyOpenSeats(supabase: SupabaseClient, eventId: string)
   }
 
   const taken = await seatsTaken(supabase, eventId);
-  const available = eventRow.capacity - taken;
+
+  // A notified person holds no seat until they register, so the free seat they
+  // were told about is still free on the next sweep five minutes later.
+  // Without subtracting them, every sweep would notify the next person for the
+  // same seat until the whole list had been told. A notice is treated as
+  // spoken for this long; after it lapses the seat goes to the next in line.
+  const since = new Date(Date.now() - NOTICE_WINDOW_MS).toISOString();
+  const { count: inFlight, error: inFlightError } = await supabase
+    .from('event_waitlist')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', eventId)
+    .eq('status', 'notified')
+    .gt('notified_at', since);
+  if (inFlightError) throw inFlightError;
+
+  const available = eventRow.capacity - taken - (inFlight ?? 0);
   if (available <= 0) return 0;
 
   const { data: waiting, error: waitingError } = await supabase

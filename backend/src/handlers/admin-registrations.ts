@@ -1277,6 +1277,11 @@ async function seriesReview(
   if (readError) throw readError;
   if (!series) return notFound('Series not found');
   if (series.review_status === 'approved') return badRequest('This series has already been approved.');
+  // Only a submitted series is reviewed. A draft may still be half-written
+  // and a rejected one is waiting on the facilitator's changes.
+  if (series.review_status !== 'submitted') {
+    return badRequest('Only a series the facilitator has submitted can be reviewed.');
+  }
 
   const { data: dates, error: datesError } = await supabase
     .from('events')
@@ -1322,35 +1327,11 @@ async function seriesReview(
     }
   }
 
-  const { data: updatedSeries, error: updateError } = await supabase
-    .from('event_series')
-    .update(patch)
-    .eq('id', seriesId)
-    .select(SERIES_COLUMNS)
-    .maybeSingle<SeriesRow>();
-  if (updateError) throw updateError;
-  if (!updatedSeries) return notFound('Series not found');
-
-  const eventsPatch: Record<string, unknown> = {
-    review_status: patch.review_status,
-    reviewed_at: patch.reviewed_at,
-    review_note: patch.review_note,
-  };
-  if (decision === 'approve') {
-    eventsPatch.ticketing_enabled = true;
-    eventsPatch.capacity = capacity;
-    eventsPatch.platform_fee_bps = platformFeeBps;
-    if (body.publish === true) eventsPatch.status = 'published';
-  } else {
-    eventsPatch.status = 'draft';
-  }
-
-  const { error: eventsError } = await supabase.from('events').update(eventsPatch).eq('series_id', seriesId);
-  if (eventsError) throw eventsError;
-
-  // One "Full payment" plan per date, at the approved price. validatePlans is
-  // the same validator admin-events.ts uses for a single event's plans — see
-  // its note on why a full plan needs exactly one instalment, marked deposit.
+  // Plans are written first, while every date is still an unpublished draft.
+  // Publishing first meant a plan failure left dates live with nothing to buy,
+  // on a series already marked approved that could not be reviewed again. In
+  // this order a failure changes nothing visible, and the review can be re-run
+  // (replace_event_plans replaces rather than appends).
   if (decision === 'approve' && priceCentavos !== null) {
     const plans = validatePlans([
       {
@@ -1370,6 +1351,34 @@ async function seriesReview(
       if (planError) throw planError;
     }
   }
+
+  const eventsPatch: Record<string, unknown> = {
+    review_status: patch.review_status,
+    reviewed_at: patch.reviewed_at,
+    review_note: patch.review_note,
+  };
+  if (decision === 'approve') {
+    eventsPatch.ticketing_enabled = true;
+    eventsPatch.capacity = capacity;
+    eventsPatch.platform_fee_bps = platformFeeBps;
+    if (body.publish === true) eventsPatch.status = 'published';
+  } else {
+    eventsPatch.status = 'draft';
+  }
+
+  const { error: eventsError } = await supabase.from('events').update(eventsPatch).eq('series_id', seriesId);
+  if (eventsError) throw eventsError;
+
+  // The series row last: until it reads approved, a failure above leaves the
+  // review open to run again.
+  const { data: updatedSeries, error: updateError } = await supabase
+    .from('event_series')
+    .update(patch)
+    .eq('id', seriesId)
+    .select(SERIES_COLUMNS)
+    .maybeSingle<SeriesRow>();
+  if (updateError) throw updateError;
+  if (!updatedSeries) return notFound('Series not found');
 
   if (series.facilitators?.email) {
     await sendEventProposalDecision({

@@ -28,6 +28,7 @@ import { BlockValidationError } from '../lib/cms-blocks.js';
 import { validatePlans, TicketingValidationError } from '../lib/event-ticketing.js';
 import { actorFromEvent, recordAudit } from '../lib/audit.js';
 import { sendEventProposalDecision, sendEventEditDecision } from '../lib/booking-email.js';
+import { sendEventChanged, type EmailEvent } from '../lib/registration-email.js';
 
 const COLUMNS =
   'id, title, subtitle, description, excerpt, image_id, image_url, image_alt, location, starts_at, ends_at, ' +
@@ -416,6 +417,18 @@ async function review(
   if (decision === 'approve' && body.publish === true) patch.status = 'published';
   if (decision === 'reject') patch.status = 'draft';
 
+  // A facilitator's proposal is a revenue share, the same as a series (0054):
+  // without a rate every charge records a null split and the host is never
+  // paid. Required here for the same reason seriesReview requires it — no
+  // silent default. An admin-created event (no submitted_by) is Hilom's own.
+  if (decision === 'approve' && current.submitted_by) {
+    const bps = body.platform_fee_bps === undefined || body.platform_fee_bps === null ? NaN : Number(body.platform_fee_bps);
+    if (!Number.isInteger(bps) || bps < 0 || bps > 10_000) {
+      return badRequest('Set a commission (0–10000 basis points) before approving a facilitator’s event.');
+    }
+    patch.platform_fee_bps = bps;
+  }
+
   const { data, error } = await supabase
     .from('events')
     .update(patch)
@@ -524,6 +537,10 @@ async function reviewEdit(
   if (error) throw error;
   if (!data) return notFound('Event not found');
 
+  if (decision === 'approve') {
+    await notifyRegistrantsOfChange(supabase, eventId, current.pending_changes);
+  }
+
   // The host, not necessarily the proposer — an edit is something the current
   // host is asking for, and the host is who has to live with the answer.
   if (current.facilitators?.email) {
@@ -549,6 +566,68 @@ async function reviewEdit(
   });
 
   return ok({ event: data });
+}
+
+const CHANGE_WORDS: Record<string, string> = {
+  title: 'name',
+  starts_at: 'time',
+  ends_at: 'time',
+  location: 'place',
+  format: 'format',
+};
+
+/**
+ * Tells everyone holding a place that an approved edit changed what they
+ * registered for, and re-arms the day-before reminder when the time moved so
+ * it fires for the new date rather than having already gone for the old one.
+ *
+ * Best-effort per person, like every other send: the edit is already applied,
+ * and one bounced address must not stop the rest being told.
+ */
+async function notifyRegistrantsOfChange(
+  supabase: SupabaseClient,
+  eventId: string,
+  changes: Record<string, unknown>,
+): Promise<void> {
+  const changed = [...new Set(Object.keys(changes).map((k) => CHANGE_WORDS[k] ?? k))];
+  if (changed.length === 0) return;
+
+  if ('starts_at' in changes) {
+    const { error } = await supabase
+      .from('event_registrations')
+      .update({ reminder_sent_at: null })
+      .eq('event_id', eventId)
+      .eq('status', 'confirmed');
+    if (error) console.error('[adminEvents.reviewEdit] could not re-arm reminders', { eventId, error });
+  }
+
+  const { data: event } = await supabase
+    .from('events')
+    .select('title, starts_at, ends_at, location, venue_details, format, join_url, join_instructions')
+    .eq('id', eventId)
+    .maybeSingle<EmailEvent>();
+  if (!event) return;
+
+  const { data: registrations } = await supabase
+    .from('event_registrations')
+    .select('id, buyer_email, registrant_name')
+    .eq('event_id', eventId)
+    .in('status', ['pending_payment', 'confirmed'])
+    .returns<{ id: string; buyer_email: string; registrant_name: string }[]>();
+
+  for (const r of registrations ?? []) {
+    try {
+      await sendEventChanged({
+        to: r.buyer_email,
+        registrantName: r.registrant_name,
+        registrationId: r.id,
+        event,
+        changed,
+      });
+    } catch (err) {
+      console.error('[adminEvents.reviewEdit] change email failed', { registrationId: r.id, err });
+    }
+  }
 }
 
 /**

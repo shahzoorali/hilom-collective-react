@@ -1795,12 +1795,15 @@ async function earnings(
       .from('registration_charges')
       .select(
         'price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
-          'events!inner(facilitator_id)',
+          'events!inner(facilitator_id), event_registrations!inner(status, refunded_at)',
       )
       .eq('status', 'paid')
       .is('payout_id', null)
-      .is('refunded_at', null)
       .not('facilitator_net_centavos', 'is', null)
+      // Same rule buildPayout pays on: the refund flag lives on the
+      // registration, not the charge, and a cancelled seat earns nothing.
+      .in('event_registrations.status', ['confirmed', 'completed'])
+      .is('event_registrations.refunded_at', null)
       .eq('events.facilitator_id', facilitator.id)
       .returns<Record<string, unknown>[]>(),
   ]);

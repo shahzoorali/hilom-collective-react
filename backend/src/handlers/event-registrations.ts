@@ -399,7 +399,10 @@ async function register(
     // Null for a fixed-price plan, which is what makes the function take its
     // original path and re-check against the plan's own total.
     p_total_centavos: chosenAmountCentavos,
-    p_promo_code_id: promoCodeId,
+    // Sent only with a code: PostgREST matches a function by its argument
+    // names, so naming p_promo_code_id on every call would break every
+    // registration if this deploy ever ran ahead of migration 0062.
+    ...(promoCodeId ? { p_promo_code_id: promoCodeId } : {}),
   });
 
   if (claimError) {
