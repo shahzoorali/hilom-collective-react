@@ -27,28 +27,44 @@ import PostEditor from './admin/PostEditor';
 import KnowledgeBaseTab from './admin/KnowledgeBaseTab';
 import KbArticleEditor from './admin/KbArticleEditor';
 import { MediaGrid } from './admin/MediaLibrary';
+import { AdminFeedbackProvider } from './admin/ui/feedback';
+import { CommandPalette } from './admin/ui/CommandPalette';
+import { Icon } from './admin/ui/Icon';
+import { AdminErrorBoundary } from './admin/ui/ErrorBoundary';
+import './admin/ui/admin-ui.css';
+
+const THEME_STORAGE = 'hilom.admin.theme';
+const readTheme = (): 'light' | 'dark' => {
+  try {
+    const t = localStorage.getItem(THEME_STORAGE);
+    if (t === 'light' || t === 'dark') return t;
+  } catch {
+    /* storage blocked — fall through to the OS preference */
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
 
 const KEY_STORAGE = 'hilom.adminKey';
 
 const NAV_GROUPS = [
   {
     label: 'Overview',
-    items: [{ label: 'Dashboard', path: 'dashboard', icon: '🏠' }],
+    items: [{ label: 'Dashboard', path: 'dashboard', icon: 'home' }],
   },
   {
     label: 'Content',
     items: [
-      { label: 'Pages', path: 'pages', icon: '📄' },
-      { label: 'Posts', path: 'posts', icon: '✍️' },
-      { label: 'Events', path: 'events', icon: '📅' },
+      { label: 'Pages', path: 'pages', icon: 'file' },
+      { label: 'Posts', path: 'posts', icon: 'pen' },
+      { label: 'Events', path: 'events', icon: 'calendar' },
       // Not in the plan's Content row verbatim, but placed here deliberately:
       // §6 names Reviews and the event proposal queue as "both moderation
       // queues [that] live nowhere near each other", and the proposal queue
       // is a filter on Events, right above. Filing Reviews under People
       // (where Facilitators sits) would repeat the exact problem being fixed.
-      { label: 'Reviews', path: 'reviews', icon: '⭐' },
-      { label: 'Help Centre', path: 'knowledge-base', icon: '💡' },
-      { label: 'Media', path: 'media', icon: '🖼️' },
+      { label: 'Reviews', path: 'reviews', icon: 'star' },
+      { label: 'Help Centre', path: 'knowledge-base', icon: 'bulb' },
+      { label: 'Media', path: 'media', icon: 'image' },
     ],
   },
   {
@@ -57,31 +73,31 @@ const NAV_GROUPS = [
       // Last in its old group because it is the read across the ones above
       // it — kept first here since Accounts and Facilitators are its own
       // raw sources, not siblings of it.
-      { label: 'People', path: 'people', icon: '👥' },
+      { label: 'People', path: 'people', icon: 'users' },
       // People derived from transactions; Accounts is the raw Cognito pool,
       // including sign-ups that have never transacted.
-      { label: 'Accounts', path: 'accounts', icon: '🔑' },
-      { label: 'Facilitators', path: 'facilitators', icon: '🌿' },
-      { label: 'Forms', path: 'forms', icon: '📋' },
+      { label: 'Accounts', path: 'accounts', icon: 'key' },
+      { label: 'Facilitators', path: 'facilitators', icon: 'leaf' },
+      { label: 'Forms', path: 'forms', icon: 'clipboard' },
     ],
   },
   {
     label: 'Commerce',
     items: [
-      { label: 'Orders', path: 'orders', icon: '💳' },
-      { label: 'Products & Courses', path: 'products', icon: '📦' },
-      { label: 'Bookings', path: 'bookings', icon: '🗓️' },
-      { label: 'Registrations', path: 'registrations', icon: '🎟️' },
-      { label: 'Classes', path: 'classes', icon: '🧘' },
-      { label: 'Promo Codes', path: 'promo-codes', icon: '🏷️' },
-      { label: 'Payouts', path: 'payouts', icon: '🏦' },
+      { label: 'Orders', path: 'orders', icon: 'card' },
+      { label: 'Products & Courses', path: 'products', icon: 'box' },
+      { label: 'Bookings', path: 'bookings', icon: 'clock' },
+      { label: 'Registrations', path: 'registrations', icon: 'ticket' },
+      { label: 'Classes', path: 'classes', icon: 'yoga' },
+      { label: 'Promo Codes', path: 'promo-codes', icon: 'tag' },
+      { label: 'Payouts', path: 'payouts', icon: 'bank' },
     ],
   },
   {
     label: 'System',
     items: [
-      { label: 'Settings', path: 'settings', icon: '⚙️' },
-      { label: 'Audit Log', path: 'audit-log', icon: '📜' },
+      { label: 'Settings', path: 'settings', icon: 'settings' },
+      { label: 'Audit Log', path: 'audit-log', icon: 'scroll' },
     ],
   },
 ] as const;
@@ -137,6 +153,16 @@ export default function Admin() {
   const [checkingSession, setCheckingSession] = useState(() => Boolean(sessionStorage.getItem(KEY_STORAGE)));
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(readTheme);
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    try {
+      localStorage.setItem(THEME_STORAGE, next);
+    } catch {
+      /* not persisted */
+    }
+  };
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -276,8 +302,15 @@ export default function Admin() {
   const activeLabel =
     NAV_GROUPS.map((g) => g.items.find((t) => t.path === activeTab)).find(Boolean)?.label ?? 'Admin';
 
+  const paletteNav = NAV_GROUPS.flatMap((g) =>
+    g.items.map((t) => ({ label: t.label, path: t.path, icon: t.icon, group: g.label })),
+  );
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
   return (
-    <div className="admin-shell admin-shell--sidebar">
+    <div className="admin-shell admin-shell--sidebar" data-theme={theme}>
+      <AdminFeedbackProvider>
+      <CommandPalette adminKey={adminKey} nav={paletteNav} />
       {/* Mobile-only top bar: hamburger + current section, sidebar becomes a slide-in drawer */}
       <header className="admin-mobile-topbar">
         <button
@@ -287,7 +320,7 @@ export default function Admin() {
           aria-label="Open menu"
           aria-expanded={drawerOpen}
         >
-          ☰
+          <Icon name="menu" />
         </button>
         <span className="admin-mobile-topbar-title">{activeLabel}</span>
         <img src={hilomLogo} alt="" className="admin-mobile-topbar-logo" />
@@ -307,6 +340,16 @@ export default function Admin() {
           </div>
         </Link>
 
+        <button
+          type="button"
+          className="admin-sidebar-search"
+          onClick={() => window.dispatchEvent(new Event('hilom:open-palette'))}
+        >
+          <Icon name="search" size={15} />
+          <span>Search…</span>
+          <kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd>
+        </button>
+
         <nav className="admin-sidebar-nav" aria-label="Admin Navigation">
           {NAV_GROUPS.map((group) => (
             <div className="admin-sidebar-group" key={group.label}>
@@ -319,7 +362,7 @@ export default function Admin() {
                     className={`admin-sidebar-btn ${isActive ? 'admin-sidebar-btn--active' : ''}`}
                     onClick={() => navigate(`/admin/${t.path}`)}
                   >
-                    <span>{t.icon}</span>
+                    <Icon name={t.icon} size={17} />
                     <span>{t.label}</span>
                   </button>
                 );
@@ -336,7 +379,7 @@ export default function Admin() {
             className="admin-view-site-link"
             title="Open website in new tab"
           >
-            <span>🌐</span>
+            <Icon name="globe" size={15} />
             <span>View Site ↗</span>
           </a>
           {/* Moodle's login page auto-redirects to Cognito SSO; ?nosso=1 is the
@@ -348,16 +391,25 @@ export default function Admin() {
             className="admin-view-site-link"
             title="Open the Moodle password login (bypasses SSO)"
           >
-            <span>🎓</span>
+            <Icon name="cap" size={15} />
             <span>Moodle staff login ↗</span>
           </a>
+          <button
+            type="button"
+            className="btn btn-ghost small"
+            onClick={toggleTheme}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', justifyContent: 'center' }}
+          >
+            <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} />
+            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+          </button>
           <button
             className="btn btn-ghost small"
             onClick={signOut}
             title="Sign out of admin"
             style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', justifyContent: 'center' }}
           >
-            <span>🚪</span>
+            <Icon name="logout" size={15} />
             <span>Sign out</span>
           </button>
         </div>
@@ -365,6 +417,7 @@ export default function Admin() {
 
       {/* Main Admin Body */}
       <main className={flushChrome ? 'admin-content admin-content--flush' : 'admin-content'}>
+        <AdminErrorBoundary key={location.pathname}>
         <Routes>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardTab adminKey={adminKey} />} />
@@ -418,7 +471,9 @@ export default function Admin() {
           <Route path="audit-log" element={<AuditLogTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Routes>
+        </AdminErrorBoundary>
       </main>
+      </AdminFeedbackProvider>
     </div>
   );
 }

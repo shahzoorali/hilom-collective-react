@@ -35,6 +35,7 @@ import EventTicketingEditor, {
   ticketingToInput,
   type TicketingDraft,
 } from './EventTicketingEditor';
+import { adminConfirm, adminToast } from './ui/feedback';
 
 function toLocalInput(iso: string | null): string {
   if (!iso) return '';
@@ -271,7 +272,7 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
   const [events, setEvents] = useState<AdminEvent[]>([]);
   const [openId, setOpenId] = useState<string | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(blankDraft);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '');
   const [timeFilter, setTimeFilter] = useState<'all' | 'upcoming' | 'past'>('all');
   // `?status=submitted` is how the dashboard hands over: its "event proposals"
   // card links here with the review queue already selected.
@@ -457,7 +458,7 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
             'Reverting to draft takes the registration page down for them too. Their places and payments are ' +
             'untouched, but nobody can reach the page. Continue?'
           : `Take “${event.title}” off the site and back to draft?`;
-      if (!window.confirm(question)) return;
+      if (!(await adminConfirm({ title: 'Take this event down?', body: question, confirmLabel: 'Revert to draft', danger: true }))) return;
     }
 
     setBusyRow(event.id);
@@ -544,10 +545,20 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
   }
 
   async function remove(event: AdminEvent) {
-    if (!window.confirm(`Delete event "${event.title}"? This cannot be undone.`)) return;
+    if (
+      !(await adminConfirm({
+        title: `Delete “${event.title}”?`,
+        body: 'The event, its page and its ticket setup are removed. This cannot be undone.',
+        confirmLabel: 'Delete event',
+        danger: true,
+        typeToConfirm: 'DELETE',
+      }))
+    )
+      return;
     try {
       await adminDeleteEvent(adminKey, event.id);
       await reload();
+      adminToast.success(`Deleted “${event.title}”`);
     } catch (e) {
       setError((e as Error).message);
     }

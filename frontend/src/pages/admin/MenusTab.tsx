@@ -7,7 +7,27 @@
 import { useEffect, useState } from 'react';
 import { adminGetMenus, adminSaveMenu, listPages, type AdminMenu } from '../../lib/cms';
 
+import { adminToast } from './ui/feedback';
+
 type Item = AdminMenu['items'][number];
+
+/** First path segments the React app routes itself (App.tsx). Anything else
+ *  internal has to be a CMS page slug, or it is a 404. */
+const APP_ROUTES = new Set([
+  '', 'about', 'account', 'blog', 'book', 'checkout', 'classes', 'community', 'courses', 'events',
+  'facilitator', 'facilitators', 'help', 'privacy-policy', 'services', 'booking',
+]);
+
+function linkProblem(href: string, slugs: Set<string>): string | null {
+  const h = href.trim();
+  if (!h) return 'Empty link';
+  if (/^(https?:|mailto:|tel:)/i.test(h)) return /^http:\/\//i.test(h) ? 'Insecure http:// link' : null;
+  if (h.startsWith('#')) return null;
+  if (!h.startsWith('/')) return 'Internal links should start with /';
+  const first = h.slice(1).split(/[/?#]/)[0];
+  if (APP_ROUTES.has(first) || slugs.has(first)) return null;
+  return `No page at /${first}`;
+}
 
 const blank = (): Item => ({
   label: '',
@@ -30,6 +50,8 @@ export default function MenusTab({ adminKey }: { adminKey: string }) {
     listPages().then(setSlugs).catch(() => setSlugs([]));
   }, [adminKey]);
 
+  const slugSet = new Set(slugs.map((x) => x.slug));
+
   function patch(menuKey: string, items: Item[]) {
     setMenus((prev) => prev.map((m) => (m.key === menuKey ? { ...m, items } : m)));
   }
@@ -40,8 +62,7 @@ export default function MenusTab({ adminKey }: { adminKey: string }) {
     setNotice(null);
     try {
       setMenus(await adminSaveMenu(adminKey, menu.key, menu.items));
-      setNotice(`${menu.label} saved successfully.`);
-      setTimeout(() => setNotice(null), 3500);
+      adminToast.success(`${menu.label} saved`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -75,6 +96,10 @@ export default function MenusTab({ adminKey }: { adminKey: string }) {
                   Key: <code>{menu.key}</code> • {menu.items.length} {menu.items.length === 1 ? 'link' : 'links'}
                 </span>
               </div>
+              {slugs.length > 0 && (() => {
+                const bad = menu.items.filter((it) => linkProblem(it.href, slugSet)).length;
+                return bad ? <span className="pill pill-warn">{bad} link{bad === 1 ? '' : 's'} to check</span> : <span className="pill pill-ok">All links OK</span>;
+              })()}
               <button className="btn btn-primary small" onClick={() => save(menu)} disabled={busy}>
                 {busy ? 'Saving…' : `Save ${menu.label}`}
               </button>
@@ -148,7 +173,11 @@ export default function MenusTab({ adminKey }: { adminKey: string }) {
                           value={item.href}
                           onChange={(e) => replace({ href: e.target.value })}
                           list="cms-page-slugs"
+                          aria-invalid={Boolean(linkProblem(item.href, slugSet))}
                         />
+                        {slugs.length > 0 && linkProblem(item.href, slugSet) && (
+                          <div className="small" style={{ color: 'var(--danger-fg)', marginTop: 2 }}>⚠ {linkProblem(item.href, slugSet)}</div>
+                        )}
                       </div>
 
                       <select

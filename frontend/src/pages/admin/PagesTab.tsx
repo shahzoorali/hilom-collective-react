@@ -17,6 +17,7 @@ import {
   type AdminPage,
 } from '../../lib/cms';
 import ScheduledBadge from './ScheduledBadge';
+import { adminConfirm, adminToast } from './ui/feedback';
 
 export default function PagesTab({ adminKey }: { adminKey: string }) {
   const navigate = useNavigate();
@@ -68,12 +69,13 @@ export default function PagesTab({ adminKey }: { adminKey: string }) {
   }
 
   async function trash(page: AdminPage) {
-    if (!window.confirm(`Move "${page.title}" to trash? You can restore it from Trash later.`)) return;
+    // Reversible, so no confirmation — an Undo toast instead.
     setError(null);
     try {
       await adminTrashPage(adminKey, page.id);
       await reload();
       await reloadTrash();
+      adminToast.success(`Moved “${page.title}” to trash`, { label: 'Undo', run: () => restore(page) });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -92,9 +94,13 @@ export default function PagesTab({ adminKey }: { adminKey: string }) {
 
   async function purge(page: AdminPage) {
     if (
-      !window.confirm(
-        `Permanently delete "${page.title}"? This cannot be undone — its revision history goes with it.`,
-      )
+      !(await adminConfirm({
+        title: `Permanently delete “${page.title}”?`,
+        body: 'This cannot be undone — its revision history goes with it.',
+        confirmLabel: 'Delete forever',
+        danger: true,
+        typeToConfirm: 'DELETE',
+      }))
     ) {
       return;
     }

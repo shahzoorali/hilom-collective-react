@@ -4,7 +4,9 @@
  * These are forms an admin builds. The community signup form is not listed here
  * — it emails the team via SES and has no stored submissions to show.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { DataTable, type Column } from './ui/DataTable';
+import { BarList } from './ui/Charts';
 import {
   adminCreateForm,
   adminDeleteSubmission,
@@ -15,6 +17,7 @@ import {
   type FormFieldDef,
   type FormSubmission,
 } from '../../lib/cms';
+import { adminConfirm, adminToast } from './ui/feedback';
 
 const FIELD_TYPES: FormFieldDef['type'][] = ['text', 'email', 'textarea', 'checkboxGroup', 'select'];
 
@@ -298,63 +301,190 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
               </button>
             </div>
 
-            {submissions.length === 0 ? (
-              <p className="muted" style={{ marginTop: '1rem' }}>Nothing submitted yet.</p>
-            ) : (
-              <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Received</th>
-                      {open.fields.map((f) => (
-                        <th key={f.name}>{f.label}</th>
-                      ))}
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {submissions.map((s) => (
-                      <tr key={s.id} style={s.is_spam ? { opacity: 0.5 } : undefined}>
-                        <td className="small">
-                          {new Date(s.created_at).toLocaleString()}
-                          {s.is_spam && <div className="small muted">flagged as spam</div>}
-                        </td>
-                        {open.fields.map((f) => (
-                          <td className="small" key={f.name}>
-                            {Array.isArray(s.data[f.name])
-                              ? (s.data[f.name] as string[]).join(', ')
-                              : String(s.data[f.name] ?? '')}
-                          </td>
-                        ))}
-                        <td>
-                          <button
-                            className="btn btn-ghost small"
-                            onClick={async () => {
-                              if (!window.confirm('Delete this submission?')) return;
-                              try {
-                                setError(null);
-                                await adminDeleteSubmission(adminKey, open.id, s.id);
-                                setSubmissions((prev) => prev.filter((x) => x.id !== s.id));
-                              } catch (e) {
-                                // Without this the rejection was swallowed: the
-                                // row stayed put with no message, which reads
-                                // exactly like a delete that worked.
-                                setError(`Delete failed: ${(e as Error).message}`);
-                              }
-                            }}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <SubmissionsInbox
+              formId={open.id}
+              fields={open.fields}
+              submissions={submissions}
+              onDelete={async (sub) => {
+                if (!(await adminConfirm({ title: 'Delete this submission?', body: 'It is removed permanently.', confirmLabel: 'Delete', danger: true }))) return;
+                try {
+                  setError(null);
+                  await adminDeleteSubmission(adminKey, open.id, sub.id);
+                  setSubmissions((prev) => prev.filter((x) => x.id !== sub.id));
+                  adminToast.success('Submission deleted');
+                } catch (e) {
+                  // Without this the rejection was swallowed: the row stayed put
+                  // with no message, which reads exactly like a delete that worked.
+                  setError(`Delete failed: ${(e as Error).message}`);
+                }
+              }}
+            />
           </div>
         </>
       )}
     </>
+  );
+}
+
+type Field = { name: string; label: string; type?: string; options?: string[] };
+
+const cell = (v: unknown) => (Array.isArray(v) ? (v as string[]).join(', ') : String(v ?? ''));
+
+/** Read state is per browser — a convenience for whoever works the inbox, not a record. */
+const readKey = (formId: string) => `hilom.admin.forms.${formId}.read`;
+const loadRead = (formId: string): Set<string> => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(readKey(formId)) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+};
+
+/**
+ * Submissions as an inbox: unread in bold, spam hidden by default, searchable
+ * and sortable, and a per-field breakdown for any field with fixed options
+ * (select / radio / checkbox) — the "what did people answer?" question that the
+ * raw table made you count by hand.
+ */
+function SubmissionsInbox({
+  formId,
+  fields,
+  submissions,
+  onDelete,
+}: {
+  formId: string;
+  fields: Field[];
+  submissions: FormSubmission[];
+  onDelete: (s: FormSubmission) => void;
+}) {
+  const [read, setRead] = useState<Set<string>>(() => loadRead(formId));
+  const [showSpam, setShowSpam] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  useEffect(() => setRead(loadRead(formId)), [formId]);
+  const persist = (next: Set<string>) => {
+    setRead(next);
+    try {
+      localStorage.setItem(readKey(formId), JSON.stringify([...next]));
+    } catch {
+      /* not persisted */
+    }
+  };
+  const markRead = (ids: string[], v: boolean) => {
+    const n = new Set(read);
+    for (const id of ids) {
+      if (v) n.add(id);
+      else n.delete(id);
+    }
+    persist(n);
+  };
+
+  const rows = submissions.filter((s) => (showSpam || !s.is_spam) && (!unreadOnly || !read.has(s.id)));
+  const unread = submissions.filter((s) => !s.is_spam && !read.has(s.id)).length;
+  const spam = submissions.filter((s) => s.is_spam).length;
+
+  const breakdowns = useMemo(() => {
+    const live = submissions.filter((s) => !s.is_spam);
+    return fields
+      .filter((f) => (f.options?.length ?? 0) > 0 || f.type === 'select' || f.type === 'radio' || f.type === 'checkbox')
+      .map((f) => {
+        const counts = new Map<string, number>();
+        for (const s of live) {
+          const v = s.data[f.name];
+          for (const x of Array.isArray(v) ? v : v == null || v === '' ? [] : [v]) counts.set(String(x), (counts.get(String(x)) ?? 0) + 1);
+        }
+        return { field: f, items: [...counts].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 8) };
+      })
+      .filter((b) => b.items.length);
+  }, [fields, submissions]);
+
+  const columns: Column<FormSubmission>[] = [
+    {
+      key: 'received',
+      header: 'Received',
+      pinned: true,
+      sortValue: (s) => s.created_at,
+      render: (s) => (
+        <span className="small" style={{ fontWeight: read.has(s.id) ? 400 : 700 }}>
+          {!read.has(s.id) && <span aria-label="unread" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 9, background: 'var(--ochre)', marginRight: 6 }} />}
+          {new Date(s.created_at).toLocaleString()}
+          {s.is_spam && <span className="pill pill-bad" style={{ marginLeft: 6 }}>spam</span>}
+        </span>
+      ),
+    },
+    ...fields.map<Column<FormSubmission>>((f, i) => ({
+      key: `f_${f.name}`,
+      header: f.label,
+      defaultHidden: i >= 4,
+      sortValue: (s) => cell(s.data[f.name]),
+      render: (s) => <span className="small" style={{ fontWeight: read.has(s.id) ? 400 : 600 }}>{cell(s.data[f.name]).slice(0, 120)}</span>,
+    })),
+    {
+      key: 'actions',
+      header: '',
+      pinned: true,
+      render: (s) => (
+        <button className="btn btn-ghost small" onClick={() => onDelete(s)}>
+          Delete
+        </button>
+      ),
+    },
+  ];
+
+  return (
+    <div style={{ marginTop: '1rem' }}>
+      {breakdowns.length > 0 && (
+        <div className="dash-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+          {breakdowns.map((b) => (
+            <div key={b.field.name} className="dash-card">
+              <h3>{b.field.label}</h3>
+              <BarList items={b.items} />
+            </div>
+          ))}
+        </div>
+      )}
+      <DataTable
+        id={`form-${formId}`}
+        rows={rows}
+        rowKey={(s) => s.id}
+        columns={columns}
+        searchText={(s) => Object.values(s.data).map(cell).join(' ')}
+        searchPlaceholder="Search responses…"
+        csvName={`form-${formId}`}
+        defaultSort={{ key: 'received', dir: 'desc' }}
+        rowClassName={(s) => (s.is_spam ? 'row-muted' : undefined)}
+        toolbar={
+          <>
+            <label className="row" style={{ gap: '0.35rem', margin: 0, fontWeight: 500 }}>
+              <input type="checkbox" style={{ width: 'auto', margin: 0 }} checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
+              Unread ({unread})
+            </label>
+            {spam > 0 && (
+              <label className="row" style={{ gap: '0.35rem', margin: 0, fontWeight: 500 }}>
+                <input type="checkbox" style={{ width: 'auto', margin: 0 }} checked={showSpam} onChange={(e) => setShowSpam(e.target.checked)} />
+                Show spam ({spam})
+              </label>
+            )}
+          </>
+        }
+        bulkActions={[
+          { label: 'Mark read', run: (list) => markRead(list.map((s) => s.id), true) },
+          { label: 'Mark unread', run: (list) => markRead(list.map((s) => s.id), false) },
+        ]}
+        expand={(s) => {
+          if (!read.has(s.id)) window.setTimeout(() => markRead([s.id], true), 0);
+          return (
+            <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '0.35rem 1rem', margin: 0 }}>
+              {fields.map((f) => (
+                <div key={f.name} style={{ display: 'contents' }}>
+                  <dt className="small muted" style={{ fontWeight: 700 }}>{f.label}</dt>
+                  <dd style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{cell(s.data[f.name]) || <span className="muted">—</span>}</dd>
+                </div>
+              ))}
+            </dl>
+          );
+        }}
+        empty={{ title: 'Nothing submitted yet', body: 'Responses appear here as soon as someone submits the form.' }}
+      />
+    </div>
   );
 }

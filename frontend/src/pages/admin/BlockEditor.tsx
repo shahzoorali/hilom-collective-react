@@ -102,6 +102,9 @@ export default function BlockEditor<
   const [canvasVersion, setCanvasVersion] = useState(0);
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleInput, setScheduleInput] = useState('');
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [autosaving, setAutosaving] = useState(false);
+  const [changeTick, setChangeTick] = useState(0);
 
   const latest = useRef<Block[]>([]);
   const [config] = useState(() => createPuckConfig(adminKey));
@@ -134,6 +137,38 @@ export default function BlockEditor<
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
+  // Autosave: a quiet draft save 15s after the last edit. Drafts are never
+  // public, so saving one is always safe — this only removes the chance of
+  // losing an afternoon to a closed tab. Publishing stays a deliberate click.
+  useEffect(() => {
+    if (!dirty || busy) return;
+    const t = window.setTimeout(async () => {
+      setAutosaving(true);
+      try {
+        setResource(await adapter.saveDraft(resourceId, latest.current));
+        setDirty(false);
+        setSavedAt(new Date());
+      } catch {
+        /* leave dirty; the manual Save button still shows */
+      } finally {
+        setAutosaving(false);
+      }
+    }, 15000);
+    return () => window.clearTimeout(t);
+  }, [dirty, busy, changeTick, adapter, resourceId]);
+
+  // Ctrl/⌘+S saves the draft.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (dirty && !busy) void save();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   async function run(action: () => Promise<void>, message: string) {
     setBusy(true);
     setError(null);
@@ -153,6 +188,7 @@ export default function BlockEditor<
     run(async () => {
       setResource(await adapter.saveDraft(resourceId, latest.current));
       setDirty(false);
+      setSavedAt(new Date());
     }, 'Draft saved successfully.');
 
   const publish = () =>
@@ -310,6 +346,7 @@ export default function BlockEditor<
           onChange={(data) => {
             latest.current = fromPuckData(data);
             setDirty(true);
+            setChangeTick((t) => t + 1);
           }}
           onPublish={() => void publish()}
           overrides={{
@@ -355,12 +392,22 @@ export default function BlockEditor<
                   </a>
                 )}
 
+                <span className={`save-indicator ${dirty ? 'save-indicator--dirty' : ''}`} aria-live="polite">
+                  {autosaving
+                    ? 'Saving…'
+                    : dirty
+                      ? 'Unsaved changes'
+                      : savedAt
+                        ? `Saved ${savedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                        : ''}
+                </span>
                 <button
                   className={dirty ? 'btn btn-primary small' : 'btn btn-ghost small'}
                   onClick={save}
                   disabled={busy || !dirty}
+                  title="Save draft (Ctrl/⌘+S) — drafts also autosave"
                 >
-                  {dirty ? '● Save draft' : 'Saved'}
+                  {dirty ? 'Save draft' : 'Saved'}
                 </button>
 
                 {(resource.status === 'published' || resource.status === 'scheduled') && (
@@ -385,7 +432,7 @@ export default function BlockEditor<
                       disabled={busy}
                       title="Publish at a future date and time"
                     >
-                      🕒 {resource.status === 'scheduled' ? 'Reschedule' : 'Schedule'}
+                      {resource.status === 'scheduled' ? 'Reschedule' : 'Schedule'}
                     </button>
                     {showSchedule && (
                       <div className="admin-schedule-popover">

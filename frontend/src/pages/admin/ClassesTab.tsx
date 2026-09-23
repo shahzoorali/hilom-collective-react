@@ -7,6 +7,11 @@ import {
   type AdminClassSession,
 } from '../../lib/booking';
 import { money } from '../../components/Layout';
+import { Meter } from './ui/Charts';
+import { CalendarView, type CalendarItem } from './ui/CalendarView';
+import { EmptyState } from './ui/EmptyState';
+import { downloadCsv } from './ui/DataTable';
+import { adminToast } from './ui/feedback';
 
 /**
  * Admin → Classes (docs/admin-dashboard-plan.md §5).
@@ -35,8 +40,9 @@ const manilaDate = (iso: string) =>
 export default function ClassesTab({ adminKey }: { adminKey: string }) {
   const [classes, setClasses] = useState<AdminClass[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [view, setView] = useState<'list' | 'calendar'>('list');
+  const [calItems, setCalItems] = useState<CalendarItem[] | null>(null);
 
   const reload = useCallback(() => {
     adminListClasses(adminKey)
@@ -47,28 +53,74 @@ export default function ClassesTab({ adminKey }: { adminKey: string }) {
   useEffect(reload, [reload]);
 
   function flash(message: string) {
-    setNotice(message);
-    setTimeout(() => setNotice(null), 4000);
+    adminToast.success(message);
   }
+
+  // The calendar needs every class's dates, which the list endpoint does not
+  // carry — fetched once, on first switch to the calendar.
+  useEffect(() => {
+    if (view !== 'calendar' || calItems || !classes) return;
+    Promise.all(
+      classes.map((c) =>
+        adminGetClassSessions(adminKey, c.id)
+          .then((r) =>
+            r.sessions.map<CalendarItem>((s) => ({
+              id: `${c.id}:${s.id}`,
+              at: s.starts_at,
+              label: `${c.title} (${s.seatsTaken}/${s.capacity})`,
+              tone: s.status === 'cancelled' ? 'bad' : !s.meetsMinimum && s.status === 'scheduled' ? 'warn' : 'ok',
+            })),
+          )
+          .catch(() => [] as CalendarItem[]),
+      ),
+    ).then((all) => setCalItems(all.flat()));
+  }, [view, calItems, classes, adminKey]);
 
   return (
     <div className="panel">
-      <h2 style={{ fontSize: '1.15rem', marginTop: 0, marginBottom: '0.25rem' }}>Classes</h2>
+      <div className="page-head" style={{ marginBottom: '0.25rem' }}>
+        <h2>Classes</h2>
+        <div className="seg" role="group" aria-label="View">
+          <button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
+          <button type="button" aria-pressed={view === 'calendar'} onClick={() => setView('calendar')}>Calendar</button>
+        </div>
+      </div>
       <p className="small muted" style={{ marginTop: 0, marginBottom: '1.25rem' }}>
         Every group class any facilitator teaches. Open one to see its scheduled dates and who has
         joined, and to cancel a date if the facilitator can't run it.
       </p>
 
       {error && <div className="alert alert-error" style={{ marginBottom: 14 }}>{error}</div>}
-      {notice && <div className="alert alert-success" style={{ marginBottom: 14 }}>{notice}</div>}
-
-      {classes === null && !error && <div className="spinner" aria-label="Loading" />}
-
-      {classes !== null && classes.length === 0 && (
-        <p className="small muted">No classes have been created yet.</p>
+      {classes === null && !error && (
+        <div style={{ display: 'grid', gap: 10 }} aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="panel" style={{ padding: '0.9rem 1.1rem' }}>
+              <span className="skeleton" style={{ width: '40%', height: '1em' }} />
+              <span className="skeleton" style={{ width: '25%', height: '0.8em', marginTop: 6 }} />
+            </div>
+          ))}
+        </div>
       )}
 
-      {classes !== null && classes.length > 0 && (
+      {classes !== null && classes.length === 0 && (
+        <EmptyState icon="yoga" title="No classes yet" body="Group classes appear here once a facilitator creates one." />
+      )}
+
+      {view === 'calendar' && classes !== null && classes.length > 0 && (
+        calItems ? (
+          <CalendarView
+            items={calItems}
+            onPick={(id) => {
+              setOpenId(id.split(':')[0]);
+              setView('list');
+            }}
+          />
+        ) : (
+          <p className="small muted">Loading every class's dates…</p>
+        )
+      )}
+
+      {view === 'list' && classes !== null && classes.length > 0 && (
         <div style={{ display: 'grid', gap: 10 }}>
           {classes.map((c) => {
             const open = openId === c.id;
@@ -110,8 +162,8 @@ export default function ClassesTab({ adminKey }: { adminKey: string }) {
                     {c.nextSessionAt ? (
                       <>
                         <span style={{ display: 'block' }}>Next: {manilaDate(c.nextSessionAt)}</span>
-                        <span className="small muted">
-                          {c.nextSessionSeatsTaken ?? 0} of {c.max_joiners} seats ·{' '}
+                        <span className="small muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          <Meter value={c.nextSessionSeatsTaken ?? 0} max={c.max_joiners} label="Seats taken, next date" /> ·{' '}
                           {c.upcomingSessionCount} upcoming
                         </span>
                       </>
@@ -194,7 +246,7 @@ function ClassSessions({
     }
   }
 
-  if (sessions === null) return <div className="spinner" aria-label="Loading" />;
+  if (sessions === null) return <p className="small muted" style={{ marginTop: 10 }}>Loading dates…</p>;
   if (sessions.length === 0) return <p className="small muted">No dates have been scheduled.</p>;
 
   return (
@@ -206,9 +258,9 @@ function ClassSessions({
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <span>
                 <strong style={{ display: 'block' }}>{manilaDate(s.starts_at)}</strong>
-                <span className="small muted">
-                  {s.seatsTaken} of {s.capacity} seats
-                  {!s.meetsMinimum && s.status === 'scheduled' && ' · below minimum'}
+                <span className="small muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <Meter value={s.seatsTaken} max={s.capacity} />
+                  {!s.meetsMinimum && s.status === 'scheduled' && <span className="pill pill-warn">below minimum ({s.min_joiners})</span>}
                 </span>
               </span>
 
@@ -218,6 +270,26 @@ function ClassSessions({
                 {s.status === 'scheduled' && <span className="pill pill-warn">Scheduled</span>}
               </span>
 
+              {live.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-ghost small"
+                  onClick={() =>
+                    downloadCsv(
+                      `roster-${s.starts_at.slice(0, 10)}`,
+                      ['name', 'email', 'status', 'refund_owed'],
+                      live.map((r) => [
+                        r.client_name ?? '',
+                        r.client_email,
+                        r.status,
+                        r.refund_centavos && !r.refunded_at ? (r.refund_centavos / 100).toFixed(2) : '',
+                      ]),
+                    )
+                  }
+                >
+                  Export roster
+                </button>
+              )}
               {s.status === 'scheduled' && (
                 <button
                   type="button"

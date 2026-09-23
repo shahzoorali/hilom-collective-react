@@ -24,6 +24,7 @@ import {
   type KbArticle,
   type KbCategory,
 } from '../../lib/kb';
+import { adminConfirm, adminToast } from './ui/feedback';
 
 type StatusFilter = 'all' | 'published' | 'draft';
 type AudienceFilter = 'all' | Audience;
@@ -149,10 +150,11 @@ export default function KnowledgeBaseTab({ adminKey }: { adminKey: string }) {
       );
       return;
     }
-    if (!window.confirm(`Delete the section "${category.name}"?`)) return;
+    if (!(await adminConfirm({ title: `Delete the section “${category.name}”?`, confirmLabel: 'Delete', danger: true }))) return;
     setError(null);
     try {
       await adminDeleteKbCategory(adminKey, category.id);
+      adminToast.success(`Deleted section “${category.name}”`);
       await reload();
     } catch (e) {
       setError((e as Error).message);

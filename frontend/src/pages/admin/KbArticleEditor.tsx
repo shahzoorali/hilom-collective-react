@@ -29,6 +29,7 @@ import {
   type KbCategory,
   type KbRevision,
 } from '../../lib/kb';
+import { adminConfirm, adminToast } from './ui/feedback';
 
 interface Props {
   adminKey: string;
@@ -176,12 +177,13 @@ export default function KbArticleEditor({ adminKey, articleId, onBack }: Props) 
   }
 
   async function unpublish() {
-    if (!window.confirm('Hide this article from readers? It stays here as a draft.')) return;
+    if (!(await adminConfirm({ title: 'Hide this article from readers?', body: 'It stays here as a draft and can be republished any time.', confirmLabel: 'Unpublish' }))) return;
     setBusy(true);
     setError(null);
     try {
       setArticle(await adminUnpublishKbArticle(adminKey, articleId));
       setNotice('Unpublished — this is no longer visible to readers.');
+      adminToast.success('Article unpublished', { label: 'Undo', run: () => void publish() });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -191,10 +193,13 @@ export default function KbArticleEditor({ adminKey, articleId, onBack }: Props) 
 
   async function remove() {
     if (
-      !window.confirm(
-        `Permanently delete "${article?.title}"? There is no trash for help articles — ` +
-          'unpublish instead if you only want it hidden.',
-      )
+      !(await adminConfirm({
+        title: `Permanently delete “${article?.title}”?`,
+        body: 'There is no trash for help articles — unpublish instead if you only want it hidden.',
+        confirmLabel: 'Delete forever',
+        danger: true,
+        typeToConfirm: 'DELETE',
+      }))
     ) {
       return;
     }
@@ -220,10 +225,11 @@ export default function KbArticleEditor({ adminKey, articleId, onBack }: Props) 
 
   async function restore(revision: KbRevision) {
     if (
-      !window.confirm(
-        'Replace the current text with this earlier version? The current text is kept as a ' +
-          'revision, so this can be undone.',
-      )
+      !(await adminConfirm({
+        title: 'Restore this version?',
+        body: 'The current text is kept as a revision, so this can be undone.',
+        confirmLabel: 'Restore',
+      }))
     ) {
       return;
     }
@@ -275,8 +281,8 @@ export default function KbArticleEditor({ adminKey, articleId, onBack }: Props) 
       >
         <button
           className="btn btn-ghost"
-          onClick={() => {
-            if (dirty && !window.confirm('You have unsaved changes. Leave anyway?')) return;
+          onClick={async () => {
+            if (dirty && !(await adminConfirm({ title: 'Leave without saving?', body: 'Your unsaved changes will be lost.', confirmLabel: 'Leave', danger: true }))) return;
             onBack();
           }}
         >

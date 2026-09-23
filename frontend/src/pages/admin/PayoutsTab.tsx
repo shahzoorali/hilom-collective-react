@@ -29,6 +29,33 @@ import {
   type AdminPayout,
   type AdminClassRegistration,
 } from '../../lib/booking';
+import { adminConfirm, adminToast } from './ui/feedback';
+import { downloadCsv } from './ui/DataTable';
+import { BarList } from './ui/Charts';
+
+const flatDetails = (d: Record<string, unknown> | undefined) =>
+  d ? Object.entries(d).map(([k, v]) => `${k}: ${String(v ?? '')}`).join('; ') : '';
+
+/** A printable statement of every batch for one facilitator. */
+function printStatement(name: string, rows: AdminPayout[]) {
+  const w = window.open('', '_blank', 'width=720,height=800');
+  if (!w) return;
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+  const d = (iso: string) => new Date(iso).toLocaleDateString('en-PH', { dateStyle: 'medium' });
+  const live = rows.filter((r) => r.status !== 'void');
+  const paid = live.filter((r) => r.status === 'paid').reduce((a, r) => a + r.net_centavos, 0);
+  const due = live.filter((r) => r.status !== 'paid').reduce((a, r) => a + r.net_centavos, 0);
+  w.document.write(`<!doctype html><html><head><title>Statement — ${esc(name)}</title>
+<style>body{font-family:Arial,sans-serif;color:#2b332c;max-width:680px;margin:32px auto;padding:0 16px}
+h1{font-family:Georgia,serif;color:#2f5e3e;font-size:22px;margin:0}table{width:100%;border-collapse:collapse;margin:20px 0;font-size:13px}
+th,td{padding:6px 4px;border-bottom:1px solid #e7e0cc;text-align:left}td.n,th.n{text-align:right}.muted{color:#6b7568;font-size:13px}</style></head><body>
+<h1>Hilom Collective — Payout statement</h1><div class="muted">${esc(name)} · generated ${esc(new Date().toLocaleDateString('en-PH', { dateStyle: 'long' }))}</div>
+<table><tr><th>Period</th><th class="n">Gross</th><th class="n">Hilom fee</th><th class="n">Processing</th><th class="n">Net</th><th>Status</th><th>Reference</th></tr>
+${live.map((r) => `<tr><td>${d(r.period_start)} – ${d(r.period_end)}</td><td class="n">${esc(money(r.gross_centavos))}</td><td class="n">${esc(money(r.platform_fee_centavos))}</td><td class="n">${esc(money(r.processing_fee_centavos))}</td><td class="n"><b>${esc(money(r.net_centavos))}</b></td><td>${r.status}</td><td>${esc(r.reference ?? '')}</td></tr>`).join('')}
+</table><p><b>Paid to date:</b> ${esc(money(paid))} &nbsp; · &nbsp; <b>Outstanding:</b> ${esc(money(due))}</p>
+<script>window.onload=()=>window.print()</script></body></html>`);
+  w.document.close();
+}
 
 /** First and last instant of the calendar month `offset` months back. */
 function monthRange(offset: number): { start: string; end: string; label: string } {
@@ -108,6 +135,7 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
     );
     if (reference === null) return;
     await update(payout, { status: 'paid', reference });
+    adminToast.success(`Marked ${money(payout.net_centavos)} paid`);
   }
 
   return (
@@ -176,6 +204,8 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
         </button>
       </div>
 
+      {payouts && payouts.length > 0 && <PayoutSummary payouts={payouts} onMarkPaid={markPaid} />}
+
       <h3>Batches</h3>
       {payouts === null && <div className="spinner" aria-label="Loading" />}
       {payouts !== null && payouts.length === 0 && <p className="muted">No payouts yet.</p>}
@@ -229,11 +259,14 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
               <button
                 type="button"
                 className="btn btn-ghost small"
-                onClick={() => {
+                onClick={async () => {
                   if (
-                    window.confirm(
-                      'Void this batch?\n\nIts sessions go back into the unpaid pool so the batch can be rebuilt.',
-                    )
+                    await adminConfirm({
+                      title: 'Void this batch?',
+                      body: 'Its sessions go back into the unpaid pool so the batch can be rebuilt.',
+                      confirmLabel: 'Void batch',
+                      danger: true,
+                    })
                   )
                     void update(p, { status: 'void' });
                 }}
@@ -386,6 +419,108 @@ function ClassRefundsPanel({
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What is owed, by whom, and the two exports a payout run needs: a bank CSV of
+ * everything approved (with the facilitator's payout details flattened in) and
+ * a printable statement per facilitator.
+ */
+function PayoutSummary({ payouts, onMarkPaid }: { payouts: AdminPayout[]; onMarkPaid: (p: AdminPayout) => Promise<void> }) {
+  const approved = payouts.filter((p) => p.status === 'approved');
+  const drafts = payouts.filter((p) => p.status === 'draft');
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+  const paidThisMonth = payouts
+    .filter((p) => p.status === 'paid' && p.paid_at && new Date(p.paid_at).getTime() >= monthStart)
+    .reduce((a, p) => a + p.net_centavos, 0);
+  const owedBy = new Map<string, { name: string; value: number; rows: AdminPayout[] }>();
+  for (const p of payouts) {
+    const k = p.facilitator_id;
+    const cur = owedBy.get(k) ?? { name: p.facilitators?.display_name ?? 'Unknown', value: 0, rows: [] };
+    cur.rows.push(p);
+    if (p.status === 'approved' || p.status === 'draft') cur.value += p.net_centavos;
+    owedBy.set(k, cur);
+  }
+  const owed = [...owedBy.values()].filter((o) => o.value > 0).sort((a, b) => b.value - a.value);
+  const sum = (rows: AdminPayout[]) => rows.reduce((a, p) => a + p.net_centavos, 0);
+
+  return (
+    <div className="panel" style={{ margin: '1.25rem 0' }}>
+      <div className="stat-grid" style={{ marginBottom: '1rem' }}>
+        <div className="stat stat--attention">
+          <span className="stat__label">Approved, to send</span>
+          <span className="stat__value">{money(sum(approved))}</span>
+          <span className="stat__hint">{approved.length} batch{approved.length === 1 ? '' : 'es'}</span>
+        </div>
+        <div className="stat">
+          <span className="stat__label">Drafts to check</span>
+          <span className="stat__value">{money(sum(drafts))}</span>
+          <span className="stat__hint">{drafts.length} batch{drafts.length === 1 ? '' : 'es'}</span>
+        </div>
+        <div className="stat">
+          <span className="stat__label">Paid this month</span>
+          <span className="stat__value">{money(paidThisMonth)}</span>
+        </div>
+      </div>
+
+      {owed.length > 0 && (
+        <>
+          <h3 style={{ fontSize: '1rem', margin: '0 0 0.5rem' }}>Owed by facilitator</h3>
+          <BarList items={owed.map((o) => ({ label: o.name, value: o.value }))} format={(v) => money(v)} />
+        </>
+      )}
+
+      <div className="row" style={{ marginTop: '1rem' }}>
+        <button
+          type="button"
+          className="btn btn-ghost small"
+          disabled={!approved.length}
+          onClick={() =>
+            downloadCsv(
+              'payouts-bank',
+              ['facilitator', 'email', 'amount_php', 'period_start', 'period_end', 'payout_details', 'batch_id'],
+              approved.map((p) => [
+                p.facilitators?.display_name ?? '',
+                p.facilitators?.email ?? '',
+                (p.net_centavos / 100).toFixed(2),
+                p.period_start.slice(0, 10),
+                p.period_end.slice(0, 10),
+                flatDetails(p.facilitators?.payout_details),
+                p.id,
+              ]),
+            )
+          }
+        >
+          Bank CSV ({approved.length} approved)
+        </button>
+        <button
+          type="button"
+          className="btn btn-accent small"
+          disabled={!approved.length}
+          onClick={async () => {
+            for (const p of approved) await onMarkPaid(p);
+          }}
+          title="Asks for each transfer reference in turn"
+        >
+          Mark approved batches paid…
+        </button>
+        <select
+          aria-label="Print a statement"
+          value=""
+          onChange={(e) => {
+            const o = owedBy.get(e.target.value);
+            if (o) printStatement(o.name, o.rows);
+          }}
+          style={{ width: 'auto', padding: '0.35rem 0.6rem', fontSize: '0.85rem' }}
+        >
+          <option value="">Print statement for…</option>
+          {[...owedBy.entries()].map(([id, o]) => (
+            <option key={id} value={id}>{o.name}</option>
+          ))}
+        </select>
       </div>
     </div>
   );

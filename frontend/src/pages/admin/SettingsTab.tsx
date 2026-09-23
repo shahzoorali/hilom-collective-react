@@ -1,6 +1,7 @@
 import { useSearchParams } from 'react-router-dom';
 import MenusTab from './MenusTab';
 import FooterTab from './FooterTab';
+import { adminToast } from './ui/feedback';
 
 /**
  * Admin → Settings (docs/admin-dashboard-plan.md §6).
@@ -51,17 +52,47 @@ export default function SettingsTab({ adminKey }: { adminKey: string }) {
       </div>
 
       {section === '' && (
-        <div className="panel">
-          <p style={{ marginTop: 0 }}>
-            <strong>Menus</strong> and <strong>Footer</strong> live here, under Settings, because
-            both edit something that shows on every page rather than one piece of content.
-          </p>
-          <p className="small muted" style={{ marginBottom: 0 }}>
-            Both are backed by the same <code>site_settings</code> table, a general key/value
-            store for exactly this kind of configuration. It holds one key today (the footer's
-            content); the next site-wide setting — a contact address, an analytics id, a
-            maintenance flag — belongs here too, as a new section beside these two, not a new
-            screen of its own.
+        <div className="stack">
+          <div className="stat-grid" style={{ marginBottom: 0 }}>
+            <button type="button" className="stat" onClick={() => setSearchParams({ section: 'menus' }, { replace: true })}>
+              <span className="stat__label">Menus</span>
+              <span style={{ fontWeight: 600 }}>Header and footer navigation</span>
+              <span className="stat__hint">Links, order, new-tab and button styles, with broken-link checks.</span>
+            </button>
+            <button type="button" className="stat" onClick={() => setSearchParams({ section: 'footer' }, { replace: true })}>
+              <span className="stat__label">Footer</span>
+              <span style={{ fontWeight: 600 }}>Site-wide footer content</span>
+              <span className="stat__hint">Columns, contact details and social links on every page.</span>
+            </button>
+          </div>
+
+          <div className="panel">
+            <h3 style={{ fontSize: '1rem', marginTop: 0 }}>This browser</h3>
+            <p className="small muted" style={{ marginTop: 0 }}>
+              Preferences kept only on this device — theme (toggle in the sidebar), saved table views,
+              column choices and form read-state.
+            </p>
+            <button
+              type="button"
+              className="btn btn-ghost small"
+              onClick={() => {
+                try {
+                  Object.keys(localStorage)
+                    .filter((k) => k.startsWith('hilom.admin.'))
+                    .forEach((k) => localStorage.removeItem(k));
+                  adminToast.success('Admin preferences reset on this browser');
+                } catch {
+                  adminToast.error('Browser storage is unavailable');
+                }
+              }}
+            >
+              Reset saved views and column choices
+            </button>
+          </div>
+
+          <p className="small muted" style={{ margin: 0 }}>
+            Menus and Footer are backed by <code>site_settings</code>, a general key/value store — the next
+            site-wide setting belongs here as a new section, not a new screen.
           </p>
         </div>
       )}

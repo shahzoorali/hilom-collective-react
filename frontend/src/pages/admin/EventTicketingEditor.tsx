@@ -33,6 +33,7 @@ import {
 } from '../../lib/cms';
 import { adminListFacilitators, type AdminFacilitator } from '../../lib/booking';
 import { money } from '../../components/Layout';
+import { adminConfirm } from './ui/feedback';
 
 // ---------------------------------------------------------------------------
 // Draft shape
@@ -293,11 +294,11 @@ export default function EventTicketingEditor({
   async function sendJoinDetails() {
     if (!eventId) return;
     if (
-      !window.confirm(
-        'Email the joining details to every confirmed registrant for this event?\n\n' +
-          'This sends the link as it is currently SAVED, not what is typed in the box. ' +
-          'Save first if you have just changed it.',
-      )
+      !(await adminConfirm({
+        title: 'Email joining details to every confirmed registrant?',
+        body: 'This sends the link as it is currently SAVED, not what is typed in the box. Save first if you have just changed it.',
+        confirmLabel: 'Send emails',
+      }))
     ) {
       return;
     }

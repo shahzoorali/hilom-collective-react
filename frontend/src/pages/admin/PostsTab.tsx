@@ -21,10 +21,12 @@ import {
   type AdminCategory,
 } from '../../lib/cms';
 import ScheduledBadge from './ScheduledBadge';
+import { adminConfirm, adminToast } from './ui/feedback';
+import { CalendarView } from './ui/CalendarView';
 
 export default function PostsTab({ adminKey }: { adminKey: string }) {
   const navigate = useNavigate();
-  const [view, setView] = useState<'active' | 'trash'>('active');
+  const [view, setView] = useState<'active' | 'calendar' | 'trash'>('active');
   const [posts, setPosts] = useState<AdminPost[]>([]);
   const [trashed, setTrashed] = useState<AdminPost[]>([]);
   const [categories, setCategories] = useState<AdminCategory[]>([]);
@@ -83,12 +85,13 @@ export default function PostsTab({ adminKey }: { adminKey: string }) {
   }
 
   async function trashPost(post: AdminPost) {
-    if (!window.confirm(`Move "${post.title}" to trash? You can restore it from Trash later.`)) return;
+    // Reversible, so no confirmation — an Undo toast instead.
     setError(null);
     try {
       await adminTrashPost(adminKey, post.id);
       await reloadPosts();
       await reloadTrash();
+      adminToast.success(`Moved “${post.title}” to trash`, { label: 'Undo', run: () => restorePost(post) });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -107,9 +110,13 @@ export default function PostsTab({ adminKey }: { adminKey: string }) {
 
   async function purgePost(post: AdminPost) {
     if (
-      !window.confirm(
-        `Permanently delete "${post.title}"? This cannot be undone — its revision history goes with it.`,
-      )
+      !(await adminConfirm({
+        title: `Permanently delete “${post.title}”?`,
+        body: 'This cannot be undone — its revision history goes with it.',
+        confirmLabel: 'Delete forever',
+        danger: true,
+        typeToConfirm: 'DELETE',
+      }))
     ) {
       return;
     }
@@ -152,7 +159,7 @@ export default function PostsTab({ adminKey }: { adminKey: string }) {
   }
 
   async function removeCategory(cat: AdminCategory) {
-    if (!window.confirm(`Delete category "${cat.name}"? Posts in this category will become Uncategorized.`)) {
+    if (!(await adminConfirm({ title: `Delete category “${cat.name}”?`, body: 'Posts in this category will become Uncategorized.', confirmLabel: 'Delete', danger: true }))) {
       return;
     }
     try {
@@ -231,9 +238,32 @@ export default function PostsTab({ adminKey }: { adminKey: string }) {
           className={view === 'trash' ? 'admin-view-toggle__btn is-active' : 'admin-view-toggle__btn'}
           onClick={() => setView('trash')}
         >
-          🗑 Trash ({trashed.length})
+          Trash ({trashed.length})
+        </button>
+        <button
+          className={view === 'calendar' ? 'admin-view-toggle__btn is-active' : 'admin-view-toggle__btn'}
+          onClick={() => setView('calendar')}
+        >
+          Publishing calendar
         </button>
       </div>
+
+      {view === 'calendar' && (
+        <div style={{ marginTop: '1rem' }}>
+          <p className="small muted">Published posts on the day they went live; scheduled posts (amber) on the day they will.</p>
+          <CalendarView
+            items={posts
+              .filter((p) => p.scheduled_at || p.published_at)
+              .map((p) => ({
+                id: p.id,
+                at: (p.status === 'scheduled' ? p.scheduled_at : p.published_at) ?? p.scheduled_at!,
+                label: p.title,
+                tone: p.status === 'scheduled' ? 'warn' : 'ok',
+              }))}
+            onPick={(id) => navigate(`/admin/posts/${id}`)}
+          />
+        </div>
+      )}
 
       {view === 'active' && (
         <>

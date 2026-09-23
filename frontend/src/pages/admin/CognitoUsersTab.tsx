@@ -50,8 +50,9 @@ export default function CognitoUsersTab({ adminKey }: { adminKey: string }) {
   const [users, setUsers] = useState<CognitoAccount[] | null>(null);
   const [nextToken, setNextToken] = useState<string | null>(null);
   const [scope, setScope] = useState('');
-  const [q, setQ] = useState('');
-  const [term, setTerm] = useState('');
+  const initialQ = new URLSearchParams(window.location.search).get('q') ?? '';
+  const [q, setQ] = useState(initialQ);
+  const [term, setTerm] = useState(initialQ);
   const [openUser, setOpenUser] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -446,6 +446,7 @@ export default function PostEditor({
                     <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--muted)' }}>
                       Search Engine Preview (Google Mockup)
                     </label>
+                    <SeoChecklist title={effectiveTitle} description={effectiveDescription} hasImage={Boolean(image)} slug={slug} />
                     <div className="serp-preview">
                       <div className="serp-preview__url">
                         <span>{effectiveUrl}</span>
@@ -494,5 +495,30 @@ export default function PostEditor({
         </div>
       )}
     </BlockEditor>
+  );
+}
+
+/** Plain pass/fail checks for the things that decide how a post looks in search and when shared. */
+function SeoChecklist({ title, description, hasImage, slug }: { title: string; description: string; hasImage: boolean; slug: string }) {
+  const checks = [
+    { ok: title.length >= 20 && title.length <= 60, label: `Title is 20–60 characters (${title.length})` },
+    { ok: description.length >= 70 && description.length <= 160, label: `Description is 70–160 characters (${description.length})` },
+    { ok: hasImage, label: 'Has a cover image for social shares' },
+    { ok: /^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) && slug.length <= 60, label: 'URL slug is short, lowercase and hyphenated' },
+  ];
+  const passed = checks.filter((c) => c.ok).length;
+  return (
+    <div style={{ margin: '0 0 0.75rem' }}>
+      <div className="small" style={{ fontWeight: 700, marginBottom: '0.3rem' }}>
+        SEO checklist · {passed}/{checks.length}
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {checks.map((c) => (
+          <li key={c.label} className="small" style={{ color: c.ok ? 'var(--forest)' : 'var(--warn-fg, #8a5a11)' }}>
+            {c.ok ? '✓' : '○'} {c.label}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

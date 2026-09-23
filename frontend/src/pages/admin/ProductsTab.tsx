@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  adminListProducts, adminSyncCourses, adminUpdateProduct, listCourses,
+  adminListProducts,
+  adminListOrders, adminSyncCourses, adminUpdateProduct, listCourses,
   type AdminProduct, type CourseSummary,
 } from '../../lib/api';
 import { money } from '../../components/Layout';
@@ -65,6 +66,9 @@ export default function ProductsTab({ adminKey }: { adminKey: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Sales per product, from the orders ledger (at most the latest 100 orders —
+  // labelled as such where shown).
+  const [sales, setSales] = useState<Record<string, { count: number; gross: number; last30: number }> | null>(null);
 
   const load = useCallback(async (key: string) => {
     setError(null);
@@ -72,6 +76,20 @@ export default function ProductsTab({ adminKey }: { adminKey: string }) {
     setCourses(c.courses);
     setLastSynced(c.last_synced_at);
     const prods = await adminListProducts(key);
+    adminListOrders(key)
+      .then((orders) => {
+        const since = Date.now() - 30 * 86400000;
+        const m: Record<string, { count: number; gross: number; last30: number }> = {};
+        for (const o of orders) {
+          if (o.status === 'refunded') continue;
+          const cur = (m[o.product_id] ??= { count: 0, gross: 0, last30: 0 });
+          cur.count++;
+          cur.gross += o.amount_centavos;
+          if (new Date(o.created_at).getTime() >= since) cur.last30++;
+        }
+        setSales(m);
+      })
+      .catch(() => setSales({}));
     setProducts(prods);
     setPriceDrafts(
       Object.fromEntries(prods.map((p) => [p.id, (p.price_centavos / 100).toFixed(2)])),
@@ -263,6 +281,14 @@ export default function ProductsTab({ adminKey }: { adminKey: string }) {
                     key={p.id}
                     className={`prod-card${p.is_active ? '' : ' prod-card--hidden'}${dirty ? ' prod-card--dirty' : ''}`}
                   >
+                    {sales && (
+                      <div className="small muted" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                        <span><strong style={{ color: 'var(--ink)' }}>{sales[p.id]?.count ?? 0}</strong> sold</span>
+                        <span><strong style={{ color: 'var(--ink)' }}>{money(sales[p.id]?.gross ?? 0, p.currency)}</strong> gross</span>
+                        <span><strong style={{ color: 'var(--ink)' }}>{sales[p.id]?.last30 ?? 0}</strong> in the last 30 days</span>
+                        <span title="The orders endpoint returns the latest 100 orders">(recent orders)</span>
+                      </div>
+                    )}
                     <header className="prod-card__head">
                       <div className="prod-card__id">
                         <h3 className="prod-card__name">{p.name}</h3>
@@ -291,11 +317,21 @@ export default function ProductsTab({ adminKey }: { adminKey: string }) {
                                 <span className="muted">
                                   {p.product_courses.length === 1 ? 'course' : 'courses'}
                                 </span>
-                                {p.product_courses.map((c) => (
-                                  <span key={c.moodle_course_id} className="prod-chip">
-                                    {c.moodle_course_id}
-                                  </span>
-                                ))}
+                                {p.product_courses.map((c) => {
+                                  const course = courses.find((x) => x.moodle_course_id === c.moodle_course_id);
+                                  return (
+                                    <span
+                                      key={c.moodle_course_id}
+                                      className="prod-chip"
+                                      title={course ? `${course.fullname}${course.enrolled_count != null ? ` · ${course.enrolled_count} enrolled` : ''}` : 'Not in the course cache — run a sync'}
+                                    >
+                                      {c.moodle_course_id}
+                                      {course && <span className="muted"> · {course.shortname}</span>}
+                                      {course?.enrolled_count != null && <span className="muted"> · {course.enrolled_count} enrolled</span>}
+                                    </span>
+                                  );
+                                })}
+                                {p.product_courses.length > 1 && <span className="pill pill-warn" title="One purchase enrolls the buyer in every linked course">bundle</span>}
                               </>
                             )}
                           </span>

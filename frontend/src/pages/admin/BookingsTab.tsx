@@ -14,7 +14,11 @@
  * "Refunds due" is the default filter for the same reason: an unworked refund
  * queue is the one state here with a person waiting at the end of it.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { CalendarView } from './ui/CalendarView';
+import { EmptyState } from './ui/EmptyState';
+import { adminToast } from './ui/feedback';
+import { Icon } from './ui/Icon';
 import { money } from '../../components/Layout';
 import {
   adminCancelBooking,
@@ -50,8 +54,11 @@ export default function BookingsTab({ adminKey }: { adminKey: string }) {
   const [filter, setFilter] = useState('refund:due');
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [view, setView] = useState<'list' | 'calendar'>('list');
+  const [q, setQ] = useState('');
+  const [focusId, setFocusId] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     const [kind, value] = filter.split(':');
@@ -75,7 +82,7 @@ export default function BookingsTab({ adminKey }: { adminKey: string }) {
     setError(null);
     try {
       const res = await adminCancelBooking(adminKey, b.id, reason || undefined);
-      setNotice(`Cancelled. ${money(res.refundCentavos)} is now owed to ${b.client_email}.`);
+      adminToast.success(`Cancelled. ${money(res.refundCentavos)} is now owed to ${b.client_email}.`);
       reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not cancel');
@@ -100,7 +107,7 @@ export default function BookingsTab({ adminKey }: { adminKey: string }) {
     setError(null);
     try {
       await adminMarkRefundSent(adminKey, b.id, reference.trim());
-      setNotice('Refund recorded.');
+      adminToast.success('Refund recorded.');
       reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not record the refund');
@@ -113,15 +120,42 @@ export default function BookingsTab({ adminKey }: { adminKey: string }) {
     .filter((b) => (b.refund_centavos ?? 0) > 0 && !b.refunded_at)
     .reduce((sum, b) => sum + (b.refund_centavos ?? 0), 0);
 
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const list = bookings ?? [];
+    return needle
+      ? list.filter((b) =>
+          [b.client_email, b.client_name, b.facilitators?.display_name, b.facilitator_services?.title]
+            .some((f) => f?.toLowerCase().includes(needle)),
+        )
+      : list;
+  }, [bookings, q]);
+
   return (
     <>
-      <div className="admin-toolbar">
-        <h2 style={{ margin: 0 }}>Bookings</h2>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+      <div className="page-head">
+        <div>
+          <h2>Bookings</h2>
+          <p className="small muted">Every 1:1 session across facilitators, and the refund ledger.</p>
+        </div>
+        <div className="page-head__actions">
+          <div className="seg" role="group" aria-label="View">
+            <button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
+            <button type="button" aria-pressed={view === 'calendar'} onClick={() => setView('calendar')}>Calendar</button>
+          </div>
+        </div>
+      </div>
+      <div className="dt__toolbar" style={{ marginBottom: '1rem' }}>
+        <div className="dt__search">
+          <Icon name="search" size={15} />
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Client, facilitator, service…" aria-label="Search bookings" />
+        </div>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter">
           {FILTERS.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
         </select>
+        {bookings && <span className="small muted">{shown.length} of {bookings.length}</span>}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -133,19 +167,50 @@ export default function BookingsTab({ adminKey }: { adminKey: string }) {
         </div>
       )}
 
-      {bookings === null && <div className="spinner" aria-label="Loading" />}
-      {bookings !== null && bookings.length === 0 && (
-        <p className="muted">
-          {filter === 'refund:due' ? 'No refunds outstanding.' : 'Nothing here.'}
-        </p>
+      {bookings === null &&
+        Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="card" style={{ marginBottom: '0.75rem' }} aria-hidden="true">
+            <span className="skeleton" style={{ width: '45%', height: '1em' }} />
+            <span className="skeleton" style={{ width: '70%', height: '0.85em', marginTop: 8 }} />
+          </div>
+        ))}
+      {bookings !== null && shown.length === 0 && (
+        <EmptyState
+          icon="clock"
+          title={filter === 'refund:due' ? 'No refunds outstanding' : 'Nothing here'}
+          body={filter === 'refund:due' ? 'Every promised refund has been sent.' : undefined}
+        />
       )}
 
-      {(bookings ?? []).map((b) => {
+      {view === 'calendar' && bookings !== null && (
+        <div style={{ marginBottom: '1rem' }}>
+          <CalendarView
+            items={shown.map((b) => ({
+              id: b.id,
+              at: b.starts_at,
+              label: `${b.client_name || b.client_email} · ${b.facilitators?.display_name ?? ''}`,
+              tone: b.status.startsWith('cancelled') ? 'bad' : b.status === 'no_show' || b.status === 'pending_payment' ? 'warn' : 'ok',
+            }))}
+            onPick={(id) => {
+              setFocusId(id);
+              setView('list');
+              window.setTimeout(() => document.getElementById(`booking-${id}`)?.scrollIntoView({ block: 'center' }), 50);
+            }}
+          />
+        </div>
+      )}
+
+      {view === 'list' && shown.map((b) => {
         const refundOwed = (b.refund_centavos ?? 0) > 0 && !b.refunded_at;
         const isFuture = new Date(b.starts_at).getTime() > Date.now();
 
         return (
-          <div key={b.id} className="card" style={{ marginBottom: '0.75rem' }}>
+          <div
+            key={b.id}
+            id={`booking-${b.id}`}
+            className="card"
+            style={{ marginBottom: '0.75rem', outline: focusId === b.id ? '2px solid var(--forest)' : undefined }}
+          >
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
               <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
               <span className={`pill ${STATUS_PILL[b.status] ?? ''}`}>{b.status.replace(/_/g, ' ')}</span>

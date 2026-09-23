@@ -20,6 +20,9 @@
  * limit is stated on the screen rather than left in a comment.
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { EmptyState } from './ui/EmptyState';
+import { adminToast } from './ui/feedback';
 import { money } from '../../components/Layout';
 import { API_BASE } from '../../config';
 import {
@@ -85,16 +88,40 @@ const manilaDate = (iso: string) =>
   }).format(new Date(iso));
 
 export default function PeopleTab({ adminKey }: { adminKey: string }) {
+  // `?person=<email>` (from ⌘K, Orders, anywhere) opens that profile directly.
+  const [params, setParams] = useSearchParams();
+  const deepLinked = params.get('person');
   const [people, setPeople] = useState<Person[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [scope, setScope] = useState('');
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(deepLinked ?? '');
   // Debounced separately from `q` so typing does not fire a request per
   // keystroke; `q` stays instant so the input never feels laggy.
-  const [term, setTerm] = useState('');
+  const [term, setTerm] = useState(deepLinked ?? '');
   const [source, setSource] = useState<'' | PersonSource>('');
   const [sort, setSort] = useState<PeopleSort>('recent');
-  const [openEmail, setOpenEmail] = useState<string | null>(null);
+  const [openEmail, setOpenEmail] = useState<string | null>(deepLinked);
+
+  useEffect(() => {
+    if (!deepLinked) return;
+    setQ(deepLinked);
+    setTerm(deepLinked);
+    setOpenEmail(deepLinked);
+  }, [deepLinked]);
+
+  const toggle = (email: string) => {
+    const next = openEmail === email ? null : email;
+    setOpenEmail(next);
+    setParams(
+      (prev) => {
+        const n = new URLSearchParams(prev);
+        if (next) n.set('person', next);
+        else n.delete('person');
+        return n;
+      },
+      { replace: true },
+    );
+  };
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -122,10 +149,12 @@ export default function PeopleTab({ adminKey }: { adminKey: string }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>People</h2>
-      <p className="small muted" style={{ marginTop: '-0.25rem', marginBottom: '1.25rem' }}>
-        {scope || 'Everyone with an order, registration, booking, class or enquiry.'}
-      </p>
+      <div className="page-head">
+        <div>
+          <h2>People</h2>
+          <p className="small muted">{scope || 'Everyone with an order, registration, booking, class or enquiry.'}</p>
+        </div>
+      </div>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
         <input
@@ -190,15 +219,33 @@ export default function PeopleTab({ adminKey }: { adminKey: string }) {
         </div>
       )}
 
-      {people === null && !error && <div className="spinner" aria-label="Loading" />}
+      {people === null && !error && (
+        <div style={{ display: 'grid', gap: 10 }} aria-hidden="true">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="card" style={{ padding: '0.9rem 1.1rem' }}>
+              <span className="skeleton" style={{ width: '35%', height: '1em' }} />
+              <span className="skeleton" style={{ width: '22%', height: '0.8em', marginTop: 6 }} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {people !== null && rows.length === 0 && (
         <div className="panel">
-          <p style={{ margin: 0 }}>
-            {term || source
-              ? 'Nobody matches that. Remember this lists people who have transacted or enquired — an account on its own does not appear here.'
-              : 'Nobody yet. People appear here after their first order, registration, booking, class or enquiry.'}
-          </p>
+          <EmptyState
+            icon="users"
+            title={term || source ? 'Nobody matches that' : 'Nobody yet'}
+            body={
+              term || source ? (
+                <>
+                  This lists people who have transacted or enquired — an account on its own is under{' '}
+                  <Link to={`/admin/accounts${term ? `?q=${encodeURIComponent(term)}` : ''}`}>Accounts</Link>.
+                </>
+              ) : (
+                'People appear here after their first order, registration, booking, class or enquiry.'
+              )
+            }
+          />
         </div>
       )}
 
@@ -209,7 +256,7 @@ export default function PeopleTab({ adminKey }: { adminKey: string }) {
             adminKey={adminKey}
             person={p}
             open={openEmail === p.email}
-            onToggle={() => setOpenEmail(openEmail === p.email ? null : p.email)}
+            onToggle={() => toggle(p.email)}
           />
         ))}
       </div>
@@ -322,7 +369,30 @@ function PersonRow({
       {open && (
         <div style={{ padding: '0 1.1rem 1.1rem', borderTop: '1px solid var(--line)' }}>
           {error && <div className="alert alert-error" style={{ marginTop: 12 }}>{error}</div>}
-          {!detail && !error && <div className="spinner" aria-label="Loading" />}
+          <div className="row" style={{ marginTop: 12 }}>
+            <Link className="btn btn-ghost small" to={`/admin/orders?q=${encodeURIComponent(person.email)}`}>
+              Course orders
+            </Link>
+            <Link className="btn btn-ghost small" to={`/admin/accounts?q=${encodeURIComponent(person.email)}`}>
+              SSO account
+            </Link>
+            <a className="btn btn-ghost small" href={`mailto:${person.email}`}>
+              Email
+            </a>
+            <button
+              type="button"
+              className="btn btn-ghost small"
+              onClick={() => void navigator.clipboard.writeText(person.email).then(() => adminToast.success('Email copied'))}
+            >
+              Copy email
+            </button>
+          </div>
+          {!detail && !error && (
+            <div aria-hidden="true" style={{ marginTop: 12 }}>
+              <span className="skeleton" style={{ width: '60%', height: '1em' }} />
+              <span className="skeleton" style={{ width: '80%', height: '1em', marginTop: 8 }} />
+            </div>
+          )}
           {detail && <PersonHistory detail={detail} />}
         </div>
       )}

@@ -37,6 +37,7 @@ import {
   type AuditEntry,
   type RefundAssessment,
 } from '../../lib/cms';
+import { adminConfirm } from './ui/feedback';
 
 type Filter = 'attention' | 'overdue' | 'all' | 'confirmed' | 'cancelled';
 
@@ -410,6 +411,20 @@ function RegistrationRow({
         </span>
         <span className="small" style={{ minWidth: 150 }}>
           {money(r.paidCentavos, r.currency)} paid
+          {r.total_centavos > 0 && (
+            <span
+              className="progress"
+              style={{ display: 'block', margin: '4px 0 2px', maxWidth: 140 }}
+              title={`${Math.round((r.paidCentavos / r.total_centavos) * 100)}% of ${money(r.total_centavos, r.currency)}`}
+            >
+              <span
+                style={{
+                  width: `${Math.min(100, (r.paidCentavos / r.total_centavos) * 100)}%`,
+                  background: r.overdueCount > 0 ? '#b23a24' : undefined,
+                }}
+              />
+            </span>
+          )}
           {r.outstandingCentavos > 0 && (
             <>
               <br />
@@ -546,10 +561,12 @@ function RegistrationRow({
                     );
                     if (!picked) return;
                     if (
-                      !window.confirm(
-                        `Cancel ${r.registrant_name}'s place and free seat #${r.seat_no}?\n\n` +
-                          `Refund recorded: ${picked.refundCentavos ? money(picked.refundCentavos, r.currency) : 'none'}`,
-                      )
+                      !(await adminConfirm({
+                        title: `Cancel ${r.registrant_name}'s place?`,
+                        body: `Seat #${r.seat_no} is freed and they are emailed.\n\nRefund recorded: ${picked.refundCentavos ? money(picked.refundCentavos, r.currency) : 'none'}`,
+                        confirmLabel: 'Cancel their place',
+                        danger: true,
+                      }))
                     ) {
                       return;
                     }
@@ -572,7 +589,7 @@ function RegistrationRow({
                 type="button"
                 className="btn btn-ghost small"
                 disabled={busy}
-                onClick={() => {
+                onClick={async () => {
                   const pesos = window.prompt(
                     `Change what this registration costs.\n\n` +
                       `Currently ${money(r.total_centavos, r.currency)}, of which ` +
@@ -595,7 +612,7 @@ function RegistrationRow({
                       : remaining < 0
                         ? `They have overpaid by ${money(-remaining, r.currency)} — that goes into refunds owed.`
                         : 'Nothing further will be owed.';
-                  if (!window.confirm(`New total ${money(totalCentavos, r.currency)}.\n\n${consequence}`)) return;
+                  if (!(await adminConfirm({ title: `Change the total to ${money(totalCentavos, r.currency)}?`, body: consequence, confirmLabel: 'Change price' }))) return;
                   void run('Price updated.', () =>
                     adminOverridePrice(adminKey, r.id, { totalCentavos, reason }),
                   );

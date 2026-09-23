@@ -33,6 +33,8 @@ import {
   labelFor,
 } from '../../lib/facilitator-intake';
 import { shortName } from '../../lib/names';
+import { adminConfirm, adminToast } from './ui/feedback';
+import { EmptyState } from './ui/EmptyState';
 
 /**
  * What must be true before a profile can go in the directory.
@@ -74,6 +76,7 @@ const STATUS_PILL: Record<string, string> = {
 };
 
 export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
+  const [view, setView] = useState<'list' | 'board'>('list');
   const [filter, setFilter] = useState('applied');
   const [supportFilter, setSupportFilter] = useState('');
   const [facilitators, setFacilitators] = useState<AdminFacilitator[] | null>(null);
@@ -102,10 +105,10 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
   const [addError, setAddError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
-    adminListFacilitators(adminKey, filter || undefined, supportFilter || undefined)
+    adminListFacilitators(adminKey, view === 'board' ? undefined : filter || undefined, supportFilter || undefined)
       .then(setFacilitators)
       .catch((err: Error) => setError(err.message));
-  }, [adminKey, filter, supportFilter]);
+  }, [adminKey, filter, supportFilter, view]);
 
   useEffect(() => reload(), [reload]);
 
@@ -133,13 +136,14 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
       rejected: 'Reject this application?',
     };
     const message = confirmations[status];
-    if (message && !window.confirm(message)) return;
+    if (message && !(await adminConfirm({ title: message, danger: status === 'rejected' || status === 'suspended', confirmLabel: 'Yes, continue' }))) return;
 
     setBusy(true);
     setError(null);
     try {
       await adminPatchFacilitator(adminKey, facilitatorId, { status });
       setNotice(`Status set to ${status}`);
+      adminToast.success(`Facilitator ${status}`);
       reload();
       if (openId === facilitatorId) {
         setDetail(await adminGetFacilitator(adminKey, facilitatorId));
@@ -254,7 +258,11 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
     <>
       <div className="admin-toolbar">
         <h2 style={{ margin: 0 }}>Facilitators</h2>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+        <div className="seg" role="group" aria-label="View">
+          <button type="button" aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
+          <button type="button" aria-pressed={view === 'board'} onClick={() => setView('board')}>Pipeline</button>
+        </div>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} disabled={view === 'board'}>
           {STATUS_FILTERS.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
@@ -376,12 +384,52 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
-      {facilitators === null && <div className="spinner" aria-label="Loading" />}
+      {facilitators === null && (
+        <div aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="card" style={{ marginBottom: '0.75rem' }}>
+              <span className="skeleton" style={{ width: '30%', height: '1em' }} />
+              <span className="skeleton" style={{ width: '55%', height: '0.8em', marginTop: 6 }} />
+            </div>
+          ))}
+        </div>
+      )}
       {facilitators !== null && facilitators.length === 0 && (
-        <p className="muted">Nothing here.</p>
+        <EmptyState
+          icon="leaf"
+          title={filter === 'applied' ? 'No applications waiting' : 'Nobody here'}
+          body={filter === 'applied' ? 'New applications from the facilitator form land here for review.' : undefined}
+        />
       )}
 
-      {(facilitators ?? []).map((f) => (
+      {view === 'board' && facilitators !== null && facilitators.length > 0 && (
+        <div className="kanban" style={{ marginBottom: '1rem' }}>
+          {(['applied', 'approved', 'published', 'suspended', 'rejected'] as const).map((st) => {
+            const col = facilitators.filter((f) => f.status === st);
+            return (
+              <div key={st} className="kanban__col">
+                <div className="kanban__head">
+                  <span>{STATUS_FILTERS.find((x) => x.value === st)?.label ?? st}</span>
+                  <span>{col.length}</span>
+                </div>
+                {col.map((f) => (
+                  <button key={f.id} type="button" className="kanban__card" onClick={() => setOpenId(f.id)}>
+                    <strong style={{ display: 'block' }}>{f.display_name}</strong>
+                    <span className="small muted" style={{ display: 'block', wordBreak: 'break-all' }}>{f.email}</span>
+                    <span className="small muted">
+                      {st === 'applied' ? 'applied ' : 'since '}
+                      {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(f.applied_at))}
+                    </span>
+                  </button>
+                ))}
+                {col.length === 0 && <div className="small muted" style={{ padding: '0.3rem' }}>—</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view === 'list' && (facilitators ?? []).map((f) => (
         <div key={f.id} className="card" style={{ marginBottom: '0.75rem' }}>
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <strong>{f.display_name}</strong>

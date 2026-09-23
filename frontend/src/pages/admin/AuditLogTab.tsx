@@ -25,7 +25,43 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { money } from '../../components/Layout';
+import { Link } from 'react-router-dom';
 import { adminListAuditLog, type AuditEntry } from '../../lib/cms';
+import { DataTable, type Column } from './ui/DataTable';
+import { Diff } from './ui/Diff';
+
+/** Where a target lives in the admin, when it has a screen. */
+function targetLink(e: AuditEntry): string | null {
+  const id = e.target_id ? encodeURIComponent(e.target_id) : '';
+  switch (e.target_table) {
+    case 'orders': return `/admin/orders?q=${id}`;
+    case 'products': return '/admin/products';
+    case 'facilitators': return e.target_id ? `/admin/facilitators/${id}` : '/admin/facilitators';
+    case 'events': return '/admin/events';
+    case 'event_registrations': return `/admin/registrations`;
+    case 'bookings': return '/admin/bookings';
+    case 'payouts': return '/admin/payouts';
+    case 'class_registrations': return '/admin/classes';
+    default: return null;
+  }
+}
+
+const columns: Column<AuditEntry>[] = [
+  { key: 'when', header: 'When', sortValue: (e) => e.created_at, render: (e) => <span className="small" style={{ whiteSpace: 'nowrap' }}>{manilaDateTime(e.created_at)}</span> },
+  { key: 'actor', header: 'Actor', sortValue: (e) => e.actor_label, render: (e) => <ActorBadge entry={e} /> },
+  { key: 'action', header: 'Action', pinned: true, sortValue: (e) => e.action, render: (e) => <code style={{ fontSize: '0.82em' }}>{e.action}</code> },
+  {
+    key: 'target', header: 'Target', sortValue: (e) => e.target_table, csv: (e) => `${e.target_table}:${e.target_id ?? ''}`,
+    render: (e) => (
+      <span className="small muted">
+        {e.target_table}
+        {e.target_id && (<><br /><code style={{ fontSize: '0.8em' }}>{e.target_id.slice(0, 8)}…</code></>)}
+      </span>
+    ),
+  },
+  { key: 'amount', header: 'Amount', align: 'right', sortValue: (e) => e.amount_centavos, render: (e) => <span className="small">{e.amount_centavos != null ? money(e.amount_centavos, e.currency ?? 'PHP') : ''}</span> },
+  { key: 'note', header: 'Note', sortValue: (e) => e.note ?? '', render: (e) => <span className="small muted">{e.note ?? ''}</span> },
+];
 
 /** Every `action` value this codebase currently writes, for the filter. An
  *  unrecognised value typed into the box still works — the filter is sent to
@@ -202,33 +238,38 @@ export default function AuditLogTab({ adminKey }: { adminKey: string }) {
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: 14 }}>{error}</div>}
-      {busy && !entries && <div className="spinner" aria-label="Loading" />}
-
-      {entries && entries.length === 0 && (
-        <p className="small muted">No matching entries.</p>
-      )}
-
-      {entries && entries.length > 0 && (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--line)' }}>
-                <th style={{ padding: '8px 10px' }}>When</th>
-                <th style={{ padding: '8px 10px' }}>Actor</th>
-                <th style={{ padding: '8px 10px' }}>Action</th>
-                <th style={{ padding: '8px 10px' }}>Target</th>
-                <th style={{ padding: '8px 10px', textAlign: 'right' }}>Amount</th>
-                <th style={{ padding: '8px 10px' }}>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry) => (
-                <AuditRow key={entry.id} entry={entry} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        id="audit-log"
+        rows={entries}
+        loading={busy && !entries}
+        rowKey={(e) => e.id}
+        columns={columns}
+        searchText={(e) => [e.actor_label, e.action, e.target_table, e.target_id ?? '', e.note ?? ''].join(' ')}
+        searchPlaceholder="Search actor, action, target, note…"
+        csvName="audit-log"
+        defaultSort={{ key: 'when', dir: 'desc' }}
+        pageSize={50}
+        urlPrefix="t_"
+        expand={(e) => (
+          <div className="stack">
+            <Diff before={e.before} after={e.after} />
+            <div className="row small">
+              {e.target_id && (
+                <button type="button" className="btn btn-ghost small" onClick={() => setTargetId(e.target_id!)}>
+                  Everything on this record
+                </button>
+              )}
+              {targetLink(e) && (
+                <Link className="btn btn-ghost small" to={targetLink(e)!}>
+                  Open {e.target_table.replace(/_/g, ' ')} →
+                </Link>
+              )}
+              {e.source_ip && <span className="muted">IP {e.source_ip}</span>}
+            </div>
+          </div>
+        )}
+        empty={{ title: filtersActive ? 'No matching entries' : 'No audit entries yet', body: filtersActive ? 'Try clearing a filter.' : undefined }}
+      />
 
       {entries && entries.length >= ROW_LIMIT && (
         <p className="small muted" style={{ marginTop: 10 }}>
@@ -252,37 +293,6 @@ function ActorLegend() {
       is a name someone typed in, not a verified identity.{' '}
       <span className="pill pill-ok">cognito</span> is a signed-in account.
     </span>
-  );
-}
-
-function AuditRow({ entry }: { entry: AuditEntry }) {
-  return (
-    <tr style={{ borderBottom: '1px solid var(--line)', verticalAlign: 'top' }}>
-      <td className="small" style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-        {manilaDateTime(entry.created_at)}
-      </td>
-      <td style={{ padding: '8px 10px' }}>
-        <ActorBadge entry={entry} />
-      </td>
-      <td className="small" style={{ padding: '8px 10px' }}>
-        <code style={{ fontSize: '0.85em' }}>{entry.action}</code>
-      </td>
-      <td className="small muted" style={{ padding: '8px 10px' }}>
-        {entry.target_table}
-        {entry.target_id && (
-          <>
-            <br />
-            <code style={{ fontSize: '0.8em' }}>{entry.target_id}</code>
-          </>
-        )}
-      </td>
-      <td className="small" style={{ padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-        {entry.amount_centavos != null ? money(entry.amount_centavos, entry.currency ?? 'PHP') : ''}
-      </td>
-      <td className="small muted" style={{ padding: '8px 10px', maxWidth: 320 }}>
-        {entry.note ?? ''}
-      </td>
-    </tr>
   );
 }
 
