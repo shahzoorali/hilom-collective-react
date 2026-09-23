@@ -25,6 +25,7 @@ interface PromoCodeRow {
   discount_value: number;
   is_active: boolean;
   expires_at: string | null;
+  applies_to_events: boolean;
 }
 
 export interface ResolvedPromoCode {
@@ -38,18 +39,23 @@ export async function resolvePromoCode(
   supabase: SupabaseClient,
   rawCode: string,
   amountCentavos: number,
+  options: { forEvent?: boolean } = {},
 ): Promise<ResolvedPromoCode> {
   const code = rawCode.trim().toUpperCase();
   if (!code) throw new PromoCodeError('Enter a promo code');
 
   const { data: promo, error } = await supabase
     .from('promo_codes')
-    .select('id, code, discount_type, discount_value, is_active, expires_at')
+    .select('id, code, discount_type, discount_value, is_active, expires_at, applies_to_events')
     .eq('code', code)
     .maybeSingle<PromoCodeRow>();
   if (error) throw error;
 
   if (!promo || !promo.is_active) throw new PromoCodeError('That promo code is not valid');
+  // Course codes stay course-only unless an admin opts them in (0062).
+  if (options.forEvent && !promo.applies_to_events) {
+    throw new PromoCodeError('That promo code is not valid for events');
+  }
   if (promo.expires_at && new Date(promo.expires_at).getTime() < Date.now()) {
     throw new PromoCodeError('That promo code has expired');
   }

@@ -40,6 +40,7 @@ import {
 } from '../lib/reviews.js';
 import { sendAttendeeTransferred, sendCancellationRequested, sendCancellationRequestedAdminAlert } from '../lib/registration-email.js';
 import { joinWaitlist, convertWaitlistEntry, WaitlistError } from '../lib/event-waitlist.js';
+import { resolvePromoCode, PromoCodeError } from '../lib/promo-codes.js';
 import {
   buildSchedule,
   activePlans,
@@ -98,7 +99,24 @@ const CLAIM_ERRORS: Record<string, { status: number; message: string }> = {
     message: 'That amount is below the minimum for this event.',
   },
   event_not_found: { status: 404, message: 'Event not found' },
+  // Promo codes (0062). Raised when the code changed between the handler's
+  // own check and the claim, e.g. an admin switched it off meanwhile.
+  promo_invalid: { status: 409, message: 'That promo code is no longer valid. Nothing has been charged.' },
+  promo_not_applicable: { status: 400, message: 'Promo codes only apply to paying in full.' },
+  promo_makes_free: {
+    status: 400,
+    message: 'That code would make this ticket free — contact us to arrange a free place.',
+  },
 };
+
+/** Whether a plan can take a promo code (0062): fixed-price, paid in full. */
+function eventPromoApplicable(plan: PaymentPlan): { ok: true } | { ok: false; reason: string } {
+  if (plan.is_pay_what_you_want) {
+    return { ok: false, reason: 'This option already lets you choose what to pay, so it takes no promo code.' };
+  }
+  if (plan.kind !== 'full') return { ok: false, reason: 'Promo codes only apply to paying in full.' };
+  return { ok: true };
+}
 
 interface EventRow {
   id: string;
@@ -145,6 +163,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (eventId && method === 'POST' && path.endsWith('/waitlist')) {
       return await joinWaitlistRoute(event, eventId, buyer);
     }
+    if (eventId && method === 'POST' && path.endsWith('/promo-check')) {
+      return await promoCheck(event, eventId);
+    }
     if (method === 'GET' && path.endsWith('/me/registrations')) {
       return await listMine(buyer.email);
     }
@@ -179,6 +200,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   } catch (err) {
     if (err instanceof TicketingValidationError) return badRequest(err.message);
     if (err instanceof WaitlistError) return conflict(err.message);
+    if (err instanceof PromoCodeError) return badRequest(err.message);
     return serverError('eventRegistrations', err);
   }
 }
@@ -221,6 +243,44 @@ async function joinWaitlistRoute(
   });
 
   return ok({ waitlistId: entry.id });
+}
+
+/**
+ * Previews what a promo code takes off a plan (0062), so the buyer sees the
+ * price before being sent to PayMongo. Advisory only: register() resolves the
+ * code again, and claim_event_seat checks it a third time.
+ *
+ *   POST /events/{eventId}/promo-check   { planId, code }
+ */
+async function promoCheck(event: APIGatewayProxyEventV2, eventId: string): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(event);
+  const planId = String(body.planId ?? '');
+  const code = typeof body.code === 'string' ? body.code : '';
+  if (!planId) return badRequest('Choose how you would like to pay first.');
+
+  const supabase = await getSupabase();
+  const { data: plan, error } = await supabase
+    .from('event_payment_plans')
+    .select('id, name, kind, total_centavos, currency, is_pay_what_you_want, is_active')
+    .eq('id', planId)
+    .eq('event_id', eventId)
+    .maybeSingle<PaymentPlan & { is_active: boolean }>();
+  if (error) throw error;
+  if (!plan || !plan.is_active) return notFound('That payment option is not available.');
+
+  const applicable = eventPromoApplicable(plan);
+  if (!applicable.ok) return badRequest(applicable.reason);
+
+  const resolved = await resolvePromoCode(supabase, code, plan.total_centavos, { forEvent: true });
+  if (resolved.finalAmountCentavos <= 0) {
+    return badRequest('That code would make this ticket free — contact us to arrange a free place.');
+  }
+  return ok({
+    code: resolved.code,
+    discountCentavos: resolved.discountCentavos,
+    finalAmountCentavos: resolved.finalAmountCentavos,
+    currency: plan.currency,
+  });
 }
 
 async function register(
@@ -304,6 +364,25 @@ async function register(
     chosenAmountCentavos,
   });
 
+  // A promo code (0062): full-payment, fixed-price plans only, so the single
+  // charge simply becomes the discounted price. claim_event_seat recomputes
+  // the discount from the code row and refuses a mismatch, so this figure is
+  // a proposal the database checks, not one it trusts.
+  const promoRaw = typeof body.promoCode === 'string' ? body.promoCode.trim() : '';
+  let promoCodeId: string | null = null;
+  if (promoRaw) {
+    const applicable = eventPromoApplicable(plan);
+    if (!applicable.ok) return badRequest(applicable.reason);
+    const resolved = await resolvePromoCode(supabase, promoRaw, plan.total_centavos, { forEvent: true });
+    if (resolved.finalAmountCentavos <= 0) {
+      return badRequest('That code would make this ticket free — contact us to arrange a free place.');
+    }
+    const only = charges[0];
+    if (!only || charges.length !== 1) return badRequest('Promo codes only apply to paying in full.');
+    only.amount_centavos = resolved.finalAmountCentavos;
+    promoCodeId = resolved.promoCodeId;
+  }
+
   const { data: registrationId, error: claimError } = await supabase.rpc('claim_event_seat', {
     p_event_id: eventId,
     p_plan_id: plan.id,
@@ -320,6 +399,7 @@ async function register(
     // Null for a fixed-price plan, which is what makes the function take its
     // original path and re-check against the plan's own total.
     p_total_centavos: chosenAmountCentavos,
+    p_promo_code_id: promoCodeId,
   });
 
   if (claimError) {

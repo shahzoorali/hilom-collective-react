@@ -310,6 +310,8 @@ export interface AdminPromoCode {
   discount_type: 'percent' | 'fixed';
   discount_value: number;
   is_active: boolean;
+  /** Also discounts event tickets, paid in full only (0062). */
+  applies_to_events: boolean;
   expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -339,6 +341,7 @@ export const adminUpdatePromoCode = (
     discount_type: 'percent' | 'fixed';
     discount_value: number;
     is_active: boolean;
+    applies_to_events: boolean;
     expires_at: string | null;
   }>,
 ) =>

@@ -32,6 +32,7 @@ import {
   getEventTicketing,
   registerForEvent,
   joinEventWaitlist,
+  checkEventPromo,
   formatDueDate,
   formatEventDates,
   dueNow,
@@ -398,6 +399,15 @@ export default function EventRegister() {
   const [waitlistBusy, setWaitlistBusy] = useState(false);
   const [waitlistJoined, setWaitlistJoined] = useState(false);
   const [waitlistError, setWaitlistError] = useState<string | null>(null);
+  const [promoInput, setPromoInput] = useState('');
+  const [promo, setPromo] = useState<{
+    code: string;
+    discountCentavos: number;
+    finalAmountCentavos: number;
+    currency: string;
+  } | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promoChecking, setPromoChecking] = useState(false);
 
   const load = useCallback(() => {
     if (!eventId) return;
@@ -509,6 +519,21 @@ export default function EventRegister() {
 
   const chosenPlan = plans.find((p) => p.id === planId) ?? null;
   const pwyw = chosenPlan?.is_pay_what_you_want === true;
+  const promoEligible = !!chosenPlan && !pwyw && chosenPlan.kind === 'full';
+
+  async function onApplyPromo() {
+    if (!eventId || !planId) return;
+    setPromoChecking(true);
+    setPromoError(null);
+    try {
+      setPromo(await checkEventPromo(eventId, planId, promoInput.trim()));
+    } catch (err) {
+      setPromo(null);
+      setPromoError(err instanceof Error ? err.message : 'That code could not be applied.');
+    } finally {
+      setPromoChecking(false);
+    }
+  }
   // Centavos, rounded rather than truncated: 100.999 typed into a peso box is a
   // person meaning ₱101, and Math.trunc would quietly take a centavo off them.
   const amountCentavos = amount.trim() === '' ? null : Math.round(Number(amount) * 100);
@@ -532,6 +557,8 @@ export default function EventRegister() {
         // and re-validates it in either case — this is a convenience, not a
         // source of truth.
         ...(pwyw && amountCentavos !== null ? { amountCentavos } : {}),
+        // Only a code that was applied and still fits the chosen plan.
+        ...(promoEligible && promo ? { promoCode: promo.code } : {}),
         registrant: {
           name: name.trim(),
           email: email.trim(),
@@ -625,7 +652,7 @@ export default function EventRegister() {
                     key={plan.id}
                     plan={plan}
                     selected={planId === plan.id}
-                    onSelect={() => setPlanId(plan.id)}
+                    onSelect={() => { setPlanId(plan.id); setPromo(null); }}
                   />
                 ))}
               </fieldset>
@@ -638,6 +665,40 @@ export default function EventRegister() {
                   floorCentavos={floorCentavos}
                   valid={amountValid}
                 />
+              )}
+
+              {/* Promo codes (0062): paying in full on a fixed price only. */}
+              {promoEligible && (
+                <div className="field">
+                  <span>Promo code (optional)</span>
+                  <div className="row" style={{ gap: 8 }}>
+                    <input
+                      value={promoInput}
+                      onChange={(e) => {
+                        setPromoInput(e.target.value);
+                        setPromo(null);
+                        setPromoError(null);
+                      }}
+                      maxLength={40}
+                      style={{ textTransform: 'uppercase' }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={!promoInput.trim() || promoChecking}
+                      onClick={() => void onApplyPromo()}
+                    >
+                      {promoChecking ? 'Checking…' : 'Apply'}
+                    </button>
+                  </div>
+                  {promo && (
+                    <small>
+                      {promo.code}: −{money(promo.discountCentavos, promo.currency)}, you pay{' '}
+                      <strong>{money(promo.finalAmountCentavos, promo.currency)}</strong>
+                    </small>
+                  )}
+                  {promoError && <small style={{ color: 'var(--danger-fg, #b3261e)' }}>{promoError}</small>}
+                </div>
               )}
 
               <div className="row">

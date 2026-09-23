@@ -15,7 +15,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { getSupabase } from '../lib/supabase.js';
 import { ok, notFound, badRequest, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
 
-const COLUMNS = 'id, code, label, discount_type, discount_value, is_active, expires_at, created_at, updated_at';
+const COLUMNS = 'id, code, label, discount_type, discount_value, is_active, applies_to_events, expires_at, created_at, updated_at';
 
 interface PromoCodeBody {
   code?: string;
@@ -23,6 +23,8 @@ interface PromoCodeBody {
   discount_type?: string;
   discount_value?: number;
   is_active?: boolean;
+  /** Also valid on event tickets (0062). */
+  applies_to_events?: boolean;
   expires_at?: string | null;
 }
 
@@ -113,6 +115,7 @@ function buildPatch(body: PromoCodeBody, opts: { requireCore: boolean }): Record
   }
 
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active);
+  if (body.applies_to_events !== undefined) patch.applies_to_events = Boolean(body.applies_to_events);
   if (body.expires_at !== undefined) {
     if (body.expires_at === null || body.expires_at === '') {
       patch.expires_at = null;

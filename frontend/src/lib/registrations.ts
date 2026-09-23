@@ -136,6 +136,8 @@ export interface RegisterInput {
    * here is trusted.
    */
   amountCentavos?: number;
+  /** A promo code (0062). Full-payment, fixed-price plans only; the server computes the discount. */
+  promoCode?: string;
   registrant: {
     name: string;
     email: string;
@@ -143,6 +145,15 @@ export interface RegisterInput {
     details: Record<string, string>;
   };
 }
+
+/** Previews a promo code against a plan before checkout (0062). Advisory; the server re-checks at registration. */
+export const checkEventPromo = (eventId: string, planId: string, code: string) =>
+  withAuth(() =>
+    apiFetch<{ code: string; discountCentavos: number; finalAmountCentavos: number; currency: string }>(
+      `/events/${eventId}/promo-check`,
+      { method: 'POST', headers: jsonAuthHeaders(), body: JSON.stringify({ planId, code }) },
+    ),
+  );
 
 export interface RegisterResult {
   registrationId: string;

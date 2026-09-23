@@ -122,6 +122,16 @@ export default function PromoCodesTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  async function onToggleEvents(p: AdminPromoCode) {
+    try {
+      await adminUpdatePromoCode(adminKey, p.id, { applies_to_events: !p.applies_to_events });
+      await load();
+      adminToast.success(`${p.code} ${p.applies_to_events ? 'no longer works' : 'now works'} on event tickets`);
+    } catch (e) {
+      adminToast.error((e as Error).message);
+    }
+  }
+
   async function onDelete(p: AdminPromoCode) {
     if (
       !(await adminConfirm({
@@ -240,6 +250,21 @@ export default function PromoCodesTab({ adminKey }: { adminKey: string }) {
         ) : (
           <span className="pill pill-warn">inactive</span>
         ),
+    },
+    {
+      key: 'events',
+      header: 'Events',
+      sortValue: (p) => (p.applies_to_events ? 1 : 0),
+      csv: (p) => (p.applies_to_events ? 'yes' : 'no'),
+      render: (p) => (
+        <button
+          className="btn btn-ghost small"
+          title="Whether this code also discounts event tickets (paid in full only)"
+          onClick={() => void onToggleEvents(p)}
+        >
+          {p.applies_to_events ? 'On' : 'Off'}
+        </button>
+      ),
     },
     { key: 'expires', header: 'Expires', sortValue: (p) => p.expires_at ?? '9999', csv: (p) => p.expires_at, render: (p) => <span className="small">{expiryText(p)}</span> },
     {
