@@ -35,7 +35,8 @@ const BLURB: Record<IntegrationProvider, { requires: string; effect: string }> =
   google_meet: {
     requires: 'Requires a Google account.',
     effect:
-      'A fresh Meet link is created for each session. Hilom can only see the meetings it creates for you — not your calendar.',
+      "A fresh Meet link is created for each session, and it's added to your Google Calendar automatically. " +
+      'Hilom can only see the meetings and events it creates for you — not your existing calendar.',
   },
   zoom: {
     requires: 'Requires a Zoom account.',
@@ -62,6 +63,15 @@ const GOOGLE_UNVERIFIED = true;
 
 /** Which providers show the unverified-app warning. */
 const SHOWS_UNVERIFIED_WARNING: IntegrationProvider[] = ['google_meet'];
+
+/**
+ * The Calendar scope added after Google Meet already existed. A facilitator
+ * who connected before this shipped is still on the old, Meet-only grant —
+ * `prompt=consent` on the existing connect flow will pick up the broader
+ * scope list next time they go through it, so the fix is "reconnect," not a
+ * new button.
+ */
+const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
 
 /**
  * What to expect on Google's screen, and how to get past it.
@@ -239,6 +249,13 @@ export default function ConnectionsTab() {
             <div className="alert alert-error" style={{ margin: '0.6rem 0 0' }}>
               This connection stopped working — usually because access was removed from your{' '}
               {c.label} account. Reconnect it to keep creating links automatically.
+            </div>
+          )}
+
+          {c.provider === 'google_meet' && c.connected && !c.broken && !c.scopes.includes(CALENDAR_SCOPE) && (
+            <div className="alert alert-info" style={{ margin: '0.6rem 0 0' }}>
+              Calendar sync is new — reconnect this account to start adding your sessions to Google
+              Calendar automatically.
             </div>
           )}
 

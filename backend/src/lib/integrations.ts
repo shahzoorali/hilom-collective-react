@@ -91,16 +91,22 @@ function decodeJwtPayload(jwt: string): Record<string, unknown> {
 
 const CONFIG: Record<Provider, ProviderConfig> = {
   google_meet: {
-    label: 'Google Meet',
+    label: 'Google Meet & Calendar',
     secretId: 'hilom/google-meet',
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     revokeUrl: 'https://oauth2.googleapis.com/revoke',
-    // `meetings.space.created` is principal-scoped: it reaches only the spaces
-    // this app itself creates, never their calendar or existing meetings.
-    // `openid email` is non-sensitive and is what lets the dashboard say which
-    // account is connected instead of showing an anonymous green tick.
-    scopes: ['openid', 'email', 'https://www.googleapis.com/auth/meetings.space.created'],
+    // `meetings.space.created` and `calendar.events.owned` are both
+    // principal-scoped: each reaches only what this app itself created, never
+    // the facilitator's existing calendar or meetings. `openid email` is
+    // non-sensitive and is what lets the dashboard say which account is
+    // connected instead of showing an anonymous green tick.
+    scopes: [
+      'openid',
+      'email',
+      'https://www.googleapis.com/auth/meetings.space.created',
+      'https://www.googleapis.com/auth/calendar.events.owned',
+    ],
     authorizeExtras: {
       // Google only issues a refresh token when both are present, and only on
       // the *first* consent unless prompt=consent forces it. Without these a
@@ -771,6 +777,113 @@ export async function deleteMeeting(
   // 404 means it is already gone — a fine outcome for a delete.
   if (!res.ok && res.status !== 204 && res.status !== 404) {
     throw new MeetingCreationError('zoom', `delete ${res.status}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calendar sync (Google only)
+// ---------------------------------------------------------------------------
+
+export interface CalendarEventInput {
+  /** Shown as the event title. */
+  title: string;
+  /** Free text — client name, notes, join link. */
+  description: string;
+  /** UTC instant the session starts. */
+  startsAt: Date;
+  durationMinutes: number;
+  /** IANA zone — the facilitator's own, so the event reads correctly in their calendar app. */
+  timezone: string;
+  /** Shown as the event location, if there is one. */
+  joinUrl: string | null;
+}
+
+function calendarEventBody(event: CalendarEventInput): Record<string, unknown> {
+  const endsAt = new Date(event.startsAt.getTime() + event.durationMinutes * 60_000);
+  return {
+    summary: event.title,
+    description: event.description,
+    location: event.joinUrl ?? undefined,
+    start: { dateTime: event.startsAt.toISOString(), timeZone: event.timezone },
+    end: { dateTime: endsAt.toISOString(), timeZone: event.timezone },
+  };
+}
+
+/**
+ * Creates a Google Calendar event in the facilitator's own primary calendar.
+ *
+ * Throws `IntegrationError` if Google is not connected — the caller treats
+ * that as "nothing to sync," since Calendar sync is opt-in by virtue of
+ * connecting Google at all, not a required part of confirming a booking.
+ */
+export async function createCalendarEvent(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  event: CalendarEventInput,
+): Promise<{ eventId: string }> {
+  const accessToken = await getAccessToken(supabase, facilitatorId, 'google_meet');
+
+  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(calendarEventBody(event)),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    throw new MeetingCreationError('google_meet', `calendar create ${res.status} ${text.slice(0, 300)}`);
+  }
+
+  const created = JSON.parse(text) as { id?: string };
+  if (!created.id) {
+    throw new MeetingCreationError('google_meet', 'calendar create response had no id');
+  }
+  return { eventId: created.id };
+}
+
+/**
+ * Moves a Calendar event to a new time. Best-effort by the same contract as
+ * `updateMeetingTime`: the caller logs and carries on rather than failing a
+ * reschedule over a calendar hiccup.
+ */
+export async function updateCalendarEvent(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  eventId: string,
+  event: CalendarEventInput,
+): Promise<void> {
+  const accessToken = await getAccessToken(supabase, facilitatorId, 'google_meet');
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(calendarEventBody(event)),
+    },
+  );
+  if (!res.ok) {
+    throw new MeetingCreationError('google_meet', `calendar update ${res.status} ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
+/**
+ * Deletes a Calendar event on cancellation. A 404/410 means it is already
+ * gone — a fine outcome for a delete, same as `deleteMeeting`.
+ */
+export async function deleteCalendarEvent(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  eventId: string,
+): Promise<void> {
+  const accessToken = await getAccessToken(supabase, facilitatorId, 'google_meet');
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    throw new MeetingCreationError('google_meet', `calendar delete ${res.status}`);
   }
 }
 

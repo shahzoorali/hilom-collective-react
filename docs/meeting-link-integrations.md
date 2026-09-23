@@ -17,6 +17,42 @@ Decided constraints:
 
 ---
 
+## Addendum: Google Calendar sync
+
+The `google_meet` OAuth connection also pushes each booking onto the
+facilitator's own Google Calendar as a real event — created on confirm,
+moved on reschedule, removed on cancellation. This is *not* a separate
+provider: it piggybacks on the same connection so a facilitator making one
+Google OAuth grant gets both. See `backend/src/lib/integrations.ts`
+(`createCalendarEvent`/`updateCalendarEvent`/`deleteCalendarEvent`) and the
+calendar-sync block in `backend/src/lib/booking-fulfillment.ts`
+(`confirmBooking`, `syncBookingMeeting`).
+
+It runs whenever Google is connected at all, independent of which meeting
+provider the *service* uses — a Zoom or manual-link session still lands on
+the facilitator's calendar if they've connected Google.
+
+Scope: `https://www.googleapis.com/auth/calendar.events.owned`, the
+Calendar-API equivalent of `meetings.space.created` — access is limited to
+events this app itself created, never the facilitator's existing calendar.
+Same "no CASA assessment" posture as the Meet scope below.
+
+No attendees are added to the event and no Google invite is sent to the
+client — the client already gets their own ICS invite by email
+(`booking-email.ts`). The event is for the facilitator's own visibility.
+
+A facilitator who connected before this shipped is on the old, Meet-only
+grant. `prompt=consent` on the existing connect flow re-requests the full
+scope list on any reconnect, so the fix is a reconnect prompt in the UI
+(`ConnectionsTab.tsx`), not a new connection type.
+
+No retry sweep exists for a failed Calendar push, matching the precedent
+already set by meeting-link creation, which also has no retry despite an
+earlier draft of this doc implying one — `booking-sweep.ts` only handles
+hold-release and reminders.
+
+---
+
 ## The headline: these two are not equally hard
 
 | | Google Meet | Zoom |

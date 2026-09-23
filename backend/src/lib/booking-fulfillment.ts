@@ -17,9 +17,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from './supabase.js';
 import { sendBookingConfirmed, sendMeetingLinkFailed } from './booking-email.js';
 import {
+  createCalendarEvent,
   createMeeting,
+  deleteCalendarEvent,
   deleteMeeting,
   isProvider,
+  updateCalendarEvent,
   updateMeetingTime,
   type Provider,
 } from './integrations.js';
@@ -43,6 +46,7 @@ interface BookingWithRelations {
   client_email: string;
   client_name: string | null;
   client_timezone: string | null;
+  client_notes: string | null;
   price_centavos: number;
   meeting_url: string | null;
   facilitators: { id: string; email: string; display_name: string; timezone: string } | null;
@@ -54,9 +58,20 @@ interface BookingWithRelations {
 }
 
 const JOINED =
-  'id, status, starts_at, ends_at, client_email, client_name, client_timezone, price_centavos, meeting_url, ' +
+  'id, status, starts_at, ends_at, client_email, client_name, client_timezone, client_notes, price_centavos, meeting_url, ' +
   'facilitators(id, email, display_name, timezone), ' +
   'facilitator_services(title, duration_minutes, meeting_provider)';
+
+/** The Calendar event's description: who it's with, and how to join. */
+function describeBookingForCalendar(
+  booking: { client_name: string | null; client_email: string; client_notes: string | null },
+  meetingUrl: string | null,
+): string {
+  const lines = [`With ${booking.client_name ?? booking.client_email}.`];
+  if (meetingUrl) lines.push(`Join: ${meetingUrl}`);
+  if (booking.client_notes) lines.push(`Notes: ${booking.client_notes}`);
+  return lines.join('\n');
+}
 
 /**
  * Marks a booking confirmed and notifies both parties.
@@ -185,6 +200,31 @@ export async function confirmBooking(bookingId: string, paymentId?: string): Pro
     }
   }
 
+  // Calendar sync is independent of the meeting-link block above: a
+  // facilitator can take Zoom or manual-link bookings and still want them on
+  // their Google Calendar, so this runs whenever Google is connected at all,
+  // not only when the service's own meeting_provider is 'google_meet'.
+  if (facilitator) {
+    try {
+      const { eventId } = await createCalendarEvent(supabase, facilitator.id, {
+        title: service?.title ?? 'Hilom session',
+        description: describeBookingForCalendar(booking, meetingUrl),
+        startsAt: new Date(booking.starts_at),
+        durationMinutes: service?.duration_minutes ?? 60,
+        timezone: facilitator.timezone,
+        joinUrl: meetingUrl,
+      });
+      await supabase.from('bookings').update({ calendar_event_id: eventId }).eq('id', bookingId);
+    } catch (err) {
+      // Not connected, or a Google hiccup — logged only. A booking must never
+      // fail, and a missing calendar entry is not visible to the client.
+      console.error('[booking-fulfillment] calendar sync failed (non-blocking)', {
+        bookingId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   if (facilitator && service) {
     await sendBookingConfirmed({
       clientEmail: booking.client_email,
@@ -252,35 +292,80 @@ export async function syncBookingMeeting(
     const { data, error } = await supabase
       .from('bookings')
       .select(
-        'facilitator_id, meeting_provider, meeting_external_id, starts_at, ' +
-          'facilitator_services(duration_minutes), facilitators(timezone)',
+        'facilitator_id, meeting_provider, meeting_external_id, calendar_event_id, starts_at, ' +
+          'client_name, client_email, client_notes, meeting_url, ' +
+          'facilitator_services(title, duration_minutes), facilitators(timezone)',
       )
       .eq('id', bookingId)
       .maybeSingle<{
         facilitator_id: string;
         meeting_provider: string | null;
         meeting_external_id: string | null;
+        calendar_event_id: string | null;
         starts_at: string;
-        facilitator_services: { duration_minutes: number } | null;
+        client_name: string | null;
+        client_email: string;
+        client_notes: string | null;
+        meeting_url: string | null;
+        facilitator_services: { title: string; duration_minutes: number } | null;
         facilitators: { timezone: string } | null;
       }>();
 
     if (error) throw error;
-    if (!data || !data.meeting_external_id || !isProvider(data.meeting_provider ?? '')) return;
+    if (!data) return;
 
-    const provider = data.meeting_provider as Provider;
+    const durationMinutes = data.facilitator_services?.duration_minutes ?? 60;
+    const timezone = data.facilitators?.timezone ?? 'Asia/Manila';
 
-    if (change === 'cancelled') {
-      await deleteMeeting(supabase, data.facilitator_id, provider, data.meeting_external_id);
-      return;
+    // Each provider's sync is independent — a Zoom failure must not skip the
+    // Calendar sync, or vice versa.
+    if (data.meeting_external_id && isProvider(data.meeting_provider ?? '')) {
+      const provider = data.meeting_provider as Provider;
+      try {
+        if (change === 'cancelled') {
+          await deleteMeeting(supabase, data.facilitator_id, provider, data.meeting_external_id);
+        } else {
+          await updateMeetingTime(supabase, data.facilitator_id, provider, data.meeting_external_id, {
+            title: '',
+            startsAt: new Date(data.starts_at),
+            durationMinutes,
+            timezone,
+          });
+        }
+      } catch (err) {
+        console.error('[booking-fulfillment] meeting sync failed (non-blocking)', {
+          bookingId,
+          change,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
-    await updateMeetingTime(supabase, data.facilitator_id, provider, data.meeting_external_id, {
-      title: '',
-      startsAt: new Date(data.starts_at),
-      durationMinutes: data.facilitator_services?.duration_minutes ?? 60,
-      timezone: data.facilitators?.timezone ?? 'Asia/Manila',
-    });
+    if (data.calendar_event_id) {
+      try {
+        if (change === 'cancelled') {
+          await deleteCalendarEvent(supabase, data.facilitator_id, data.calendar_event_id);
+        } else {
+          await updateCalendarEvent(supabase, data.facilitator_id, data.calendar_event_id, {
+            title: data.facilitator_services?.title ?? 'Hilom session',
+            description: describeBookingForCalendar(
+              { client_name: data.client_name, client_email: data.client_email, client_notes: data.client_notes },
+              data.meeting_url,
+            ),
+            startsAt: new Date(data.starts_at),
+            durationMinutes,
+            timezone,
+            joinUrl: data.meeting_url,
+          });
+        }
+      } catch (err) {
+        console.error('[booking-fulfillment] calendar sync failed (non-blocking)', {
+          bookingId,
+          change,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   } catch (err) {
     console.error('[booking-fulfillment] meeting sync failed (non-blocking)', {
       bookingId,
