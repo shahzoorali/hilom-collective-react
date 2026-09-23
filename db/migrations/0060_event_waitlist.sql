@@ -15,7 +15,10 @@
 -- table. That is the honest next step if lead time turns out to matter more
 -- than it looks like it will; building it speculatively now would be
 -- guessing at a UX nobody has asked for yet.
-create type public.waitlist_status as enum ('waiting', 'notified', 'converted');
+do $$ begin
+  create type public.waitlist_status as enum ('waiting', 'notified', 'converted');
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists public.event_waitlist (
   id       uuid primary key default gen_random_uuid(),

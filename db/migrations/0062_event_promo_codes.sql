@@ -36,7 +36,7 @@ comment on column public.event_registrations.discount_centavos is
 
 drop function if exists public.claim_event_seat(uuid, uuid, text, text, jsonb, jsonb, int, int);
 
-create function public.claim_event_seat(
+create or replace function public.claim_event_seat(
   p_event_id       uuid,
   p_plan_id        uuid,
   p_buyer_email    text,
