@@ -16,6 +16,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from './supabase.js';
 import { depositClearedLate, isOutstanding, type ChargeStatus } from './event-ticketing.js';
+import { splitFee } from './booking-domain.js';
 import {
   sendRegistrationConfirmed,
   sendPaymentReceipt,
@@ -174,6 +175,8 @@ export async function applyChargePayment(
     return { chargeId, status: 'paid', alreadyPaid: true, registrationConfirmed: false };
   }
 
+  await recordHostSplit(supabase, charge);
+
   // Only now that this payment is definitely recorded do the charges it
   // replaces stop being due. Read from the row rather than passed in, so that
   // the webhook, an SQS retry and an admin's offline mark-paid all void the
@@ -221,6 +224,58 @@ export async function applyChargePayment(
   await notify(supabase, registration, charge, receiptNo, confirmed);
 
   return { chargeId, status: 'paid', alreadyPaid: false, registrationConfirmed: confirmed };
+}
+
+/**
+ * Records what the host earned from a charge that has just been paid (0054).
+ *
+ * Only reached by the delivery that won the compare-and-set above, so this
+ * runs once per charge per payment. The `facilitator_net_centavos is null`
+ * guard is the second line of that defence rather than the first: an admin
+ * marking a charge paid offline, a webhook retry that lost its payment id, and
+ * the live webhook all arrive here through the same door, and none of them may
+ * restate a split that is already on the row and possibly already paid out.
+ *
+ * An event with no `platform_fee_bps` has no revenue share — the money is
+ * Hilom's — so the columns stay null and the batch builder never sees the row.
+ * That is the difference between "earned nothing" and "was never a revenue
+ * share", and it is why these columns are nullable rather than defaulted.
+ *
+ * Never throws into the caller. The payment is recorded and the receipt is
+ * about to be sent; a missing split is visible on the admin money screen and
+ * can be recomputed, whereas failing here would roll back a payment that
+ * genuinely happened.
+ */
+async function recordHostSplit(supabase: SupabaseClient, charge: ChargeRow): Promise<void> {
+  try {
+    const { data: event, error } = await supabase
+      .from('events')
+      .select('facilitator_id, platform_fee_bps')
+      .eq('id', charge.event_id)
+      .maybeSingle<{ facilitator_id: string | null; platform_fee_bps: number | null }>();
+    if (error) throw error;
+
+    // No host, or no negotiated rate: Hilom's own programme.
+    if (!event?.facilitator_id || event.platform_fee_bps === null) return;
+
+    const split = splitFee(charge.amount_centavos, event.platform_fee_bps);
+
+    const { error: writeError } = await supabase
+      .from('registration_charges')
+      .update({
+        platform_fee_centavos: split.platformFeeCentavos,
+        facilitator_net_centavos: split.facilitatorNetCentavos,
+      })
+      .eq('id', charge.id)
+      .is('facilitator_net_centavos', null);
+    if (writeError) throw writeError;
+  } catch (err) {
+    console.error('[registration-fulfillment] could not record the host split', {
+      chargeId: charge.id,
+      eventId: charge.event_id,
+      err,
+    });
+  }
 }
 
 /** `HR-2026-000042`, from a sequence — see the note in migration 0016. */

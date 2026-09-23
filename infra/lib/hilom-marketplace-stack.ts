@@ -397,6 +397,14 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/events/{eventId}/roster', [GET]],
       ['/facilitator/events/{eventId}/join-link', [PUT]],
       ['/facilitator/events/{eventId}/send-join-details', [POST]],
+      ['/facilitator/events/{eventId}/cancel', [POST]],
+      // Multi-date proposals (0054). A series is a grouping over the same
+      // events rows above, so it shares their ownership check but not their
+      // route prefix, and must be listed separately.
+      ['/facilitator/event-series', [GET, POST]],
+      ['/facilitator/event-series/{seriesId}', [GET, PUT]],
+      ['/facilitator/event-series/{seriesId}/dates', [PUT]],
+      ['/facilitator/event-series/{seriesId}/submit', [PUT]],
       // Group classes they teach (0049).
       ['/facilitator/classes', [GET, POST]],
       ['/facilitator/classes/{classId}', [PUT, DELETE]],
@@ -485,6 +493,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
       // events.facilitator_id is nullable — an admin-run event has no host to
       // press the button.
       ['/admin/events/{eventId}/send-join-details', [POST]],
+      // Cancel one date (0054, step 3) — full refund of whatever was paid,
+      // shared with the facilitator's own cancel via lib/event-cancellation.ts.
+      ['/admin/events/{eventId}/cancel', [POST]],
       ['/admin/audit-log', [GET]],
       ['/admin/registrations', [GET]],
       ['/admin/registrations/{registrationId}/cancel', [POST]],
@@ -497,6 +508,11 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/registrations/{registrationId}/charges/{chargeId}/waive', [POST]],
       ['/admin/registrations/{registrationId}/charges/{chargeId}/void', [POST]],
       ['/admin/registrations/{registrationId}', [GET]],
+      // Multi-date event proposals (0054) — see the note at the top of
+      // admin-registrations.ts for why the review lives here.
+      ['/admin/event-series', [GET]],
+      ['/admin/event-series/{seriesId}', [GET]],
+      ['/admin/event-series/{seriesId}/review', [PUT]],
     ]);
 
     attach(adminPeople, 'AdminPeopleInt', [

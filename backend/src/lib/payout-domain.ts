@@ -161,7 +161,21 @@ export function payoutCurrency(...sources: readonly (readonly PayableRow[])[]): 
  * on releasing only `bookings` — class earnings in a voided batch were
  * silently unpayable. A third source added to `buildPayout` goes here too.
  */
-export const PAYOUT_CLAIM_TABLES = ['bookings', 'class_registrations'] as const;
+export const PAYOUT_CLAIM_TABLES = ['bookings', 'class_registrations', 'registration_charges'] as const;
+
+/**
+ * What each claim table calls the amount the client paid.
+ *
+ * Bookings and class seats both say `price_centavos`; an event charge says
+ * `amount_centavos`, because a charge is one instalment of a price rather than
+ * the price itself (0016). Reads alias it back to `price_centavos` so that one
+ * `PayableRow` shape — and therefore one `sumPayable` — covers all three.
+ */
+export const PAYOUT_PRICE_COLUMN: Record<(typeof PAYOUT_CLAIM_TABLES)[number], string> = {
+  bookings: 'price_centavos',
+  class_registrations: 'price_centavos',
+  registration_charges: 'amount_centavos',
+};
 
 export type VoidDecision = { ok: true } | { ok: false; reason: string };
 

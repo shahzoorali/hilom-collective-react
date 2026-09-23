@@ -23,9 +23,14 @@ import {
   adminSetEventStatus,
   adminReviewEvent,
   adminUpdateEvent,
+  adminListEventSeries,
+  adminReviewEventSeries,
+  adminCancelEvent,
   type AdminEvent,
   type AdminEventInput,
+  type AdminEventSeries,
 } from '../../lib/cms';
+import { money } from '../../components/Layout';
 import type { MediaRef } from '../../cms/blocks';
 import MediaField from './MediaField';
 import RichTextEditor from './RichTextEditor';
@@ -564,6 +569,35 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  /**
+   * Calls off one date. Unlike Delete, this is offered on an event *with*
+   * registrations — that is the case it exists for — and refunds whatever
+   * each confirmed registrant paid, in full. See the note on `cancelEventDate`
+   * for why that is a different rule from the §III notice-period refund a
+   * registrant's own cancellation goes through.
+   */
+  async function cancelEvent(event: AdminEvent) {
+    const reason = window.prompt(
+      `Cancel "${event.title}"? Confirmed registrants are emailed and fully refunded whatever they paid. Say why, for that email:`,
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      setError('Say why the date is being cancelled — registrants see this.');
+      return;
+    }
+    try {
+      const res = await adminCancelEvent(adminKey, event.id, reason.trim());
+      await reload();
+      flash(
+        res.refundsOwed > 0
+          ? `Cancelled — ${res.refundsOwed} refund${res.refundsOwed === 1 ? '' : 's'} owed, in the Payouts queue.`
+          : 'Cancelled.',
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   const now = Date.now();
 
   // Filter computation
@@ -636,6 +670,13 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
           </span>
         </div>
       </div>
+
+      {/* Multi-date proposals (0054). Its own panel, not a row in the table
+          below — a series isn't one event, and squeezing it into that table
+          would mean either hiding its dates or inventing a fake event row for
+          it. Rendered above the list because a submission waiting on a
+          decision is more urgent than browsing everything already live. */}
+      {!openId && <SeriesReviewPanel adminKey={adminKey} onError={setError} onDone={flash} />}
 
       {/* Events List View */}
       {!openId ? (
@@ -781,6 +822,15 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                           <span className={event.status === 'published' ? 'pill pill-ok' : 'pill pill-warn'}>
                             {event.status}
                           </span>
+                          {event.cancelled_at && (
+                            <span
+                              className="pill pill-bad"
+                              style={{ marginLeft: '0.3rem' }}
+                              title={event.cancel_reason ?? undefined}
+                            >
+                              cancelled
+                            </span>
+                          )}
                           {/* Moderation is a second axis, not a second value
                               of `status` — an approved event can still be
                               unpublished, and that must not read as
@@ -883,13 +933,24 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                           >
                             Duplicate
                           </button>
-                          <button
-                            className="btn btn-ghost small"
-                            style={{ marginLeft: '0.35rem', color: 'var(--danger-fg)' }}
-                            onClick={() => remove(event)}
-                          >
-                            Delete
-                          </button>
+                          {event.ticketing_enabled && !event.cancelled_at ? (
+                            <button
+                              className="btn btn-ghost small"
+                              style={{ marginLeft: '0.35rem', color: 'var(--danger-fg)' }}
+                              onClick={() => void cancelEvent(event)}
+                              title="Take this date off sale and refund anyone who already paid"
+                            >
+                              Cancel date
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-ghost small"
+                              style={{ marginLeft: '0.35rem', color: 'var(--danger-fg)' }}
+                              onClick={() => remove(event)}
+                            >
+                              Delete
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1115,5 +1176,212 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
         </div>
       )}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Multi-date proposals awaiting a decision (0054).
+ *
+ * Renders nothing when the queue is empty, the same call PayoutsTab's
+ * `ClassRefundsPanel` makes: a permanently visible "nothing to review" panel
+ * is a thing people stop reading, and this one needs to be noticed on the day
+ * it is not empty.
+ *
+ * Approving is the one step that also prices the series — see the note on
+ * `adminReviewEventSeries`. The drawer below is where an admin sets that.
+ */
+function SeriesReviewPanel({
+  adminKey,
+  onError,
+  onDone,
+}: {
+  adminKey: string;
+  onError: (message: string | null) => void;
+  onDone: (message: string) => void;
+}) {
+  const [series, setSeries] = useState<AdminEventSeries[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [reviewing, setReviewing] = useState<AdminEventSeries | null>(null);
+
+  const reload = () => {
+    adminListEventSeries(adminKey)
+      .then((rows) => setSeries(rows.filter((s) => s.review_status === 'submitted' || s.review_status === 'rejected')))
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setLoaded(true));
+  };
+
+  useEffect(reload, [adminKey]);
+
+  if (!loaded || series.length === 0) return null;
+
+  return (
+    <div className="panel" style={{ marginBottom: '1.25rem', borderLeft: '3px solid var(--ochre-dark)' }}>
+      <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Series awaiting review — {series.length}</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        A multi-date programme a facilitator proposed. Approving sets the price, capacity and
+        Hilom's commission for every date at once.
+      </p>
+
+      {series.map((s) => (
+        <div key={s.id} className="card" style={{ marginBottom: '0.6rem' }}>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <div>
+              <strong>{s.title}</strong>{' '}
+              <span className="small muted">by {s.facilitators?.display_name ?? 'Unknown'}</span>
+              {s.review_status === 'rejected' && (
+                <span className="pill pill-warn" style={{ marginLeft: '0.4rem', fontSize: '0.7rem' }}>
+                  resubmitted
+                </span>
+              )}
+              {s.proposed_price_centavos !== null && (
+                <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
+                  Asked {money(s.proposed_price_centavos)}/date
+                  {s.proposed_capacity !== null && ` · ${s.proposed_capacity} seats`}
+                </p>
+              )}
+            </div>
+            <button type="button" className="btn btn-primary small" onClick={() => setReviewing(s)}>
+              Review
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {reviewing && (
+        <SeriesReviewDrawer
+          adminKey={adminKey}
+          series={reviewing}
+          onClose={() => setReviewing(null)}
+          onDecided={(message) => {
+            setReviewing(null);
+            onDone(message);
+            reload();
+          }}
+          onError={onError}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The decision: approve with a price, capacity and commission, or reject with
+ * a note. Price and capacity default to the facilitator's ask, editable —
+ * changed fields are what the facilitator's decision email cannot show them
+ * until they open their dashboard, so this is the one place to get them right.
+ */
+function SeriesReviewDrawer({
+  adminKey,
+  series,
+  onClose,
+  onDecided,
+  onError,
+}: {
+  adminKey: string;
+  series: AdminEventSeries;
+  onClose: () => void;
+  onDecided: (message: string) => void;
+  onError: (message: string | null) => void;
+}) {
+  const [priceInput, setPriceInput] = useState(
+    series.proposed_price_centavos !== null ? (series.proposed_price_centavos / 100).toFixed(2) : '',
+  );
+  const [capacityInput, setCapacityInput] = useState(
+    series.proposed_capacity !== null ? String(series.proposed_capacity) : '',
+  );
+  const [commissionInput, setCommissionInput] = useState('20');
+  const [note, setNote] = useState('');
+  const [publish, setPublish] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const price = priceInput.trim() ? Math.round(Number(priceInput) * 100) : null;
+  const commissionBps = commissionInput.trim() ? Math.round(Number(commissionInput) * 100) : null;
+  const hilomCut = price !== null && commissionBps !== null ? Math.floor((price * commissionBps) / 10_000) : null;
+
+  async function approve() {
+    if (price === null || price < 0) return onError('Set a price before approving.');
+    if (!capacityInput.trim() || Number(capacityInput) < 1) return onError('Set a capacity before approving.');
+    if (commissionBps === null || commissionBps < 0 || commissionBps > 10_000) {
+      return onError('Set a commission between 0% and 100%.');
+    }
+    setBusy(true);
+    onError(null);
+    try {
+      const res = await adminReviewEventSeries(adminKey, series.id, 'approve', {
+        note: note.trim() || undefined,
+        publish,
+        platformFeeBps: commissionBps,
+        priceCentavos: price,
+        capacity: Number(capacityInput),
+      });
+      onDecided(`Approved — ${res.dateCount} date${res.dateCount === 1 ? '' : 's'}${publish ? ', published' : ''}.`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reject() {
+    if (!note.trim()) return onError('Say why it was rejected — the facilitator sees this note.');
+    setBusy(true);
+    onError(null);
+    try {
+      await adminReviewEventSeries(adminKey, series.id, 'reject', { note: note.trim() });
+      onDecided('Sent back for changes.');
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginTop: '0.75rem', background: 'var(--surface-2, #f7f5ee)' }}>
+      <h4 style={{ marginTop: 0 }}>Review "{series.title}"</h4>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Price per date (₱)</span>
+          <input type="number" min={0} step="0.01" value={priceInput} onChange={(e) => setPriceInput(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Capacity per date</span>
+          <input type="number" min={1} value={capacityInput} onChange={(e) => setCapacityInput(e.target.value)} />
+        </label>
+      </div>
+
+      <label className="field">
+        <span>Hilom's commission (%)</span>
+        <input type="number" min={0} max={100} step="0.1" value={commissionInput} onChange={(e) => setCommissionInput(e.target.value)} />
+        {hilomCut !== null && (
+          <small className="muted">Per ticket: Hilom {money(hilomCut)} · facilitator {money((price ?? 0) - hilomCut)}</small>
+        )}
+      </label>
+
+      <label className="field">
+        <span>Note (required to reject, optional to approve)</span>
+        <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What needs to change, or a note for the facilitator" />
+      </label>
+
+      <label className="row" style={{ gap: '0.4rem', alignItems: 'center' }}>
+        <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} />
+        <span className="small">Publish immediately on approval</span>
+      </label>
+
+      <div className="row" style={{ gap: '0.5rem', marginTop: '0.5rem' }}>
+        <button type="button" className="btn btn-ghost small" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="btn btn-secondary small" onClick={() => void reject()} disabled={busy}>
+          Request changes
+        </button>
+        <button type="button" className="btn btn-accent small" onClick={() => void approve()} disabled={busy}>
+          Approve{publish ? ' & publish' : ''}
+        </button>
+      </div>
+    </div>
   );
 }

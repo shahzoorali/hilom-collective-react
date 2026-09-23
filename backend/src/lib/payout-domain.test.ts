@@ -6,6 +6,7 @@ import {
   payoutCurrency,
   canVoidPayout,
   PAYOUT_CLAIM_TABLES,
+  PAYOUT_PRICE_COLUMN,
   type PayableRow,
 } from './payout-domain.js';
 
@@ -56,6 +57,27 @@ describe('sumPayable', () => {
     const totals = sumPayable([stringy, stringy]);
     assert.equal(totals.gross, 160000);
     assert.equal(totals.net, 136000);
+  });
+
+  test('totals a batch mixing bookings, class seats and event charges (0054)', () => {
+    // The batch builder aliases each source's own price column
+    // (price_centavos / amount_centavos) onto PayableRow.price_centavos
+    // before calling this — by the time sumPayable sees them, a booking, a
+    // class seat and an event ticket charge are indistinguishable, which is
+    // the whole point of the shared shape.
+    const booking = row('booking-1', 150000);
+    const classSeat = row('class-1', 80000);
+    const eventCharge: PayableRow = {
+      id: 'charge-1',
+      price_centavos: 500000,
+      platform_fee_centavos: 100000,
+      facilitator_net_centavos: 400000,
+      currency: 'PHP',
+    };
+    const totals = sumPayable([booking, classSeat, eventCharge]);
+    assert.equal(totals.count, 3);
+    assert.equal(totals.gross, 150000 + 80000 + 500000);
+    assert.equal(totals.net, booking.facilitator_net_centavos + classSeat.facilitator_net_centavos + 400000);
   });
 
   test('treats null and undefined money as zero', () => {
@@ -183,10 +205,26 @@ describe('payoutCurrency', () => {
 });
 
 describe('voiding a payout', () => {
-  test('releases every table buildPayout stamps, class seats included', () => {
+  test('releases every table buildPayout stamps, class seats and event charges included', () => {
     // The regression: from 0051 until this fix, voiding released only
     // `bookings`, so class seats in a voided batch were never payable again.
-    assert.deepEqual([...PAYOUT_CLAIM_TABLES].sort(), ['bookings', 'class_registrations']);
+    // 0054 adds `registration_charges` for the same reason.
+    assert.deepEqual(
+      [...PAYOUT_CLAIM_TABLES].sort(),
+      ['bookings', 'class_registrations', 'registration_charges'],
+    );
+  });
+
+  test('every claim table has a price column mapping, event charges aliased', () => {
+    // registration_charges says amount_centavos, not price_centavos — a
+    // charge is one instalment of a price (0016), and this map is what lets
+    // the builder read it back into the shared PayableRow shape.
+    for (const table of PAYOUT_CLAIM_TABLES) {
+      assert.ok(PAYOUT_PRICE_COLUMN[table], `missing price column for ${table}`);
+    }
+    assert.equal(PAYOUT_PRICE_COLUMN.registration_charges, 'amount_centavos');
+    assert.equal(PAYOUT_PRICE_COLUMN.bookings, 'price_centavos');
+    assert.equal(PAYOUT_PRICE_COLUMN.class_registrations, 'price_centavos');
   });
 
   test('refuses to void a paid batch', () => {

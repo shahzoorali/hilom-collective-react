@@ -29,6 +29,7 @@ import {
   type AdminPayout,
   type AdminClassRegistration,
 } from '../../lib/booking';
+import { adminListRegistrations, adminMarkRefundSent, type AdminRegistration } from '../../lib/cms';
 import { adminConfirm, adminToast } from './ui/feedback';
 import { downloadCsv } from './ui/DataTable';
 import { BarList } from './ui/Charts';
@@ -149,6 +150,7 @@ export default function PayoutsTab({ adminKey }: { adminKey: string }) {
           is more urgent than this month's payout run, and renders nothing at
           all when none is owed. */}
       <ClassRefundsPanel adminKey={adminKey} onError={setError} onDone={setNotice} />
+      <EventRefundsPanel adminKey={adminKey} onError={setError} onDone={setNotice} />
 
       <div className="panel">
         <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>New batch</h3>
@@ -417,6 +419,119 @@ function ClassRefundsPanel({
                 </tr>
               );
             })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Event registrations owed a refund (0054, step 3) — the same job as
+ * `ClassRefundsPanel`, one queue over, for the source that gained a "the host
+ * cancelled" refund path: `refund_centavos > 0 and refunded_at is null` on
+ * `event_registrations`, generalized here rather than a third bespoke queue,
+ * since `adminListRegistrations` already supports the filter as
+ * `?refundsOwed=1`.
+ *
+ * Renders nothing when empty, for the same reason `ClassRefundsPanel` does.
+ */
+function EventRefundsPanel({
+  adminKey,
+  onError,
+  onDone,
+}: {
+  adminKey: string;
+  onError: (message: string | null) => void;
+  onDone: (message: string) => void;
+}) {
+  const [rows, setRows] = useState<AdminRegistration[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const reload = useCallback(() => {
+    adminListRegistrations(adminKey, { refundsOwed: '1' })
+      .then(setRows)
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setLoaded(true));
+  }, [adminKey, onError]);
+
+  useEffect(reload, [reload]);
+
+  async function markSent(row: AdminRegistration) {
+    const reference = window.prompt(
+      `Bank or PayMongo reference for the ${money(row.refund_centavos ?? 0, row.currency)} refund to ${row.registrant_email}?`,
+    );
+    if (reference === null) return;
+    if (!reference.trim()) {
+      onError('A reference is required — without one the refund cannot be reconciled later.');
+      return;
+    }
+
+    setBusyId(row.id);
+    onError(null);
+    try {
+      await adminMarkRefundSent(adminKey, row.id, reference.trim());
+      reload();
+      onDone(`Refund to ${row.registrant_email} recorded as sent.`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (!loaded || rows.length === 0) return null;
+
+  const total = rows.reduce((a, r) => a + (r.refund_centavos ?? 0), 0);
+
+  return (
+    <div className="panel" style={{ borderLeft: '3px solid var(--ochre-dark)' }}>
+      <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Event refunds owed — {money(total)}</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        Registrations cancelled — most often because a date was called off — that have not been
+        refunded yet.
+      </p>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Who</th>
+              <th>Event</th>
+              <th>Cancelled</th>
+              <th style={{ textAlign: 'right' }}>Owed</th>
+              <th style={{ textAlign: 'right' }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td className="small">
+                  <strong>{row.registrant_name || row.registrant_email}</strong>
+                  {row.registrant_name && <div className="muted">{row.registrant_email}</div>}
+                </td>
+                <td className="small">{row.events?.title ?? 'Event'}</td>
+                <td className="small">
+                  {row.cancelled_at
+                    ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(row.cancelled_at))
+                    : '—'}
+                </td>
+                <td className="small" style={{ textAlign: 'right' }}>
+                  {money(row.refund_centavos ?? 0, row.currency)}
+                </td>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <button
+                    className="btn btn-primary small"
+                    disabled={busyId === row.id}
+                    onClick={() => void markSent(row)}
+                    title="Record that this refund has been sent"
+                  >
+                    {busyId === row.id ? '…' : 'Mark refunded'}
+                  </button>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

@@ -39,7 +39,9 @@ const COLUMNS =
   // joining link without going through the facilitator's own dashboard.
   'facilitator_id, join_url, join_instructions, ' +
   // 0048. The moderation queue and the badge on every row in the list.
-  'review_status, submitted_by, submitted_at, reviewed_at, review_note';
+  'review_status, submitted_by, submitted_at, reviewed_at, review_note, ' +
+  // 0054, step 3. Whether this date was pulled after going on sale.
+  'cancelled_at, cancel_reason';
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +

@@ -68,7 +68,10 @@ import {
   FacilitatorInputError,
 } from '../lib/facilitator-input.js';
 import { buildRoster, sendJoinDetailsToRegistrants } from '../lib/event-roster.js';
+import { cancelEventDate } from '../lib/event-cancellation.js';
 import { httpUrlOrNull, validateEvent } from '../lib/cms-events.js';
+import { sendEventProposalSubmitted } from '../lib/booking-email.js';
+import { selfActor, recordAudit } from '../lib/audit.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 import { randomBytes } from 'node:crypto';
@@ -158,6 +161,10 @@ export async function handler(ev: APIGatewayProxyEventV2): Promise<APIGatewayPro
 
     if (path.includes('/facilitator/classes')) {
       return await classes(supabase, facilitator, ev, method, path);
+    }
+
+    if (path.includes('/facilitator/event-series')) {
+      return await eventSeries(supabase, facilitator, ev, method, path);
     }
 
     if (path.includes('/facilitator/events')) {
@@ -1722,7 +1729,8 @@ async function earnings(
   // facilitator held the time — but a cancellation does not.
   const EARNING_STATUSES = ['confirmed', 'completed', 'no_show'];
 
-  const [monthRes, unpaidRes, payoutRes, classMonthRes, classUnpaidRes] = await Promise.all([
+  // prettier-ignore
+  const [monthRes, unpaidRes, payoutRes, classMonthRes, classUnpaidRes, eventMonthRes, eventUnpaidRes] = await Promise.all([
     supabase
       .from('bookings')
       .select(
@@ -1766,6 +1774,35 @@ async function earnings(
       .eq('facilitator_id', facilitator.id)
       .eq('status', 'completed')
       .is('payout_id', null),
+    // Event tickets they host (0054). The row is a paid charge, so an
+    // instalment plan contributes the parts that have actually cleared.
+    //
+    // `facilitator_net_centavos is not null` is what separates an event with a
+    // revenue share from one of Hilom's own, where the host earns nothing and
+    // must not be shown a number as though they did.
+    supabase
+      .from('registration_charges')
+      .select(
+        'price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
+          'events!inner(facilitator_id, delivered_at)',
+      )
+      .eq('status', 'paid')
+      .not('facilitator_net_centavos', 'is', null)
+      .eq('events.facilitator_id', facilitator.id)
+      .gte('events.delivered_at', monthStart)
+      .returns<Record<string, unknown>[]>(),
+    supabase
+      .from('registration_charges')
+      .select(
+        'price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
+          'events!inner(facilitator_id)',
+      )
+      .eq('status', 'paid')
+      .is('payout_id', null)
+      .is('refunded_at', null)
+      .not('facilitator_net_centavos', 'is', null)
+      .eq('events.facilitator_id', facilitator.id)
+      .returns<Record<string, unknown>[]>(),
   ]);
 
   if (monthRes.error) throw monthRes.error;
@@ -1773,6 +1810,8 @@ async function earnings(
   if (payoutRes.error) throw payoutRes.error;
   if (classMonthRes.error) throw classMonthRes.error;
   if (classUnpaidRes.error) throw classUnpaidRes.error;
+  if (eventMonthRes.error) throw eventMonthRes.error;
+  if (eventUnpaidRes.error) throw eventUnpaidRes.error;
 
   interface Totals {
     sessions: number;
@@ -1806,6 +1845,11 @@ async function earnings(
   const classUnpaid = sum(classUnpaidRes.data);
   const bookingMonth = sum(monthRes.data);
   const bookingUnpaid = sum(unpaidRes.data);
+  // `sessions` counts charges here, not tickets — one instalment plan is
+  // several charges against one seat. It is reported as a money breakdown
+  // rather than an attendance count, which is what the roster is for.
+  const eventMonth = sum(eventMonthRes.data);
+  const eventUnpaid = sum(eventUnpaidRes.data);
 
   const combine = (a: Totals, b: Totals): Totals => ({
     sessions: a.sessions + b.sessions,
@@ -1815,11 +1859,13 @@ async function earnings(
   });
 
   return ok({
-    thisMonth: combine(bookingMonth, classMonth),
-    awaitingPayout: combine(bookingUnpaid, classUnpaid),
+    thisMonth: combine(combine(bookingMonth, classMonth), eventMonth),
+    awaitingPayout: combine(combine(bookingUnpaid, classUnpaid), eventUnpaid),
     // The class half on its own, for the breakdown line.
     classesThisMonth: classMonth,
     classesAwaitingPayout: classUnpaid,
+    eventsThisMonth: eventMonth,
+    eventsAwaitingPayout: eventUnpaid,
     offPlatformThisMonth: {
       sessions: selfBooked.length,
       // Null (\"not recorded\") and 0 (\"nothing was charged\") both add nothing,
@@ -1948,6 +1994,9 @@ async function events(
 
   if (method === 'PUT' && path.endsWith('/submit')) {
     return await submitProposal(supabase, facilitator, eventId);
+  }
+  if (method === 'POST' && path.endsWith('/cancel')) {
+    return await cancelHostedEvent(supabase, facilitator, eventId, parseBody(ev));
   }
   if (method === 'PUT' && !path.endsWith('/join-link')) {
     return await saveProposal(supabase, facilitator, eventId, parseBody(ev));
@@ -2093,6 +2142,35 @@ async function resendJoinDetails(
     ...hosted,
     id: eventId,
   });
+  return ok(result);
+}
+
+/**
+ * The host calls off one date (0054, step 3).
+ *
+ * `ownedEvent` above is only the read-side check (host *or* proposer, for the
+ * reason its own comment gives); the write in `cancelEventDate` re-asserts
+ * `facilitator_id = this facilitator` itself, which is what actually stops one
+ * facilitator cancelling another's date — `ownedEvent`'s `submitted_by` half
+ * exists for editing a proposal still in review, not for an approved, hosted
+ * event, and an admin may reassign the host on approval (see the note on
+ * `submitted_by` in 0048).
+ */
+async function cancelHostedEvent(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  eventId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const hosted = await ownedEvent(supabase, facilitator, eventId);
+  if (!hosted) return notFound('Event not found');
+
+  const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : '';
+  if (!reason) return badRequest('Say why this date is being cancelled — registrants see this.');
+
+  const result = await cancelEventDate(supabase, facilitator.id, eventId, reason, 'facilitator');
+  if (!result) return notFound('Event not found, or already cancelled');
+
   return ok(result);
 }
 
@@ -2271,6 +2349,448 @@ async function submitProposal(
   if (error) throw error;
 
   return ok({ event: data });
+}
+
+// ---------------------------------------------------------------------------
+// Event series (0054) — a multi-date proposal, reviewed once
+// ---------------------------------------------------------------------------
+//
+//   GET  /facilitator/event-series                 — every series they proposed
+//   POST /facilitator/event-series                 — start one, with its dates
+//   GET  /facilitator/event-series/{id}             — one series and its dates
+//   PUT  /facilitator/event-series/{id}             — edit content, price, capacity
+//   PUT  /facilitator/event-series/{id}/dates       — replace the date list
+//   PUT  /facilitator/event-series/{id}/submit      — hand it to Hilom for review
+//
+// Each date is still a plain `events` row (`series_id` points back here), so
+// everything downstream of approval — seat claiming, checkout, fulfillment,
+// the roster, cancelling one date — is the code that already exists for a
+// single proposed event. This section only ever touches `event_series` and
+// the *content* fields on its dates; ticketing, capacity and the revenue
+// share are the admin's to set, at review, exactly as for a single event (see
+// the comment on DRAFT_FIELDS) — see admin-registrations.ts `seriesReview`.
+
+const SERIES_COLUMNS =
+  'id, facilitator_id, title, review_status, submitted_at, reviewed_at, review_note, ' +
+  'proposed_price_centavos, proposed_capacity, platform_fee_bps, created_at';
+
+interface SeriesRow extends Record<string, unknown> {
+  id: string;
+  facilitator_id: string;
+  title: string;
+  review_status: string;
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+}
+
+/** One proposed occurrence, before it becomes an `events` row. */
+interface SeriesDate {
+  starts_at: string;
+  ends_at: string | null;
+}
+
+/**
+ * Parses and orders the date list a series proposal carries.
+ *
+ * Capped at 30: this is a form for "Mon/Wed/Fri for a few weeks", not a
+ * bulk-import tool, and an unbounded array here is an unbounded `events`
+ * insert below.
+ */
+function seriesDates(body: Record<string, unknown>): SeriesDate[] {
+  const raw = Array.isArray(body.dates) ? body.dates : [];
+  if (raw.length === 0) throw new FacilitatorInputError('Add at least one date.');
+  if (raw.length > 30) {
+    throw new FacilitatorInputError('That is too many dates for one series — split it into more than one.');
+  }
+
+  return raw
+    .map((item, i): SeriesDate => {
+      const rec = (item ?? {}) as Record<string, unknown>;
+      const startsAt = new Date(String(rec.starts_at ?? ''));
+      if (Number.isNaN(startsAt.getTime())) {
+        throw new FacilitatorInputError(`Date ${i + 1} needs a valid start time.`);
+      }
+      let endsAt: Date | null = null;
+      if (rec.ends_at) {
+        endsAt = new Date(String(rec.ends_at));
+        if (Number.isNaN(endsAt.getTime())) {
+          throw new FacilitatorInputError(`Date ${i + 1} has an invalid end time.`);
+        }
+        if (endsAt < startsAt) throw new FacilitatorInputError(`Date ${i + 1} ends before it starts.`);
+      }
+      return { starts_at: startsAt.toISOString(), ends_at: endsAt ? endsAt.toISOString() : null };
+    })
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+}
+
+/**
+ * The content shared by every date in a series, validated through the same
+ * `validateEvent` a single proposal uses.
+ *
+ * `validateEvent` requires `starts_at`, which a series body carries per-date
+ * rather than at the top level — so the first date is loaned to it here and
+ * discarded from the result. Each date event gets its own `starts_at`/`ends_at`
+ * from `seriesDates` above, never from this.
+ */
+function seriesContentFields(body: Record<string, unknown>, firstStartsAt: string): Record<string, unknown> {
+  const validated = validateEvent({ ...body, starts_at: firstStartsAt }) as unknown as Record<string, unknown>;
+  const picked: Record<string, unknown> = {};
+  for (const field of DRAFT_FIELDS) {
+    if (field === 'starts_at' || field === 'ends_at') continue;
+    if (field in validated) picked[field] = validated[field];
+  }
+  return picked;
+}
+
+/** The facilitator's proposed price and capacity — an ask, not a plan. See 0055. */
+function proposedMoney(body: Record<string, unknown>): { price: number | null; capacity: number | null } {
+  let price: number | null = null;
+  if (body.proposed_price_centavos !== undefined && body.proposed_price_centavos !== null) {
+    const n = Number(body.proposed_price_centavos);
+    if (!Number.isInteger(n) || n < 0) throw new FacilitatorInputError('That price is not a whole number of centavos.');
+    price = n;
+  }
+  let capacity: number | null = null;
+  if (body.proposed_capacity !== undefined && body.proposed_capacity !== null) {
+    const n = Number(body.proposed_capacity);
+    if (!Number.isInteger(n) || n < 1) throw new FacilitatorInputError('Capacity must be a whole number of seats, at least 1.');
+    capacity = n;
+  }
+  return { price, capacity };
+}
+
+/** Loads one series, but only if this facilitator proposed it. Same null-for-both-cases rule as `ownedEvent`. */
+async function ownedSeries(supabase: SupabaseClient, facilitator: FacilitatorRow, seriesId: string): Promise<SeriesRow | null> {
+  const { data, error } = await supabase
+    .from('event_series')
+    .select(SERIES_COLUMNS)
+    .eq('id', seriesId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<SeriesRow>();
+  if (error) throw error;
+  return data ?? null;
+}
+
+async function eventSeries(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  ev: APIGatewayProxyEventV2,
+  method: string,
+  path: string,
+): Promise<APIGatewayProxyResultV2> {
+  const seriesId = ev.pathParameters?.seriesId;
+
+  if (!seriesId) {
+    if (method === 'GET') return await listSeries(supabase, facilitator);
+    if (method === 'POST') return await createSeries(supabase, facilitator, parseBody(ev));
+    return badRequest(`Unsupported method ${method}`);
+  }
+
+  if (method === 'PUT' && path.endsWith('/submit')) {
+    return await submitSeries(supabase, facilitator, ev, seriesId);
+  }
+  if (method === 'PUT' && path.endsWith('/dates')) {
+    return await replaceSeriesDates(supabase, facilitator, seriesId, parseBody(ev));
+  }
+  if (method === 'GET') return await getSeries(supabase, facilitator, seriesId);
+  if (method === 'PUT') return await updateSeries(supabase, facilitator, seriesId, parseBody(ev));
+  return badRequest(`Unsupported route ${method} ${path}`);
+}
+
+async function listSeries(supabase: SupabaseClient, facilitator: FacilitatorRow): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('event_series')
+    .select(SERIES_COLUMNS)
+    .eq('facilitator_id', facilitator.id)
+    .order('created_at', { ascending: false })
+    .returns<SeriesRow[]>();
+  if (error) throw error;
+
+  const series = data ?? [];
+  if (series.length === 0) return ok({ series: [] });
+
+  const { data: dates, error: datesError } = await supabase
+    .from('events')
+    .select('id, series_id, starts_at, ends_at, status')
+    .in('series_id', series.map((s) => s.id))
+    .order('starts_at', { ascending: true })
+    .returns<{ id: string; series_id: string; starts_at: string; ends_at: string | null; status: string }[]>();
+  if (datesError) throw datesError;
+
+  const byseries = new Map<string, typeof dates>();
+  for (const d of dates ?? []) {
+    const list = byseries.get(d.series_id) ?? [];
+    list.push(d);
+    byseries.set(d.series_id, list);
+  }
+
+  return ok({ series: series.map((s) => ({ ...s, dates: byseries.get(s.id) ?? [] })) });
+}
+
+async function getSeries(supabase: SupabaseClient, facilitator: FacilitatorRow, seriesId: string): Promise<APIGatewayProxyResultV2> {
+  const series = await ownedSeries(supabase, facilitator, seriesId);
+  if (!series) return notFound('Series not found');
+
+  const { data: dates, error } = await supabase
+    .from('events')
+    .select(HOSTED_EVENT_COLUMNS)
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true })
+    .returns<HostedEventRow[]>();
+  if (error) throw error;
+
+  return ok({ series, dates: dates ?? [] });
+}
+
+/**
+ * A new series: the row that gets reviewed, plus one `events` row per date.
+ *
+ * `title` is read back off the validated content rather than the raw body,
+ * for the same sanitisation `validateEvent` already gives a single proposal.
+ */
+async function createSeries(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  if (facilitator.status !== 'published') {
+    return badRequest('Your profile needs to be published before you can propose an event.');
+  }
+
+  const dates = seriesDates(body);
+  const firstDate = dates[0];
+  if (!firstDate) throw new FacilitatorInputError('Add at least one date.');
+  const content = seriesContentFields(body, firstDate.starts_at);
+  const { price, capacity } = proposedMoney(body);
+
+  const { data: series, error: seriesError } = await supabase
+    .from('event_series')
+    .insert({
+      facilitator_id: facilitator.id,
+      title: content.title as string,
+      proposed_price_centavos: price,
+      proposed_capacity: capacity,
+    })
+    .select(SERIES_COLUMNS)
+    .single<SeriesRow>();
+  if (seriesError) throw seriesError;
+
+  const rows = dates.map((d) => ({
+    ...content,
+    ...d,
+    status: 'draft',
+    review_status: 'draft',
+    submitted_by: facilitator.id,
+    facilitator_id: facilitator.id,
+    series_id: series.id,
+  }));
+
+  const { data: events, error: eventsError } = await supabase
+    .from('events')
+    .insert(rows)
+    .select(HOSTED_EVENT_COLUMNS)
+    .returns<HostedEventRow[]>();
+  if (eventsError) throw eventsError;
+
+  return ok({ series, dates: events ?? [] });
+}
+
+/**
+ * Edits a series' shared content, and its proposed price and capacity.
+ *
+ * Only while the series is still the facilitator's to shape (draft or
+ * rejected) — the same `EDITABLE_REVIEW_STATES` rule a single proposal
+ * follows, and for the same reason: what an admin is reviewing, or has
+ * approved, cannot change underneath them.
+ *
+ * Editing a rejected series returns it to draft, on the series and on every
+ * one of its dates — the individual `events.review_status` is what the
+ * publish constraint (0048) actually checks, so it has to move in step with
+ * the series or a date could be left claiming a review that no longer applies.
+ */
+async function updateSeries(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  seriesId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const series = await ownedSeries(supabase, facilitator, seriesId);
+  if (!series) return notFound('Series not found');
+  if (!EDITABLE_REVIEW_STATES.has(series.review_status)) {
+    return badRequest('This series is being reviewed by Hilom, or has already been approved.');
+  }
+
+  const { data: firstDate, error: firstError } = await supabase
+    .from('events')
+    .select('starts_at')
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true })
+    .limit(1)
+    .maybeSingle<{ starts_at: string }>();
+  if (firstError) throw firstError;
+  if (!firstDate) return notFound('Series not found');
+
+  const content = seriesContentFields(body, firstDate.starts_at);
+  const { price, capacity } = proposedMoney(body);
+
+  const seriesPatch: Record<string, unknown> = { title: content.title };
+  if (body.proposed_price_centavos !== undefined) seriesPatch.proposed_price_centavos = price;
+  if (body.proposed_capacity !== undefined) seriesPatch.proposed_capacity = capacity;
+
+  const eventsPatch: Record<string, unknown> = { ...content };
+  if (series.review_status === 'rejected') {
+    seriesPatch.review_status = 'draft';
+    seriesPatch.review_note = null;
+    eventsPatch.review_status = 'draft';
+    eventsPatch.review_note = null;
+  }
+
+  const { data: updatedSeries, error: seriesError } = await supabase
+    .from('event_series')
+    .update(seriesPatch)
+    .eq('id', seriesId)
+    .select(SERIES_COLUMNS)
+    .single<SeriesRow>();
+  if (seriesError) throw seriesError;
+
+  const { data: dates, error: datesError } = await supabase
+    .from('events')
+    .update(eventsPatch)
+    .eq('series_id', seriesId)
+    .select(HOSTED_EVENT_COLUMNS)
+    .returns<HostedEventRow[]>();
+  if (datesError) throw datesError;
+
+  return ok({ series: updatedSeries, dates: dates ?? [] });
+}
+
+/**
+ * Replaces a series' date list wholesale.
+ *
+ * Safe to do destructively — delete every current date and insert the new
+ * set — only because this is reachable exclusively while the series is draft
+ * or rejected (see `updateSeries`), which means none of its dates can have
+ * been published or hold a registration yet. Reusing `content` read off the
+ * first surviving date is what keeps the title, description and every other
+ * shared field from having to be resent just to add a fourth Wednesday.
+ */
+async function replaceSeriesDates(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  seriesId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const series = await ownedSeries(supabase, facilitator, seriesId);
+  if (!series) return notFound('Series not found');
+  if (!EDITABLE_REVIEW_STATES.has(series.review_status)) {
+    return badRequest('This series is being reviewed by Hilom, or has already been approved.');
+  }
+
+  const { data: template, error: templateError } = await supabase
+    .from('events')
+    .select(HOSTED_EVENT_COLUMNS)
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true })
+    .limit(1)
+    .maybeSingle<HostedEventRow>();
+  if (templateError) throw templateError;
+  if (!template) return notFound('Series not found');
+
+  const dates = seriesDates(body);
+  const content: Record<string, unknown> = {};
+  for (const field of DRAFT_FIELDS) {
+    if (field === 'starts_at' || field === 'ends_at') continue;
+    content[field] = (template as unknown as Record<string, unknown>)[field];
+  }
+
+  const { error: deleteError } = await supabase.from('events').delete().eq('series_id', seriesId);
+  if (deleteError) throw deleteError;
+
+  const rows = dates.map((d) => ({
+    ...content,
+    ...d,
+    status: 'draft',
+    review_status: 'draft',
+    submitted_by: facilitator.id,
+    facilitator_id: facilitator.id,
+    series_id: seriesId,
+  }));
+
+  const { data: events, error: insertError } = await supabase
+    .from('events')
+    .insert(rows)
+    .select(HOSTED_EVENT_COLUMNS)
+    .returns<HostedEventRow[]>();
+  if (insertError) throw insertError;
+
+  return ok({ series, dates: events ?? [] });
+}
+
+/**
+ * Hands a series to Hilom, mirroring `submitProposal` at the series level.
+ *
+ * Both the series and every one of its dates move to 'submitted' in the same
+ * request — the dates' own `review_status` is what actually gates publishing
+ * (0048's check constraint reads the event row, not the series), so it has to
+ * track the series' decision rather than lag behind it.
+ */
+async function submitSeries(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  ev: APIGatewayProxyEventV2,
+  seriesId: string,
+): Promise<APIGatewayProxyResultV2> {
+  const series = await ownedSeries(supabase, facilitator, seriesId);
+  if (!series) return notFound('Series not found');
+  if (series.review_status === 'submitted') return badRequest('This is already with Hilom for review.');
+  if (series.review_status === 'approved') return badRequest('This series has already been approved.');
+
+  const { data: dates, error: datesError } = await supabase
+    .from('events')
+    .select('id, starts_at, description')
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true })
+    .returns<{ id: string; starts_at: string; description: string | null }[]>();
+  if (datesError) throw datesError;
+  const firstDate = dates?.[0];
+  if (!dates || dates.length === 0 || !firstDate) return badRequest('Add at least one date before submitting.');
+  if (!firstDate.description) return badRequest('Add a description before submitting.');
+
+  const now = new Date().toISOString();
+
+  const { data: updatedSeries, error: seriesError } = await supabase
+    .from('event_series')
+    .update({ review_status: 'submitted', submitted_at: now, review_note: null })
+    .eq('id', seriesId)
+    .select(SERIES_COLUMNS)
+    .single<SeriesRow>();
+  if (seriesError) throw seriesError;
+
+  const { error: eventsError } = await supabase
+    .from('events')
+    .update({ review_status: 'submitted', submitted_at: now, review_note: null })
+    .eq('series_id', seriesId);
+  if (eventsError) throw eventsError;
+
+  await sendEventProposalSubmitted({
+    facilitatorName: facilitator.display_name,
+    seriesTitle: series.title,
+    dateCount: dates.length,
+    firstDate: firstDate.starts_at,
+    proposedPriceCentavos: series.proposed_price_centavos,
+    timezone: facilitator.timezone,
+  }).catch((err: unknown) => {
+    console.error('[facilitatorPortal.submitSeries] admin alert failed', { seriesId, err });
+  });
+
+  await recordAudit(selfActor(facilitator.email, ev), {
+    action: 'event_series.submitted',
+    targetTable: 'event_series',
+    targetId: seriesId,
+    note: `"${series.title}" submitted with ${dates.length} date${dates.length === 1 ? '' : 's'}`,
+  });
+
+  return ok({ series: updatedSeries });
 }
 
 // ---------------------------------------------------------------------------

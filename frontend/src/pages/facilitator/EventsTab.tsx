@@ -25,8 +25,16 @@ import {
   createMyHostedEvent,
   saveMyHostedEvent,
   submitMyHostedEvent,
+  listMyEventSeries,
+  createMyEventSeries,
+  saveMyEventSeries,
+  replaceMyEventSeriesDates,
+  submitMyEventSeries,
+  cancelMyHostedEvent,
   type EventReviewStatus,
   type MyHostedEvent,
+  type MyEventSeries,
+  type EventSeriesInput,
 } from '../../lib/booking';
 import type { AdminRegistration, RosterMoney } from '../../lib/cms';
 
@@ -65,6 +73,27 @@ function ReviewBadge({ event }: { event: MyHostedEvent }) {
   );
 }
 
+/** The same badge logic as `ReviewBadge`, but a series has no `status` of its own — publication is per date. */
+function SeriesBadge({ series }: { series: MyEventSeries }) {
+  const [label, tone] =
+    series.review_status === 'draft'
+      ? ['Draft', 'muted']
+      : series.review_status === 'submitted'
+        ? ['With Hilom for review', 'muted']
+        : series.review_status === 'rejected'
+          ? ['Changes requested', 'muted']
+          : ['Approved', 'forest'];
+
+  return (
+    <span
+      className="small"
+      style={{ color: tone === 'forest' ? 'var(--forest)' : 'var(--muted)', fontWeight: 600 }}
+    >
+      · {label}
+    </span>
+  );
+}
+
 const STATUS_LABEL: Record<string, string> = {
   pending_payment: 'Holding a place',
   confirmed: 'Confirmed',
@@ -89,9 +118,12 @@ export default function EventsTab() {
   const { eventId } = useParams();
   const navigate = useNavigate();
   const [events, setEvents] = useState<MyHostedEvent[] | null>(null);
+  const [series, setSeries] = useState<MyEventSeries[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** null = list, 'new' = a blank proposal, otherwise the id being edited. */
   const [composing, setComposing] = useState<string | null>(null);
+  /** null = list, 'new' = a blank series, otherwise the series id being edited. */
+  const [composingSeries, setComposingSeries] = useState<string | null>(null);
   // Set by the form on its way out, shown on the list. The form cannot say
   // "sent" itself: succeeding is what closes it.
   const [notice, setNotice] = useState<string | null>(null);
@@ -100,10 +132,13 @@ export default function EventsTab() {
     listMyHostedEvents()
       .then(setEvents)
       .catch((err: Error) => setError(err.message));
+    listMyEventSeries()
+      .then(setSeries)
+      .catch((err: Error) => setError(err.message));
   }, []);
 
   if (error) return <div className="alert alert-error">{error}</div>;
-  if (events === null) return <div className="spinner" aria-label="Loading" />;
+  if (events === null || series === null) return <div className="spinner" aria-label="Loading" />;
 
   if (eventId) {
     const hosted = events.find((e) => e.id === eventId);
@@ -136,16 +171,82 @@ export default function EventsTab() {
     );
   }
 
+  if (composingSeries) {
+    return (
+      <SeriesProposalForm
+        seriesId={composingSeries === 'new' ? null : composingSeries}
+        existing={composingSeries === 'new' ? null : series.find((s) => s.id === composingSeries) ?? null}
+        onDone={(saved, message) => {
+          setSeries((list) =>
+            list === null
+              ? [saved]
+              : list.some((s) => s.id === saved.id)
+                ? list.map((s) => (s.id === saved.id ? saved : s))
+                : [saved, ...list],
+          );
+          setNotice(message ?? null);
+          setComposingSeries(null);
+        }}
+        onCancel={() => setComposingSeries(null)}
+      />
+    );
+  }
+
   return (
     <>
       <div className="admin-toolbar">
         <h2 style={{ margin: 0 }}>Events</h2>
-        <button type="button" className="btn btn-accent small" onClick={() => setComposing('new')}>
-          Propose an event
-        </button>
+        <div className="row" style={{ gap: '0.4rem' }}>
+          <button type="button" className="btn btn-secondary small" onClick={() => setComposingSeries('new')}>
+            Propose a series
+          </button>
+          <button type="button" className="btn btn-accent small" onClick={() => setComposing('new')}>
+            Propose an event
+          </button>
+        </div>
       </div>
 
       {notice && <div className="alert alert-success">{notice}</div>}
+
+      {series.length > 0 && (
+        <>
+          <h3 style={{ marginBottom: '0.4rem' }}>Series</h3>
+          <p className="small muted" style={{ marginTop: 0 }}>
+            A multi-date programme, reviewed once. Each date still has its own roster and joining
+            link below, once it is approved.
+          </p>
+          {series.map((s) => (
+            <div key={s.id} className="card" style={{ marginBottom: '0.6rem' }}>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div>
+                  <strong>{s.title}</strong> <SeriesBadge series={s} />
+                  <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
+                    {(s.dates ?? []).length} date{(s.dates ?? []).length === 1 ? '' : 's'}
+                    {s.proposed_price_centavos !== null && ` · asked ₱${(s.proposed_price_centavos / 100).toFixed(2)}/date`}
+                  </p>
+                </div>
+                {(s.review_status === 'draft' || s.review_status === 'rejected') && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-small"
+                    onClick={() => setComposingSeries(s.id)}
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {s.review_status === 'rejected' && s.review_note && (
+                <div className="alert alert-warning" style={{ margin: '0.6rem 0 0' }}>
+                  <strong>Hilom asked for changes:</strong> {s.review_note}
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+
+      <h3 style={{ marginBottom: '0.4rem' }}>Single dates</h3>
 
       {events.length === 0 && (
         <p className="muted">
@@ -234,6 +335,7 @@ function EventDetail({
   const [instructions, setInstructions] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [cancelled, setCancelled] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -315,17 +417,60 @@ function EventDetail({
   // link nobody typed.
   const dirty = url.trim() !== savedUrl;
 
+  async function cancelDate() {
+    const reason = window.prompt(
+      confirmedCount > 0
+        ? `Cancel this date? ${confirmedCount} confirmed ${confirmedCount === 1 ? 'registrant' : 'registrants'} will be emailed and fully refunded whatever they paid. Say why, for the email:`
+        : 'Cancel this date? Say why, for the record:',
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      setError('Say why this date is being cancelled — it goes in the email.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await cancelMyHostedEvent(eventId, reason.trim());
+      setCancelled(true);
+      setNotice(
+        res.refundsOwed > 0
+          ? `Cancelled. ${res.refundsOwed} ${res.refundsOwed === 1 ? 'person is' : 'people are'} owed a refund — Hilom sends those.`
+          : 'Cancelled.',
+      );
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
-      <button type="button" className="linklike small" onClick={onBack}>
-        ← All events
-      </button>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <button type="button" className="linklike small" onClick={onBack}>
+          ← All events
+        </button>
+        {!cancelled && (
+          <button type="button" className="btn btn-ghost btn-small" disabled={busy} onClick={() => void cancelDate()}>
+            Cancel this date
+          </button>
+        )}
+      </div>
       <h2>{roster?.title ?? fallbackTitle}</h2>
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
 
-      <div className="card" style={{ marginBottom: '1rem' }}>
+      {cancelled && (
+        <div className="alert alert-warning">
+          This date is cancelled and off the public calendar. Anyone who had a confirmed place was
+          emailed; refunds owed show up in Hilom's payouts screen.
+        </div>
+      )}
+
+      {!cancelled && <div className="card" style={{ marginBottom: '1rem' }}>
         <h3 style={{ marginTop: 0 }}>Joining link</h3>
         <p className="small muted" style={{ marginTop: 0 }}>
           Sent in the confirmation email to everyone who registers, and shown on their own
@@ -370,7 +515,7 @@ function EventDetail({
             Save your change before sending it out.
           </p>
         )}
-      </div>
+      </div>}
 
       {roster === null ? (
         <div className="spinner" aria-label="Loading" />
@@ -692,6 +837,264 @@ function EventProposalForm({
         <label className="field">
           <span>Image description</span>
           <input value={draft.image_alt} onChange={(e) => set('image_alt', e.target.value)} />
+        </label>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The multi-date proposal form.
+ *
+ * Everything `EventProposalForm` says about what is conspicuously absent
+ * applies here too, plus one field that form doesn't have: the price and
+ * capacity are still not Hilom's numbers, they are what the facilitator is
+ * *asking* for — the admin sets the real ones at approval (see the note on
+ * `event_series.proposed_price_centavos`).
+ *
+ * Dates are edited separately from content, mirroring the two-write split the
+ * backend makes (`saveMyEventSeries` for content, `replaceMyEventSeriesDates`
+ * for the list) — but from here both go out together on Save, since asking a
+ * facilitator to remember two save buttons for one form would be its own bug.
+ */
+function SeriesProposalForm({
+  seriesId,
+  existing,
+  onDone,
+  onCancel,
+}: {
+  seriesId: string | null;
+  existing: MyEventSeries | null;
+  onDone: (saved: MyEventSeries, message?: string) => void;
+  onCancel: () => void;
+}) {
+  const local = (iso: string | null) => (iso ? iso.slice(0, 16) : '');
+  const existingDates = existing?.dates ?? [];
+
+  const [draft, setDraft] = useState({
+    title: existing?.title ?? '',
+    subtitle: '',
+    excerpt: '',
+    description: '',
+    location: '',
+    venue_details: '',
+    format: '',
+    image_url: '',
+    image_alt: '',
+    proposed_price: existing?.proposed_price_centavos != null ? (existing.proposed_price_centavos / 100).toFixed(2) : '',
+    proposed_capacity: existing?.proposed_capacity != null ? String(existing.proposed_capacity) : '',
+  });
+  const [dates, setDates] = useState<{ starts_at: string; ends_at: string }[]>(
+    existingDates.length > 0
+      ? existingDates.map((d) => ({ starts_at: local(d.starts_at), ends_at: local(d.ends_at) }))
+      : [{ starts_at: '', ends_at: '' }],
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
+    setDraft((d) => ({ ...d, [key]: value }));
+
+  const setDate = (i: number, field: 'starts_at' | 'ends_at', value: string) =>
+    setDates((list) => list.map((d, idx) => (idx === i ? { ...d, [field]: value } : d)));
+
+  const content = () => ({
+    title: draft.title,
+    subtitle: draft.subtitle,
+    excerpt: draft.excerpt,
+    description: draft.description,
+    location: draft.location,
+    venue_details: draft.venue_details,
+    format: draft.format,
+    image: draft.image_url ? { id: null, url: draft.image_url, alt: draft.image_alt } : null,
+    proposed_price_centavos: draft.proposed_price.trim() ? Math.round(Number(draft.proposed_price) * 100) : null,
+    proposed_capacity: draft.proposed_capacity.trim() ? Number(draft.proposed_capacity) : null,
+  });
+
+  const dateList = () =>
+    dates
+      .filter((d) => d.starts_at)
+      .map((d) => ({
+        starts_at: new Date(d.starts_at).toISOString(),
+        ends_at: d.ends_at ? new Date(d.ends_at).toISOString() : null,
+      }));
+
+  async function save(keepOpen = false): Promise<MyEventSeries | null> {
+    setBusy(true);
+    setError(null);
+    try {
+      const builtDates = dateList();
+      if (builtDates.length === 0) throw new Error('Add at least one date.');
+
+      let saved: MyEventSeries;
+      if (!seriesId) {
+        const input: EventSeriesInput = { ...content(), dates: builtDates };
+        const res = await createMyEventSeries(input);
+        saved = res.series;
+      } else {
+        const res = await saveMyEventSeries(seriesId, content());
+        const res2 = await replaceMyEventSeriesDates(seriesId, builtDates);
+        saved = res2.series ?? res.series;
+      }
+      if (!keepOpen) onDone(saved);
+      return saved;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveAndSubmit() {
+    const saved = await save(true);
+    if (!saved) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const submitted = await submitMyEventSeries(saved.id);
+      onDone(submitted, 'Sent to Hilom for review.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not submit');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="admin-toolbar">
+        <h2 style={{ margin: 0 }}>{seriesId ? 'Edit series' : 'Propose a series'}</h2>
+        <div className="row" style={{ gap: '0.4rem' }}>
+          <button type="button" className="btn btn-ghost small" onClick={onCancel}>
+            Back
+          </button>
+          <button type="button" className="btn btn-secondary small" disabled={busy} onClick={() => void save()}>
+            {busy ? 'Saving…' : 'Save draft'}
+          </button>
+          <button type="button" className="btn btn-accent small" disabled={busy} onClick={() => void saveAndSubmit()}>
+            Send to Hilom
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="alert alert-error">{error}</div>}
+
+      <div className="alert alert-info">
+        Hilom reviews every series before it goes on the public calendar. The price and capacity
+        below are your ask — Hilom sets the final numbers and commission when approving.
+      </div>
+
+      <label className="field">
+        <span>Title</span>
+        <input value={draft.title} onChange={(e) => set('title', e.target.value)} />
+        <small className="muted">Shown to admins in the review queue. Each date can have its own title too, once approved.</small>
+      </label>
+
+      <label className="field">
+        <span>Subtitle</span>
+        <input value={draft.subtitle} onChange={(e) => set('subtitle', e.target.value)} />
+      </label>
+
+      <div className="field">
+        <span>Dates</span>
+        {dates.map((d, i) => (
+          <div key={i} className="row" style={{ gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
+            <input
+              type="datetime-local"
+              value={d.starts_at}
+              onChange={(e) => setDate(i, 'starts_at', e.target.value)}
+            />
+            <span className="muted small">to</span>
+            <input
+              type="datetime-local"
+              value={d.ends_at}
+              onChange={(e) => setDate(i, 'ends_at', e.target.value)}
+              placeholder="optional end"
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-small"
+              disabled={dates.length === 1}
+              onClick={() => setDates((list) => list.filter((_, idx) => idx !== i))}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="btn btn-ghost small"
+          onClick={() => setDates((list) => [...list, { starts_at: '', ends_at: '' }])}
+        >
+          + Add a date
+        </button>
+      </div>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Where</span>
+          <input value={draft.location} onChange={(e) => set('location', e.target.value)} placeholder="Via Zoom, or Quezon City" />
+        </label>
+        <label className="field">
+          <span>Format</span>
+          <input value={draft.format} onChange={(e) => set('format', e.target.value)} placeholder="Online, in person, hybrid" />
+        </label>
+      </div>
+
+      <label className="field">
+        <span>Short summary</span>
+        <textarea rows={2} value={draft.excerpt} onChange={(e) => set('excerpt', e.target.value)} />
+      </label>
+
+      <label className="field">
+        <span>Description</span>
+        <textarea
+          rows={10}
+          value={draft.description}
+          onChange={(e) => set('description', e.target.value)}
+          placeholder="What each session covers, who it is for, what people should bring."
+        />
+      </label>
+
+      <label className="field">
+        <span>Practical details</span>
+        <textarea rows={3} value={draft.venue_details} onChange={(e) => set('venue_details', e.target.value)} />
+      </label>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Poster image URL</span>
+          <input value={draft.image_url} onChange={(e) => set('image_url', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Image description</span>
+          <input value={draft.image_alt} onChange={(e) => set('image_alt', e.target.value)} />
+        </label>
+      </div>
+
+      <div className="two-col">
+        <label className="field">
+          <span>Price per date (₱)</span>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={draft.proposed_price}
+            onChange={(e) => set('proposed_price', e.target.value)}
+            placeholder="Your ask — Hilom confirms this at approval"
+          />
+        </label>
+        <label className="field">
+          <span>Capacity per date</span>
+          <input
+            type="number"
+            min={1}
+            value={draft.proposed_capacity}
+            onChange={(e) => set('proposed_capacity', e.target.value)}
+          />
         </label>
       </div>
     </>

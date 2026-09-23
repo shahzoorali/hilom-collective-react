@@ -38,6 +38,11 @@
  *     an abandoned "pay next instalment" click cannot permanently block the
  *     next attempt.
  *
+ *  6. **Remind the registrant the event itself is coming up** (0054, phase 2)
+ *     — once, the day before, the same one-shot reminder bookings already get.
+ *     Every other reminder in this file is about a payment; this is the only
+ *     one about the event.
+ *
  * Idempotent throughout. Reminders use claim-by-insert into
  * registration_charge_reminders (0017) — the unique index on (charge_id,
  * tier) makes the insert itself the claim, which is a stronger guarantee than
@@ -49,7 +54,7 @@
  * reminder costs someone their seat.
  */
 import { getSupabase } from '../lib/supabase.js';
-import { sendChargeReminder, sendOverdueAdminAlert } from '../lib/registration-email.js';
+import { sendChargeReminder, sendOverdueAdminAlert, sendEventReminder } from '../lib/registration-email.js';
 
 async function releaseExpiredHolds(now: Date): Promise<number> {
   const supabase = await getSupabase();
@@ -303,10 +308,105 @@ async function expireStaleCheckouts(now: Date): Promise<number> {
   return (data ?? []).length;
 }
 
+/** How far ahead of an event its "coming up" reminder goes out. */
+const EVENT_REMINDER_LEAD_HOURS = 24;
+
+/**
+ * Someone who registered minutes ago does not need reminding that they
+ * registered. Without this, a spot booked for tonight would get a "coming up"
+ * email seconds after confirmation — the same guard `booking-sweep.ts` keeps
+ * for sessions.
+ */
+const EVENT_REMINDER_MIN_AGE_MINUTES = 120;
+
+interface EventReminderRow {
+  id: string;
+  buyer_email: string;
+  registrant_name: string;
+  created_at: string;
+  events: {
+    title: string;
+    starts_at: string;
+    ends_at: string | null;
+    location: string | null;
+    venue_details: string | null;
+    format: string | null;
+    join_url: string | null;
+    join_instructions: string | null;
+  } | null;
+}
+
+/**
+ * Sends the one-shot "the event is coming up" reminder.
+ *
+ * Claimed the same way `sendDueReminders` claims a booking reminder:
+ * `reminder_sent_at` is stamped, conditional on it still being null, before
+ * the send. Two overlapping sweeps therefore cannot both remind the same
+ * registrant — only the one that wins the stamp sends anything — and a
+ * failed send rolls the stamp back so the next sweep retries rather than
+ * silently dropping the reminder.
+ */
+async function sendUpcomingEventReminders(now: Date): Promise<number> {
+  const supabase = await getSupabase();
+  const dueBy = new Date(now.getTime() + EVENT_REMINDER_LEAD_HOURS * 3_600_000).toISOString();
+  const createdBefore = new Date(now.getTime() - EVENT_REMINDER_MIN_AGE_MINUTES * 60_000).toISOString();
+
+  const { data, error } = await supabase
+    .from('event_registrations')
+    .select(
+      'id, buyer_email, registrant_name, created_at, ' +
+        'events!inner(title, starts_at, ends_at, location, venue_details, format, join_url, join_instructions)',
+    )
+    .eq('status', 'confirmed')
+    .is('reminder_sent_at', null)
+    .gt('events.starts_at', now.toISOString())
+    .lte('events.starts_at', dueBy)
+    .lt('created_at', createdBefore)
+    .limit(200)
+    .returns<EventReminderRow[]>();
+  if (error) throw error;
+
+  let sent = 0;
+  for (const registration of data ?? []) {
+    if (!registration.events) continue;
+
+    const { data: claimed, error: claimError } = await supabase
+      .from('event_registrations')
+      .update({ reminder_sent_at: now.toISOString() })
+      .eq('id', registration.id)
+      .is('reminder_sent_at', null)
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (claimError) {
+      console.error('[registrationSweep] could not claim event reminder', { registrationId: registration.id, claimError });
+      continue;
+    }
+    if (!claimed) continue; // another invocation got there first
+
+    try {
+      await sendEventReminder({
+        to: registration.buyer_email,
+        registrantName: registration.registrant_name,
+        registrationId: registration.id,
+        event: registration.events,
+      });
+      sent += 1;
+    } catch (err) {
+      console.error('[registrationSweep] event reminder send failed, releasing for retry', {
+        registrationId: registration.id,
+        err,
+      });
+      await supabase.from('event_registrations').update({ reminder_sent_at: null }).eq('id', registration.id);
+    }
+  }
+
+  return sent;
+}
+
 export async function handler(): Promise<void> {
   const now = new Date();
 
-  const [released, flagged, reminded, completed, expiredCheckouts] = await Promise.all([
+  const [released, flagged, reminded, completed, expiredCheckouts, eventReminders] = await Promise.all([
     releaseExpiredHolds(now).catch((err) => {
       console.error('[registrationSweep] releasing expired holds failed', err);
       return 0;
@@ -327,13 +427,17 @@ export async function handler(): Promise<void> {
       console.error('[registrationSweep] expiring stale checkouts failed', err);
       return 0;
     }),
+    sendUpcomingEventReminders(now).catch((err) => {
+      console.error('[registrationSweep] sending event reminders failed', err);
+      return 0;
+    }),
   ]);
 
-  if (released > 0 || flagged > 0 || reminded > 0 || completed > 0 || expiredCheckouts > 0) {
+  if (released > 0 || flagged > 0 || reminded > 0 || completed > 0 || expiredCheckouts > 0 || eventReminders > 0) {
     console.log(
       `[registrationSweep] released ${released} hold(s), flagged ${flagged} overdue charge(s), ` +
-        `sent ${reminded} reminder(s), completed ${completed} registration(s), ` +
-        `expired ${expiredCheckouts} stale checkout(s)`,
+        `sent ${reminded} payment reminder(s), completed ${completed} registration(s), ` +
+        `expired ${expiredCheckouts} stale checkout(s), sent ${eventReminders} event reminder(s)`,
     );
   }
 }

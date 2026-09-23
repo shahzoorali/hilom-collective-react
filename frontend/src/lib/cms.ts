@@ -445,6 +445,10 @@ export interface AdminEvent extends CmsEvent {
   seats_taken?: number;
   /** Payment plans currently switched on. Zero means nothing is for sale. */
   active_plan_count?: number;
+  // Cancellation (0054, step 3). Distinct from `status`: cancelling also sets
+  // status to draft to stop new sales, but only this pair says *why*.
+  cancelled_at: string | null;
+  cancel_reason: string | null;
 }
 
 export type EventFormat = 'residential' | 'virtual' | 'day';
@@ -593,6 +597,92 @@ export const adminReviewEvent = (
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>
   apiFetch<{ deleted: boolean }>(`/admin/events/${eventId}`, adminInit(adminKey, 'DELETE'));
+
+/**
+ * Cancels one date (0054, step 3) — full refund of whatever was paid, shared
+ * with the facilitator's own cancel. See `lib/event-cancellation.ts`.
+ */
+export const adminCancelEvent = (adminKey: string, eventId: string, reason: string) =>
+  apiFetch<{
+    cancelled: boolean;
+    title: string;
+    registrationsCancelled: number;
+    refundsOwed: number;
+    refundTotalCentavos: number;
+    currency: string;
+  }>(`/admin/events/${eventId}/cancel`, adminInit(adminKey, 'POST', { reason }));
+
+// ---------------------------------------------------------------------------
+// Event series (0054) — a facilitator's multi-date proposal, reviewed once
+// ---------------------------------------------------------------------------
+
+export interface AdminEventSeries {
+  id: string;
+  facilitator_id: string;
+  title: string;
+  review_status: 'draft' | 'submitted' | 'approved' | 'rejected';
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+  platform_fee_bps: number | null;
+  created_at: string;
+  facilitators: { email: string; display_name: string; short_name: string | null; timezone: string } | null;
+}
+
+export interface AdminSeriesDate {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string | null;
+  currency: string;
+  status: 'draft' | 'published';
+  review_status: string;
+  capacity: number | null;
+  platform_fee_bps: number | null;
+}
+
+export const adminListEventSeries = (adminKey: string) =>
+  apiFetch<{ series: AdminEventSeries[] }>('/admin/event-series', adminInit(adminKey)).then((r) => r.series);
+
+export const adminGetEventSeries = (adminKey: string, seriesId: string) =>
+  apiFetch<{ series: AdminEventSeries; dates: AdminSeriesDate[] }>(
+    `/admin/event-series/${seriesId}`,
+    adminInit(adminKey),
+  );
+
+/**
+ * Approves or rejects a series (0054), mirroring `adminReviewEvent`.
+ *
+ * Approving is the one call that also prices the event: `platformFeeBps` is
+ * required, and `priceCentavos`/`capacity` default to what the facilitator
+ * asked for when omitted. It writes a "Full payment" plan onto every date and,
+ * with `publish: true`, publishes all of them in the same step.
+ */
+export const adminReviewEventSeries = (
+  adminKey: string,
+  seriesId: string,
+  decision: 'approve' | 'reject',
+  options: {
+    note?: string;
+    publish?: boolean;
+    platformFeeBps?: number;
+    priceCentavos?: number;
+    capacity?: number;
+  } = {},
+) =>
+  apiFetch<{ series: AdminEventSeries; dateCount: number }>(
+    `/admin/event-series/${seriesId}/review`,
+    adminInit(adminKey, 'PUT', {
+      decision,
+      note: options.note,
+      publish: options.publish,
+      platform_fee_bps: options.platformFeeBps,
+      price_centavos: options.priceCentavos,
+      capacity: options.capacity,
+    }),
+  );
 
 export const adminGetEventPlans = (adminKey: string, eventId: string) =>
   apiFetch<{ plans: AdminPlan[] }>(

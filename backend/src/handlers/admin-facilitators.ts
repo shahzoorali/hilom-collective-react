@@ -34,6 +34,7 @@ import {
   payoutCurrency,
   canVoidPayout,
   PAYOUT_CLAIM_TABLES,
+  PAYOUT_PRICE_COLUMN,
   type PayableRow,
 } from '../lib/payout-domain.js';
 import { ok, notFound, badRequest, unauthorized, serverError, json, isAdminCaller } from '../lib/http.js';
@@ -797,7 +798,7 @@ async function buildPayout(
   }
   if (periodEnd <= periodStart) return badRequest('period_end must be after period_start');
 
-  const [bookingRes, classRes] = await Promise.all([
+  const [bookingRes, classRes, eventRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos, currency')
@@ -825,21 +826,53 @@ async function buildPayout(
       // The embedded relation defeats PostgREST's inferred row type, exactly
       // as it does on every other joined read in this codebase.
       .returns<PayableRow[]>(),
+    // Event ticket sales (0054). The row is the *charge*, not the
+    // registration: an instalment plan pays in parts weeks apart, and a
+    // facilitator has earned the parts that actually cleared.
+    //
+    // `facilitator_net_centavos is not null` is the load-bearing filter. A
+    // null split means the event has no revenue share at all — Hilom's own
+    // programme, and every event that existed before 0054 — as distinct from
+    // one that earned zero. Dropping this filter would retroactively owe
+    // facilitators for events Hilom ran itself.
+    //
+    // The period is filtered on the event's `delivered_at` (its end, or its
+    // start when it has no end) for the same reason a class is filtered on
+    // its session's end: when the work happened decides which month pays for
+    // it, not when the ticket was sold. `!inner` is what lets the filter reach
+    // the embedded row at all.
+    supabase
+      .from('registration_charges')
+      .select(
+        'id, price_centavos:amount_centavos, platform_fee_centavos, facilitator_net_centavos, ' +
+          'currency, events!inner(facilitator_id, delivered_at), event_registrations!inner(status)',
+      )
+      .eq('status', 'paid')
+      .is('payout_id', null)
+      .is('refunded_at', null)
+      .not('facilitator_net_centavos', 'is', null)
+      // A seat that was cancelled earns nothing, however it was paid for.
+      .eq('event_registrations.status', 'confirmed')
+      .eq('events.facilitator_id', facilitatorId)
+      .gte('events.delivered_at', periodStart.toISOString())
+      .lt('events.delivered_at', periodEnd.toISOString())
+      .returns<PayableRow[]>(),
   ]);
 
-  const error = bookingRes.error ?? classRes.error;
+  const error = bookingRes.error ?? classRes.error ?? eventRes.error;
   if (error) throw error;
 
   const bookings = bookingRes.data ?? [];
   const classSeats = classRes.data ?? [];
-  if (bookings.length === 0 && classSeats.length === 0) {
-    return badRequest('No unpaid sessions or classes in that period');
+  const eventCharges = eventRes.data ?? [];
+  if (bookings.length === 0 && classSeats.length === 0 && eventCharges.length === 0) {
+    return badRequest('No unpaid sessions, classes or event tickets in that period');
   }
 
-  // One reducer over both sources — the column names are identical by design
-  // (0051). Lives in payout-domain.ts, with the tests that make the
-  // reconciliation below trustworthy.
-  const totals = sumPayable([...bookings, ...classSeats]);
+  // One reducer over all three sources — the column names are identical by
+  // design (0051, and aliased for charges in 0054). Lives in payout-domain.ts,
+  // with the tests that make the reconciliation below trustworthy.
+  const totals = sumPayable([...bookings, ...classSeats, ...eventCharges]);
 
   const processingFee = Number(body.processing_fee_centavos ?? 0);
 
@@ -853,7 +886,7 @@ async function buildPayout(
       platform_fee_centavos: totals.fees,
       processing_fee_centavos: processingFee,
       net_centavos: totals.net - processingFee,
-      currency: payoutCurrency(bookings, classSeats),
+      currency: payoutCurrency(bookings, classSeats, eventCharges),
       status: 'draft',
       notes: typeof body.notes === 'string' ? body.notes.slice(0, 2000) : null,
     })
@@ -863,7 +896,7 @@ async function buildPayout(
   if (insertError) throw insertError;
   if (!payout) throw new Error('Payout insert returned no row');
 
-  // Both sources are stamped the same way and for the same reasons. The
+  // Every source is stamped the same way and for the same reasons. The
   // `.is('payout_id', null)` re-assertion prevents a concurrent batch's rows
   // being claimed twice; reading back what was actually won is what stops this
   // batch *paying* for work another batch took — the filter prevents the
@@ -882,7 +915,9 @@ async function buildPayout(
       .update({ payout_id: payout.id })
       .in('id', ids)
       .is('payout_id', null)
-      .select('id, price_centavos, platform_fee_centavos, facilitator_net_centavos')
+      .select(
+        `id, price_centavos:${PAYOUT_PRICE_COLUMN[table]}, platform_fee_centavos, facilitator_net_centavos`,
+      )
       .returns<PayableRow[]>();
     if (stampError) throw stampError;
     return data ?? [];
@@ -894,14 +929,15 @@ async function buildPayout(
   // same state with no ordering to reason about.
   const claimedBookings = await stamp('bookings', bookings.map((b) => b.id as string));
   const claimedClasses = await stamp('class_registrations', classSeats.map((c) => c.id as string));
-  const claimedRows = [...claimedBookings, ...claimedClasses];
+  const claimedCharges = await stamp('registration_charges', eventCharges.map((c) => c.id as string));
+  const claimedRows = [...claimedBookings, ...claimedClasses, ...claimedCharges];
   // What this batch actually won, decided by the tested reconciliation in
   // payout-domain.ts rather than inline here. `claimedRows` is deliberately
   // the read-back from the stamping update, not the initial read: passing the
   // latter would make the whole reconciliation a no-op and restore the
   // double-payment it exists to prevent.
   const reconciled = reconcileClaim({
-    expected: [...bookings, ...classSeats],
+    expected: [...bookings, ...classSeats, ...eventCharges],
     claimed: claimedRows,
     processingFeeCentavos: processingFee,
   });
@@ -933,7 +969,7 @@ async function buildPayout(
 
     console.warn('[adminFacilitators.buildPayout] concurrent batch claimed some work', {
       payoutId: payout.id,
-      expected: bookings.length + classSeats.length,
+      expected: bookings.length + classSeats.length + eventCharges.length,
       claimed: claimedRows.length,
       lost: reconciled.lost,
     });
@@ -944,6 +980,7 @@ async function buildPayout(
       sessionCount: claimedRows.length,
       bookingCount: claimedBookings.length,
       classCount: claimedClasses.length,
+      eventCount: claimedCharges.length,
     });
   }
 
@@ -953,6 +990,7 @@ async function buildPayout(
     sessionCount: claimedRows.length,
     bookingCount: claimedBookings.length,
     classCount: claimedClasses.length,
+    eventCount: claimedCharges.length,
   });
 }
 

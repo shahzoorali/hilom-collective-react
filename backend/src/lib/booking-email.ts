@@ -28,6 +28,9 @@ const SENDER = 'Hilom Collective <kumusta@hilomcollective.com>';
 const ACCOUNT_BOOKINGS_URL = 'https://www.hilomcollective.com/account/bookings';
 const FACILITATOR_BOOKINGS_URL = 'https://www.hilomcollective.com/facilitator/bookings';
 
+/** Where every admin alert in this file goes — the shared team inbox. */
+const ADMIN_ALERT_EMAIL = 'kumusta@hilomcollective.com';
+
 /**
  * Formats an instant for a human, in a named zone, with the zone shown.
  *
@@ -1200,6 +1203,57 @@ export async function sendEventProposalDecision(input: {
     text,
     html,
   );
+}
+
+/**
+ * Tells an admin a facilitator has submitted an event (series) for review.
+ *
+ * `submitProposal` had no alert until now — a submission only ever surfaced as
+ * a count in the admin queue, so a proposal sat unreviewed until someone
+ * happened to open the Events tab. Every other admin-facing decision in this
+ * codebase (a payout, a class cancellation, a registration) gets a push; this
+ * is that push for events.
+ *
+ * Best-effort, like the decision email it mirrors: a failed send must not
+ * block the facilitator's submission from going through.
+ */
+export async function sendEventProposalSubmitted(input: {
+  facilitatorName: string;
+  seriesTitle: string;
+  dateCount: number;
+  firstDate: string;
+  proposedPriceCentavos: number | null;
+  timezone: string;
+}): Promise<void> {
+  const { facilitatorName, seriesTitle, dateCount, firstDate, proposedPriceCentavos, timezone } = input;
+  const reviewUrl = 'https://admin.hilomcollective.com/events';
+
+  const priceLine =
+    proposedPriceCentavos === null
+      ? 'No price was proposed.'
+      : `Proposed at ${(proposedPriceCentavos / 100).toFixed(2)} PHP per date.`;
+
+  const body =
+    p(`<strong>${escapeHtml(shortName(facilitatorName))}</strong> submitted <strong>${escapeHtml(seriesTitle)}</strong> for review.`) +
+    p(`${dateCount} date${dateCount === 1 ? '' : 's'}, starting ${escapeHtml(formatWhen(firstDate, timezone))}.`) +
+    note(priceLine) +
+    button('Review it', reviewUrl);
+
+  const html = renderEmail({
+    preheader: `${facilitatorName} submitted ${seriesTitle} for review.`,
+    heading: 'A new event proposal',
+    body,
+  });
+
+  const text = renderText('A new event proposal', [
+    `${facilitatorName} submitted ${seriesTitle} for review.`,
+    `${dateCount} date${dateCount === 1 ? '' : 's'}, starting ${formatWhen(firstDate, timezone)}.`,
+    priceLine,
+    '',
+    reviewUrl,
+  ]);
+
+  await send(ADMIN_ALERT_EMAIL, `New event proposal: ${seriesTitle}`, text, html);
 }
 
 /**

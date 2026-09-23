@@ -1028,6 +1028,55 @@ export async function sendJoinDetails(input: {
 }
 
 /**
+ * Reminds a confirmed registrant that the event is coming up (0054, phase 2).
+ *
+ * Mirrors `sendBookingReminder` in `booking-email.ts` — same one-time,
+ * lead-window send — for the gap `registration-sweep.ts`'s header noted:
+ * every reminder in that file is about a *payment*, and nothing ever reminded
+ * someone the event itself was about to happen. A registrant confirmed
+ * months out otherwise gets one email at registration and nothing again until
+ * the day arrives.
+ *
+ * Carries the joining link when there is one, the same release rule
+ * `sendJoinDetails` follows — this is a legitimate release, since only a
+ * `confirmed` registration reaches the sweep's query.
+ */
+export async function sendEventReminder(input: {
+  to: string;
+  registrantName: string;
+  registrationId: string;
+  event: EmailEvent;
+}): Promise<void> {
+  const { event, registrantName, registrationId } = input;
+  const heading = `${event.title} is coming up`;
+
+  const body =
+    p(`Hi ${escapeHtml(registrantName)}, a reminder that you're booked in.`) +
+    details([
+      { label: 'Event', value: escapeHtml(event.title) },
+      { label: 'When', value: escapeHtml(whenEvent(event)) },
+      ...(event.location ? [{ label: 'Where', value: escapeHtml(event.location) }] : []),
+    ]) +
+    joinBlock(event) +
+    (event.venue_details ? note(escapeHtml(event.venue_details)) : '') +
+    button('View your registration', registrationUrl(registrationId));
+
+  await send(
+    input.to,
+    heading,
+    renderText(heading, [
+      `Hi ${registrantName}, a reminder that you're booked in.`,
+      `When: ${whenEvent(event)}`,
+      ...(event.location ? [`Where: ${event.location}`] : []),
+      ...joinLines(event),
+      '',
+      registrationUrl(registrationId),
+    ]),
+    renderEmail({ preheader: `${event.title} is coming up.`, heading, body }),
+  );
+}
+
+/**
  * Tells the facilitator hosting an event that someone has paid for a place.
  *
  * ## Why this is a separate send and not a CC on the attendee's confirmation

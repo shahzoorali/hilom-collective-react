@@ -15,6 +15,15 @@
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/waive
  *   POST /admin/registrations/{registrationId}/charges/{chargeId}/void
  *   GET  /admin/audit-log     ?eventId= ?targetId= ?action= ?from= ?to= ?money=1 ?limit=
+ *   GET  /admin/event-series
+ *   GET  /admin/event-series/{seriesId}
+ *   PUT  /admin/event-series/{seriesId}/review
+ *
+ * The series routes (0054) live here rather than in admin-events.ts because
+ * approving one is a money decision — it sets the revenue share and writes the
+ * payment plan every date sells against — and this is where that machinery
+ * (validatePlans, replace_event_plans) and its SES grant already live for the
+ * single-event review this mirrors.
  *
  * Authorized with the shared admin key (`isAuthorizedAdmin`), matching every
  * other admin surface here. Consequence worth stating: the key identifies an
@@ -34,6 +43,7 @@ import { ok, notFound, badRequest, unauthorized, serverError, json, isAuthorized
 import { actorFromEvent, recordAudit, type AuditActor } from '../lib/audit.js';
 import { csvResponse, csvSlug } from '../lib/csv.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
+import { cancelEventDate } from '../lib/event-cancellation.js';
 import {
   sendRegistrationCancelled,
   sendPaymentNudge,
@@ -45,9 +55,12 @@ import {
   paidCentavos,
   nextDueCharge,
   assessRefund,
+  validatePlans,
+  TicketingValidationError,
   type ChargeStatus,
   type RefundAssessment,
 } from '../lib/event-ticketing.js';
+import { sendEventProposalDecision } from '../lib/booking-email.js';
 // The roster, its column lists and its derived money figures now live in a lib
 // because the facilitator hosting an event reads the same roster from their own
 // dashboard. See lib/event-roster.ts for why there is only one copy.
@@ -76,11 +89,25 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const eventId = event.pathParameters?.eventId;
   const registrationId = event.pathParameters?.registrationId;
   const chargeId = event.pathParameters?.chargeId;
+  const seriesId = event.pathParameters?.seriesId;
 
   try {
     // Every branch awaited, never bare-returned: a returned pending promise
     // escapes this try before rejecting and becomes an uncaught Lambda
     // rejection instead of a 400.
+    if (seriesId && method === 'PUT' && path.endsWith('/review')) {
+      return await seriesReview(event, seriesId, parseBody(event), actor);
+    }
+    if (seriesId && method === 'GET') {
+      return await seriesDetail(seriesId);
+    }
+    if (!seriesId && method === 'GET' && path.endsWith('/admin/event-series')) {
+      return await seriesQueue();
+    }
+
+    if (eventId && method === 'POST' && path.endsWith('/cancel')) {
+      return await cancelEventAsAdmin(eventId, parseBody(event), actor);
+    }
     if (eventId && method === 'POST' && path.endsWith('/send-join-details')) {
       return await sendJoinDetailsAsAdmin(eventId, actor);
     }
@@ -128,6 +155,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 
     return badRequest(`Unsupported route ${method} ${path}`);
   } catch (err) {
+    if (err instanceof TicketingValidationError) return badRequest(err.message);
     return serverError('adminRegistrations', err);
   }
 }
@@ -191,6 +219,46 @@ async function sendJoinDetailsAsAdmin(
   return ok(result);
 }
 
+/**
+ * Cancels one event date (0054, step 3).
+ *
+ *   POST /admin/events/{eventId}/cancel   { reason }
+ *
+ * The shared logic — full refund of whatever was paid, void what wasn't, tell
+ * everyone — lives in `event-cancellation.ts` so the facilitator's own cancel
+ * (facilitator-portal.ts) cannot compute a different figure. This wrapper is
+ * the admin authorization (already checked by `isAuthorizedAdmin` at the top
+ * of the handler) and the audit row.
+ */
+async function cancelEventAsAdmin(
+  eventId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const reason = String(body.reason ?? '').trim().slice(0, 500);
+  if (!reason) return badRequest('Say why the date is being cancelled — registrants see this.');
+
+  const supabase = await getSupabase();
+  const result = await cancelEventDate(supabase, null, eventId, reason, 'admin');
+  if (!result) return notFound('Event not found, or already cancelled');
+
+  await recordAudit(actor, {
+    action: 'event.cancelled',
+    targetTable: 'events',
+    targetId: eventId,
+    eventId,
+    amountCentavos: result.refundTotalCentavos || null,
+    currency: result.currency,
+    after: {
+      registrations_cancelled: result.registrationsCancelled,
+      refunds_owed: result.refundsOwed,
+    },
+    note: reason,
+  });
+
+  return ok(result);
+}
+
 async function roster(eventId: string): Promise<APIGatewayProxyResultV2> {
   const built = await buildRoster(await getSupabase(), eventId);
   if (!built) return notFound('Event not found');
@@ -209,7 +277,10 @@ async function queue(query: Record<string, string | undefined>): Promise<APIGate
   const supabase = await getSupabase();
   const now = new Date();
 
-  let builder = supabase.from('event_registrations').select(REGISTRATION_COLUMNS);
+  // The embed is for display only (the refund queue below wants to show which
+  // event a refund belongs to without a second round trip) — every filter in
+  // this function still runs against the plain columns above it.
+  let builder = supabase.from('event_registrations').select(`${REGISTRATION_COLUMNS}, events(title, starts_at, ends_at, location)`);
 
   if (query.eventId) builder = builder.eq('event_id', query.eventId);
   if (query.status) builder = builder.eq('status', query.status);
@@ -230,6 +301,14 @@ async function queue(query: Record<string, string | undefined>): Promise<APIGate
     decorated = decorated.filter(
       (r) => r.cancellation_requested_at !== null && r.cancellation_decided_at === null,
     );
+  } else if (query.refundsOwed === '1') {
+    // Owed and not yet sent (0016's own predicate, mirrored here rather than
+    // pushed into the query builder above — `queue()` already decorates in
+    // memory for `flagged`, and a second in-memory filter costs nothing extra
+    // against the same 500-row cap). Generalizes PayoutsTab's class refund
+    // queue to events: a date cancelled under 0054 lands here the same way a
+    // cancelled class seat lands in `adminListClassRegistrations`.
+    decorated = decorated.filter((r) => Number(r.refund_centavos ?? 0) > 0 && r.refunded_at === null);
   } else if (query.flagged === '1') {
     decorated = decorated.filter(
       (r) =>
@@ -1068,4 +1147,245 @@ async function priceOverride(
     reissuedChargeId,
     overpaidCentavos,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Event series review (0054)
+// ---------------------------------------------------------------------------
+//
+// A series proposal is one decision spanning several `events` rows. Approving
+// it is three things at once, all done here rather than by the admin visiting
+// each date separately: set the revenue share, write the payment plan every
+// date will sell against, and publish. Rejecting is one: say why, so
+// `event_series.review_note` — shown verbatim on the facilitator's dashboard —
+// is never empty.
+
+interface SeriesRow {
+  id: string;
+  title: string;
+  review_status: string;
+  facilitator_id: string;
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+  facilitators?: { email: string; display_name: string; short_name: string | null; timezone: string } | null;
+}
+
+interface SeriesDateRow {
+  id: string;
+  starts_at: string;
+  ends_at: string | null;
+  currency: string;
+}
+
+const SERIES_COLUMNS =
+  'id, facilitator_id, title, review_status, submitted_at, reviewed_at, review_note, ' +
+  'proposed_price_centavos, proposed_capacity, platform_fee_bps, created_at, ' +
+  'facilitators:facilitator_id(email, display_name, short_name, timezone)';
+
+async function seriesQueue(): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data, error } = await supabase
+    .from('event_series')
+    .select(SERIES_COLUMNS)
+    .order('submitted_at', { ascending: true, nullsFirst: false })
+    .returns<SeriesRow[]>();
+  if (error) throw error;
+  return ok({ series: data ?? [] });
+}
+
+async function seriesDetail(seriesId: string): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const { data: series, error } = await supabase
+    .from('event_series')
+    .select(SERIES_COLUMNS)
+    .eq('id', seriesId)
+    .maybeSingle<SeriesRow>();
+  if (error) throw error;
+  if (!series) return notFound('Series not found');
+
+  const { data: dates, error: datesError } = await supabase
+    .from('events')
+    .select('id, title, starts_at, ends_at, currency, status, review_status, capacity, platform_fee_bps')
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true });
+  if (datesError) throw datesError;
+
+  return ok({ series, dates: dates ?? [] });
+}
+
+/**
+ * Approve or reject a series (0054), mirroring `review` in admin-events.ts at
+ * the series level.
+ *
+ *   PUT /admin/event-series/{id}/review
+ *   { decision: 'approve' | 'reject', note?, publish?,
+ *     platform_fee_bps?, price_centavos?, capacity? }
+ *
+ * ## Approval writes money, not just a status
+ *
+ * A single event's review only ever flips `review_status` (and, with
+ * `publish: true`, `status`) — its capacity and price were already set by an
+ * admin when it was created. A series proposal has neither: the facilitator's
+ * numbers in `proposed_price_centavos`/`proposed_capacity` are an ask, not a
+ * plan (see 0055's comment on that column). So approving a series has to do
+ * what creating a single admin event and configuring its ticketing would
+ * otherwise take two screens to do — set capacity and `platform_fee_bps` on
+ * every date, and write each one a "Full payment" plan — in the one step that
+ * turns the proposal into something sellable.
+ *
+ * `platform_fee_bps` is required to approve. There is no default: 0055
+ * deliberately gives events a null rate rather than falling back to the
+ * facilitator's session commission, because an event is negotiated per
+ * booking rather than inherited, and a silent default here would set a
+ * revenue share nobody actually decided on.
+ *
+ * `price_centavos`/`capacity` are optional overrides — omitted, the
+ * facilitator's own ask is used. Either can be zero-length omitted but not
+ * absent-and-required: if neither the override nor the ask exists, there is
+ * nothing to sell and the review is refused.
+ */
+async function seriesReview(
+  event: APIGatewayProxyEventV2,
+  seriesId: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const decision = String(body.decision ?? '');
+  if (decision !== 'approve' && decision !== 'reject') {
+    return badRequest('decision must be either "approve" or "reject"');
+  }
+
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
+  if (decision === 'reject' && !note) {
+    return badRequest('Say why it was rejected — the facilitator sees this note.');
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: series, error: readError } = await supabase
+    .from('event_series')
+    .select(SERIES_COLUMNS)
+    .eq('id', seriesId)
+    .maybeSingle<SeriesRow>();
+  if (readError) throw readError;
+  if (!series) return notFound('Series not found');
+  if (series.review_status === 'approved') return badRequest('This series has already been approved.');
+
+  const { data: dates, error: datesError } = await supabase
+    .from('events')
+    .select('id, starts_at, ends_at, currency')
+    .eq('series_id', seriesId)
+    .order('starts_at', { ascending: true })
+    .returns<SeriesDateRow[]>();
+  if (datesError) throw datesError;
+  if (!dates || dates.length === 0) return badRequest('This series has no dates.');
+
+  const patch: Record<string, unknown> = {
+    review_status: decision === 'approve' ? 'approved' : 'rejected',
+    reviewed_at: new Date().toISOString(),
+    review_note: note || null,
+  };
+
+  let platformFeeBps: number | null = null;
+  let priceCentavos: number | null = null;
+  let capacity: number | null = null;
+
+  if (decision === 'approve') {
+    platformFeeBps =
+      body.platform_fee_bps !== undefined && body.platform_fee_bps !== null
+        ? Number(body.platform_fee_bps)
+        : null;
+    if (platformFeeBps === null || !Number.isInteger(platformFeeBps) || platformFeeBps < 0 || platformFeeBps > 10_000) {
+      return badRequest('Set a commission (0–10000 basis points) before approving.');
+    }
+    patch.platform_fee_bps = platformFeeBps;
+
+    priceCentavos =
+      body.price_centavos !== undefined && body.price_centavos !== null
+        ? Number(body.price_centavos)
+        : series.proposed_price_centavos;
+    if (priceCentavos === null || !Number.isInteger(priceCentavos) || priceCentavos < 0) {
+      return badRequest('Set a price before approving — the facilitator did not propose one.');
+    }
+
+    capacity =
+      body.capacity !== undefined && body.capacity !== null ? Number(body.capacity) : series.proposed_capacity;
+    if (capacity === null || !Number.isInteger(capacity) || capacity < 1) {
+      return badRequest('Set a capacity before approving — the facilitator did not propose one.');
+    }
+  }
+
+  const { data: updatedSeries, error: updateError } = await supabase
+    .from('event_series')
+    .update(patch)
+    .eq('id', seriesId)
+    .select(SERIES_COLUMNS)
+    .maybeSingle<SeriesRow>();
+  if (updateError) throw updateError;
+  if (!updatedSeries) return notFound('Series not found');
+
+  const eventsPatch: Record<string, unknown> = {
+    review_status: patch.review_status,
+    reviewed_at: patch.reviewed_at,
+    review_note: patch.review_note,
+  };
+  if (decision === 'approve') {
+    eventsPatch.ticketing_enabled = true;
+    eventsPatch.capacity = capacity;
+    eventsPatch.platform_fee_bps = platformFeeBps;
+    if (body.publish === true) eventsPatch.status = 'published';
+  } else {
+    eventsPatch.status = 'draft';
+  }
+
+  const { error: eventsError } = await supabase.from('events').update(eventsPatch).eq('series_id', seriesId);
+  if (eventsError) throw eventsError;
+
+  // One "Full payment" plan per date, at the approved price. validatePlans is
+  // the same validator admin-events.ts uses for a single event's plans — see
+  // its note on why a full plan needs exactly one instalment, marked deposit.
+  if (decision === 'approve' && priceCentavos !== null) {
+    const plans = validatePlans([
+      {
+        name: 'Full payment',
+        kind: 'full',
+        total_centavos: priceCentavos,
+        currency: dates[0]?.currency || 'PHP',
+        installments: [{ seq: 1, label: 'Full payment', amount_centavos: priceCentavos, is_deposit: true }],
+      },
+    ]);
+
+    for (const date of dates) {
+      const { error: planError } = await supabase.rpc('replace_event_plans', {
+        p_event_id: date.id,
+        p_plans: plans,
+      });
+      if (planError) throw planError;
+    }
+  }
+
+  if (series.facilitators?.email) {
+    await sendEventProposalDecision({
+      to: series.facilitators.email,
+      facilitatorName: series.facilitators.short_name || series.facilitators.display_name,
+      eventTitle: series.title,
+      approved: decision === 'approve',
+      reviewNote: note || null,
+      published: eventsPatch.status === 'published',
+    }).catch((err: unknown) => {
+      console.error('[adminRegistrations.seriesReview] decision email failed', { seriesId, err });
+    });
+  }
+
+  await recordAudit(actor, {
+    action: decision === 'approve' ? 'event_series.approved' : 'event_series.rejected',
+    targetTable: 'event_series',
+    targetId: seriesId,
+    amountCentavos: decision === 'approve' ? priceCentavos : null,
+    before: { review_status: series.review_status, platform_fee_bps: series.proposed_price_centavos },
+    after: patch,
+    note: decision === 'approve' ? `${dates.length} date(s) approved at ${platformFeeBps}bps` : note,
+  });
+
+  return ok({ series: updatedSeries, dateCount: dates.length });
 }

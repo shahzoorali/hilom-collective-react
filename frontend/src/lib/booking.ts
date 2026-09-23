@@ -1868,6 +1868,102 @@ export const sendMyHostedJoinDetails = (eventId: string) =>
     { method: 'POST', headers: jsonAuthHeaders() },
   );
 
+/** What cancelling one date did — the same shape the admin cancel returns. See `event-cancellation.ts`. */
+export interface CancelEventResult {
+  cancelled: boolean;
+  title: string;
+  registrationsCancelled: number;
+  refundsOwed: number;
+  refundTotalCentavos: number;
+  currency: string;
+}
+
+/** Calls off one date. Full refund of whatever was paid — see the note on `cancelEventDate`. */
+export const cancelMyHostedEvent = (eventId: string, reason: string) =>
+  apiFetch<CancelEventResult>(`/facilitator/events/${encodeURIComponent(eventId)}/cancel`, {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify({ reason }),
+  });
+
+// ---------------------------------------------------------------------------
+// Event series (0054) — a multi-date proposal, reviewed once
+// ---------------------------------------------------------------------------
+
+export interface MySeriesDate {
+  id: string;
+  starts_at: string;
+  ends_at: string | null;
+  status: 'draft' | 'published';
+}
+
+export interface MyEventSeries {
+  id: string;
+  title: string;
+  review_status: EventReviewStatus;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+  platform_fee_bps: number | null;
+  created_at: string;
+  dates?: MySeriesDate[];
+}
+
+/** What a facilitator may set on a series: the same content as one event, plus dates and an ask. */
+export interface EventSeriesInput {
+  title: string;
+  subtitle: string;
+  excerpt: string;
+  description: string;
+  location: string;
+  venue_details: string;
+  format: string;
+  image: { id: string | null; url: string; alt: string } | null;
+  dates: { starts_at: string; ends_at: string | null }[];
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+}
+
+export const listMyEventSeries = () =>
+  apiFetch<{ series: MyEventSeries[] }>('/facilitator/event-series', { headers: authHeaders() }).then(
+    (r) => r.series,
+  );
+
+export const getMyEventSeries = (seriesId: string) =>
+  apiFetch<{ series: MyEventSeries; dates: MyHostedEvent[] }>(
+    `/facilitator/event-series/${encodeURIComponent(seriesId)}`,
+    { headers: authHeaders() },
+  );
+
+export const createMyEventSeries = (input: EventSeriesInput) =>
+  apiFetch<{ series: MyEventSeries; dates: MyHostedEvent[] }>('/facilitator/event-series', {
+    method: 'POST',
+    headers: jsonAuthHeaders(),
+    body: JSON.stringify(input),
+  });
+
+/** Content, plus the proposed price/capacity. Not the date list — see `replaceMyEventSeriesDates`. */
+export const saveMyEventSeries = (seriesId: string, input: Partial<Omit<EventSeriesInput, 'dates'>>) =>
+  apiFetch<{ series: MyEventSeries; dates: MyHostedEvent[] }>(
+    `/facilitator/event-series/${encodeURIComponent(seriesId)}`,
+    { method: 'PUT', headers: jsonAuthHeaders(), body: JSON.stringify(input) },
+  );
+
+/** Replaces the whole date list. Only reachable while the series is still editable (draft/rejected). */
+export const replaceMyEventSeriesDates = (seriesId: string, dates: { starts_at: string; ends_at: string | null }[]) =>
+  apiFetch<{ series: MyEventSeries; dates: MyHostedEvent[] }>(
+    `/facilitator/event-series/${encodeURIComponent(seriesId)}/dates`,
+    { method: 'PUT', headers: jsonAuthHeaders(), body: JSON.stringify({ dates }) },
+  );
+
+export const submitMyEventSeries = (seriesId: string) =>
+  apiFetch<{ series: MyEventSeries }>(
+    `/facilitator/event-series/${encodeURIComponent(seriesId)}/submit`,
+    { method: 'PUT', headers: jsonAuthHeaders() },
+  ).then((r) => r.series);
+
 // ---------------------------------------------------------------------------
 // Group classes (0049)
 // ---------------------------------------------------------------------------
