@@ -1746,6 +1746,14 @@ export interface MyHostedEvent {
   title: string;
   subtitle: string | null;
   excerpt: string | null;
+  // Present on every read (HOSTED_EVENT_COLUMNS), but was missing from this
+  // type — the edit form always re-sent an empty description on save because
+  // of it. Draft editing pre-approval never showed the loss (nothing public
+  // was affected yet); an approved event's cosmetic fields now write straight
+  // to the live row (0058), which would have silently blanked a published
+  // event's description the first time someone reopened it to change
+  // something else.
+  description: string | null;
   image_url: string | null;
   image_alt: string | null;
   location: string | null;
@@ -1767,6 +1775,13 @@ export interface MyHostedEvent {
   reviewed_at: string | null;
   /** Why it was rejected. Shown to the facilitator verbatim. */
   review_note: string | null;
+  // A pending edit to an already-approved event (0058). The fields above
+  // (title, starts_at, ...) are the live, published values and are
+  // unaffected until this is decided.
+  pending_changes: Record<string, unknown> | null;
+  edit_submitted_at: string | null;
+  edit_reviewed_at: string | null;
+  edit_review_note: string | null;
 }
 
 export type EventReviewStatus = 'draft' | 'submitted' | 'approved' | 'rejected';

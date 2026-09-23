@@ -1152,9 +1152,9 @@ export async function sendEventProposalDecision(input: {
       // The one thing they can still change, and the one thing they cannot.
       // Worth saying here because this is the moment the rules change.
       note(
-        'You can still edit the joining link and joining instructions yourself, at any time. ' +
-          'The title, date and description are now fixed — they are what people are registering for. ' +
-          'If one of those genuinely has to change, reply to this email.',
+        'You can edit the description, image and joining details yourself, any time. Changing the ' +
+          'title, date, location or format sends that change to us for a quick check before it goes ' +
+          'live — the event stays exactly as it is now on the site until we do.',
       ) +
       button('Open your event', dashboard)
     : p(greeting) +
@@ -1203,6 +1203,85 @@ export async function sendEventProposalDecision(input: {
     text,
     html,
   );
+}
+
+/**
+ * Tells an admin a facilitator wants to change the title, date, location or
+ * format of an event that is already approved (0058).
+ *
+ * The live event is untouched while this waits — the changed fields are
+ * listed here precisely so an admin can judge the edit without having to
+ * diff the event against whatever it looked like before.
+ */
+export async function sendEventEditSubmitted(input: {
+  facilitatorName: string;
+  eventTitle: string;
+  changedFields: string[];
+}): Promise<void> {
+  const { facilitatorName, eventTitle, changedFields } = input;
+  const reviewUrl = 'https://admin.hilomcollective.com/events';
+
+  const body =
+    p(`<strong>${escapeHtml(shortName(facilitatorName))}</strong> wants to change <strong>${escapeHtml(eventTitle)}</strong>.`) +
+    note(`Changed: ${escapeHtml(changedFields.join(', '))}. The live event is unaffected until you decide.`) +
+    button('Review it', reviewUrl);
+
+  const html = renderEmail({
+    preheader: `${facilitatorName} proposed a change to ${eventTitle}.`,
+    heading: 'A change is waiting on your review',
+    body,
+  });
+
+  const text = renderText('A change is waiting on your review', [
+    `${facilitatorName} wants to change ${eventTitle}.`,
+    `Changed: ${changedFields.join(', ')}. The live event is unaffected until you decide.`,
+    '',
+    reviewUrl,
+  ]);
+
+  await send(ADMIN_ALERT_EMAIL, `Change proposed: ${eventTitle}`, text, html);
+}
+
+/** Tells the facilitator whether their proposed edit to a live event was approved. */
+export async function sendEventEditDecision(input: {
+  to: string;
+  facilitatorName: string;
+  eventTitle: string;
+  approved: boolean;
+  reviewNote: string | null;
+}): Promise<void> {
+  const { to, facilitatorName, eventTitle, approved, reviewNote } = input;
+  const dashboard = 'https://www.hilomcollective.com/facilitator/events';
+  const greeting = `Hi ${escapeHtml(shortName(facilitatorName))},`;
+
+  const body = approved
+    ? p(greeting) +
+      p(`Your change to <strong>${escapeHtml(eventTitle)}</strong> is live.`) +
+      button('View your event', dashboard)
+    : p(greeting) +
+      p(`We have not made your change to <strong>${escapeHtml(eventTitle)}</strong> — it stays as it is.`) +
+      (reviewNote ? note(`<strong>Why:</strong><br>${escapeHtml(reviewNote)}`) : '') +
+      p('You can propose the change again with any adjustments from your dashboard.') +
+      button('Open your event', dashboard);
+
+  const html = renderEmail({
+    preheader: approved ? `Your change to ${eventTitle} is live.` : `Your change to ${eventTitle} was not made.`,
+    heading: approved ? 'Your change is live' : 'Change not made',
+    body,
+  });
+
+  const text = renderText(approved ? 'Your change is live' : 'Change not made', [
+    `Hi ${shortName(facilitatorName)},`,
+    '',
+    approved
+      ? `Your change to ${eventTitle} is live.`
+      : `We have not made your change to ${eventTitle} — it stays as it is.`,
+    ...(!approved && reviewNote ? ['', 'Why:', reviewNote] : []),
+    '',
+    dashboard,
+  ]);
+
+  await send(to, approved ? `Live: your change to ${eventTitle}` : `Not made: your change to ${eventTitle}`, text, html);
 }
 
 /**

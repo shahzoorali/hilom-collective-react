@@ -26,6 +26,7 @@ import {
   adminListEventSeries,
   adminReviewEventSeries,
   adminCancelEvent,
+  adminReviewEventEdit,
   type AdminEvent,
   type AdminEventInput,
   type AdminEventSeries,
@@ -677,6 +678,17 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
           it. Rendered above the list because a submission waiting on a
           decision is more urgent than browsing everything already live. */}
       {!openId && <SeriesReviewPanel adminKey={adminKey} onError={setError} onDone={flash} />}
+      {!openId && (
+        <EditReviewPanel
+          adminKey={adminKey}
+          events={events.filter((e) => e.pending_changes)}
+          onError={setError}
+          onDone={(message) => {
+            flash(message);
+            void reload();
+          }}
+        />
+      )}
 
       {/* Events List View */}
       {!openId ? (
@@ -829,6 +841,11 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                               title={event.cancel_reason ?? undefined}
                             >
                               cancelled
+                            </span>
+                          )}
+                          {event.pending_changes && (
+                            <span className="pill pill-warn" style={{ marginLeft: '0.3rem' }}>
+                              edit pending
                             </span>
                           )}
                           {/* Moderation is a second axis, not a second value
@@ -1180,6 +1197,123 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
 }
 
 // ---------------------------------------------------------------------------
+
+/** How each `pending_changes` key is labelled for an admin comparing old vs new. */
+const CHANGE_LABELS: Record<string, string> = {
+  title: 'Title',
+  starts_at: 'Starts',
+  ends_at: 'Ends',
+  location: 'Where',
+  format: 'Format',
+};
+
+function formatChangeValue(field: string, value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (field === 'starts_at' || field === 'ends_at') {
+    return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(String(value)));
+  }
+  return String(value);
+}
+
+/**
+ * Edits to already-approved events, waiting on a decision (0058).
+ *
+ * Fed from the events already loaded by the parent rather than a second
+ * fetch — `adminListEvents` already carries `pending_changes` on every row,
+ * so filtering client-side is one array pass instead of a round trip.
+ * Renders nothing when empty, the same rule every review queue on this
+ * screen follows.
+ */
+function EditReviewPanel({
+  adminKey,
+  events,
+  onError,
+  onDone,
+}: {
+  adminKey: string;
+  events: AdminEvent[];
+  onError: (message: string | null) => void;
+  onDone: (message: string) => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  if (events.length === 0) return null;
+
+  async function decide(event: AdminEvent, decision: 'approve' | 'reject') {
+    let note: string | undefined;
+    if (decision === 'reject') {
+      const entered = window.prompt(`Why isn't "${event.title}"'s change being made? The facilitator sees this.`);
+      if (entered === null) return;
+      if (!entered.trim()) {
+        onError('Say why — the facilitator sees this note.');
+        return;
+      }
+      note = entered.trim();
+    }
+    setBusyId(event.id);
+    onError(null);
+    try {
+      await adminReviewEventEdit(adminKey, event.id, decision, note);
+      onDone(decision === 'approve' ? `Change to "${event.title}" is live.` : `Change to "${event.title}" declined.`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: '1.25rem', borderLeft: '3px solid var(--ochre-dark)' }}>
+      <h3 style={{ marginTop: 0, fontSize: '1.05rem' }}>Edits awaiting review — {events.length}</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        A facilitator wants to change the title, date, location or format of an event already on the
+        site. Nothing here has changed publicly yet.
+      </p>
+
+      {events.map((event) => (
+        <div key={event.id} className="card" style={{ marginBottom: '0.6rem' }}>
+          <strong>{event.title}</strong>
+          <table className="small" style={{ margin: '0.5rem 0', width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}></th>
+                <th style={{ textAlign: 'left' }}>Now</th>
+                <th style={{ textAlign: 'left' }}>Proposed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(event.pending_changes ?? {}).map(([field, value]) => (
+                <tr key={field}>
+                  <td className="muted">{CHANGE_LABELS[field] ?? field}</td>
+                  <td>{formatChangeValue(field, (event as unknown as Record<string, unknown>)[field])}</td>
+                  <td>
+                    <strong>{formatChangeValue(field, value)}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="row" style={{ gap: '0.4rem' }}>
+            <button
+              className="btn btn-ghost small"
+              disabled={busyId === event.id}
+              onClick={() => void decide(event, 'reject')}
+            >
+              Decline
+            </button>
+            <button
+              className="btn btn-primary small"
+              disabled={busyId === event.id}
+              onClick={() => void decide(event, 'approve')}
+            >
+              {busyId === event.id ? '…' : 'Approve'}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /**
  * Multi-date proposals awaiting a decision (0054).

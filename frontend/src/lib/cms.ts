@@ -449,6 +449,12 @@ export interface AdminEvent extends CmsEvent {
   // status to draft to stop new sales, but only this pair says *why*.
   cancelled_at: string | null;
   cancel_reason: string | null;
+  // A facilitator's pending edit to an already-approved event (0058). The
+  // live fields above are unaffected until this is decided.
+  pending_changes: Record<string, unknown> | null;
+  edit_submitted_at: string | null;
+  edit_reviewed_at: string | null;
+  edit_review_note: string | null;
 }
 
 export type EventFormat = 'residential' | 'virtual' | 'day';
@@ -597,6 +603,22 @@ export const adminReviewEvent = (
 
 export const adminDeleteEvent = (adminKey: string, eventId: string) =>
   apiFetch<{ deleted: boolean }>(`/admin/events/${eventId}`, adminInit(adminKey, 'DELETE'));
+
+/**
+ * Approves or rejects a facilitator's proposed edit to an already-approved
+ * event (0058). Mirrors `adminReviewEvent`, but never touches publication —
+ * the event stays exactly as published either way.
+ */
+export const adminReviewEventEdit = (
+  adminKey: string,
+  eventId: string,
+  decision: 'approve' | 'reject',
+  note?: string,
+) =>
+  apiFetch<{ event: AdminEvent }>(
+    `/admin/events/${eventId}/review-edit`,
+    adminInit(adminKey, 'PUT', { decision, note }),
+  ).then((r) => r.event);
 
 /**
  * Cancels one date (0054, step 3) — full refund of whatever was paid, shared

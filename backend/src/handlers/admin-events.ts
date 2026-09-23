@@ -27,7 +27,7 @@ import { validateEvent, validateTicketing } from '../lib/cms-events.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { validatePlans, TicketingValidationError } from '../lib/event-ticketing.js';
 import { actorFromEvent, recordAudit } from '../lib/audit.js';
-import { sendEventProposalDecision } from '../lib/booking-email.js';
+import { sendEventProposalDecision, sendEventEditDecision } from '../lib/booking-email.js';
 
 const COLUMNS =
   'id, title, subtitle, description, excerpt, image_id, image_url, image_alt, location, starts_at, ends_at, ' +
@@ -41,7 +41,9 @@ const COLUMNS =
   // 0048. The moderation queue and the badge on every row in the list.
   'review_status, submitted_by, submitted_at, reviewed_at, review_note, ' +
   // 0054, step 3. Whether this date was pulled after going on sale.
-  'cancelled_at, cancel_reason';
+  'cancelled_at, cancel_reason, ' +
+  // 0058. A facilitator's pending edit to an already-approved event.
+  'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note';
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +
@@ -102,6 +104,10 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (eventId && path.endsWith('/review')) {
       if (method === 'PUT') return await review(event, eventId, parseBody(event));
+      return badRequest(`Unsupported method ${method}`);
+    }
+    if (eventId && path.endsWith('/review-edit')) {
+      if (method === 'PUT') return await reviewEdit(event, eventId, parseBody(event));
       return badRequest(`Unsupported method ${method}`);
     }
 
@@ -445,6 +451,99 @@ async function review(
     before: { review_status: current.review_status, status: current.status },
     after: { review_status: patch.review_status, status: patch.status ?? current.status },
     note: `"${current.title ?? 'Untitled event'}" ${decision === 'approve' ? 'approved' : 'rejected'}${note ? `: ${note}` : ''}`,
+  });
+
+  return ok({ event: data });
+}
+
+/**
+ * Approve or reject a facilitator's proposed edit to an already-approved
+ * event (0058).
+ *
+ *   PUT /admin/events/{id}/review-edit   { decision: 'approve' | 'reject', note? }
+ *
+ * Distinct from `review()` above on purpose: this never touches
+ * `review_status` or `status` — the event was already approved and, unless an
+ * admin chooses to unpublish it for some other reason, stays exactly as
+ * published throughout. Approving here copies `pending_changes` onto the row
+ * in the same statement that clears it; rejecting only clears it. Either way
+ * `edit_reviewed_at`/`edit_review_note` are kept, the same "survive the
+ * decision" choice `review_note` makes in 0048.
+ */
+async function reviewEdit(
+  event: APIGatewayProxyEventV2,
+  eventId: string,
+  body: Record<string, unknown>,
+): Promise<APIGatewayProxyResultV2> {
+  const decision = String(body.decision ?? '');
+  if (decision !== 'approve' && decision !== 'reject') {
+    return badRequest('decision must be either "approve" or "reject"');
+  }
+
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : '';
+  if (decision === 'reject' && !note) {
+    return badRequest('Say why — the facilitator sees this note.');
+  }
+
+  const supabase = await getSupabase();
+
+  const { data: current, error: readError } = await supabase
+    .from('events')
+    .select(
+      'id, title, pending_changes, submitted_by, facilitator_id, ' +
+        'facilitators:facilitator_id(email, display_name, short_name)',
+    )
+    .eq('id', eventId)
+    .maybeSingle<{
+      id: string;
+      title: string;
+      pending_changes: Record<string, unknown> | null;
+      submitted_by: string | null;
+      facilitator_id: string | null;
+      facilitators: { email: string; display_name: string; short_name: string | null } | null;
+    }>();
+  if (readError) throw readError;
+  if (!current) return notFound('Event not found');
+  if (!current.pending_changes) return badRequest('There is no edit awaiting review on this event.');
+
+  const patch: Record<string, unknown> = {
+    edit_reviewed_at: new Date().toISOString(),
+    edit_review_note: note || null,
+    pending_changes: null,
+  };
+  if (decision === 'approve') Object.assign(patch, current.pending_changes);
+
+  const { data, error } = await supabase
+    .from('events')
+    .update(patch)
+    .eq('id', eventId)
+    .select(COLUMNS)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return notFound('Event not found');
+
+  // The host, not necessarily the proposer — an edit is something the current
+  // host is asking for, and the host is who has to live with the answer.
+  if (current.facilitators?.email) {
+    await sendEventEditDecision({
+      to: current.facilitators.email,
+      facilitatorName: current.facilitators.short_name || current.facilitators.display_name,
+      eventTitle: current.title ?? 'your event',
+      approved: decision === 'approve',
+      reviewNote: note || null,
+    }).catch((err: unknown) => {
+      console.error('[adminEvents.reviewEdit] decision email failed', { eventId, err });
+    });
+  }
+
+  await recordAudit(actorFromEvent(event), {
+    action: decision === 'approve' ? 'event.edit_approved' : 'event.edit_rejected',
+    targetTable: 'events',
+    targetId: eventId,
+    eventId,
+    before: current.pending_changes,
+    after: decision === 'approve' ? current.pending_changes : null,
+    note: `"${current.title ?? 'Untitled event'}" edit ${decision === 'approve' ? 'approved' : 'rejected'}${note ? `: ${note}` : ''}`,
   });
 
   return ok({ event: data });

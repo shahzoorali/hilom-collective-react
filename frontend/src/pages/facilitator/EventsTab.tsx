@@ -38,8 +38,17 @@ import {
 } from '../../lib/booking';
 import type { AdminRegistration, RosterMoney } from '../../lib/cms';
 
-/** Review states in which the proposal is still the facilitator's to change. */
+/** Review states in which the whole proposal is still the facilitator's to change. */
 const EDITABLE = new Set<EventReviewStatus>(['draft', 'rejected']);
+
+/**
+ * Whether Edit should be offered at all. Adds 'approved' to `EDITABLE`
+ * (0058) — the form behaves differently there (see `EventProposalForm`), but
+ * an approved event is not frozen any more, only its material fields are.
+ */
+function canEdit(event: MyHostedEvent): boolean {
+  return EDITABLE.has(event.review_status) || event.review_status === 'approved';
+}
 
 /**
  * Where a proposal stands, in the facilitator's own terms.
@@ -69,6 +78,9 @@ function ReviewBadge({ event }: { event: MyHostedEvent }) {
       style={{ color: tone === 'forest' ? 'var(--forest)' : 'var(--muted)', fontWeight: 600 }}
     >
       · {label}
+      {event.pending_changes && (
+        <span style={{ color: 'var(--muted)' }}> · Change awaiting review</span>
+      )}
     </span>
   );
 }
@@ -266,7 +278,7 @@ export default function EventsTab() {
               </p>
             </div>
             <div className="row" style={{ gap: '0.4rem' }}>
-              {EDITABLE.has(e.review_status) && (
+              {canEdit(e) && (
                 <button
                   type="button"
                   className="btn btn-ghost btn-small"
@@ -290,6 +302,14 @@ export default function EventsTab() {
           {e.review_status === 'rejected' && e.review_note && (
             <div className="alert alert-warning" style={{ margin: '0.6rem 0 0' }}>
               <strong>Hilom asked for changes:</strong> {e.review_note}
+            </div>
+          )}
+
+          {/* A declined edit (0058) leaves the event itself untouched, so this
+              is informational rather than a call to fix a broken listing. */}
+          {!e.pending_changes && e.edit_review_note && (
+            <div className="alert alert-warning" style={{ margin: '0.6rem 0 0' }}>
+              <strong>Your last edit wasn't made:</strong> {e.edit_review_note}
             </div>
           )}
 
@@ -628,7 +648,7 @@ function EventProposalForm({
     title: existing?.title ?? '',
     subtitle: existing?.subtitle ?? '',
     excerpt: existing?.excerpt ?? '',
-    description: '',
+    description: existing?.description ?? '',
     location: existing?.location ?? '',
     starts_at: local(existing?.starts_at ?? null),
     ends_at: local(existing?.ends_at ?? null),
@@ -670,6 +690,9 @@ function EventProposalForm({
    * and was never rendered. The facilitator saw the list come back with no
    * message, which is indistinguishable from nothing having happened.
    */
+  /** True once the event has been approved — material edits go through review instead of writing straight through. See 0058. */
+  const isApprovedEdit = existing?.review_status === 'approved';
+
   async function save(keepOpen = false): Promise<MyHostedEvent | null> {
     setBusy(true);
     setError(null);
@@ -678,7 +701,20 @@ function EventProposalForm({
       const saved = existing
         ? await saveMyHostedEvent(existing.id, payload())
         : await createMyHostedEvent(payload());
-      if (!keepOpen) onDone(saved);
+      if (!keepOpen) {
+        // A material change (title/date/location/format) on an approved
+        // event does not go live — it opens a review, and the event on the
+        // site is unaffected until Hilom decides. Cosmetic-only changes (or
+        // any edit to a draft/rejected proposal) are just saved.
+        const message =
+          isApprovedEdit && saved.pending_changes
+            ? 'Saved. The change to the title, date, location or format needs Hilom’s okay — the ' +
+              'live event is unaffected until then. Anything else you changed is already live.'
+            : isApprovedEdit
+              ? 'Saved and live.'
+              : undefined;
+        onDone(saved, message);
+      }
       return saved;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -716,37 +752,61 @@ function EventProposalForm({
   return (
     <>
       <div className="admin-toolbar">
-        <h2 style={{ margin: 0 }}>{existing ? 'Edit event' : 'Propose an event'}</h2>
+        <h2 style={{ margin: 0 }}>{isApprovedEdit ? 'Edit event' : existing ? 'Edit proposal' : 'Propose an event'}</h2>
         <div className="row" style={{ gap: '0.4rem' }}>
           <button type="button" className="btn btn-ghost small" onClick={onCancel}>
             Back
           </button>
-          <button
-            type="button"
-            className="btn btn-secondary small"
-            disabled={busy}
-            onClick={() => void save()}
-          >
-            {busy ? 'Saving…' : 'Save draft'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-accent small"
-            disabled={busy}
-            onClick={() => void saveAndSubmit()}
-          >
-            Send to Hilom
-          </button>
+          {isApprovedEdit ? (
+            <button type="button" className="btn btn-accent small" disabled={busy} onClick={() => void save()}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary small"
+                disabled={busy}
+                onClick={() => void save()}
+              >
+                {busy ? 'Saving…' : 'Save draft'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-accent small"
+                disabled={busy}
+                onClick={() => void saveAndSubmit()}
+              >
+                Send to Hilom
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
 
-      <div className="alert alert-info">
-        Hilom reviews every event before it goes on the public calendar. Ticket prices and
-        capacity are set by Hilom when your event is approved.
-      </div>
+      {isApprovedEdit ? (
+        <div className="alert alert-info">
+          This event is live. Changing the description, image or practical details saves and shows
+          immediately. Changing the title, date, location or format sends that change to Hilom for a
+          quick check first — the site keeps showing today's values until they decide.
+        </div>
+      ) : (
+        <div className="alert alert-info">
+          Hilom reviews every event before it goes on the public calendar. Ticket prices and
+          capacity are set by Hilom when your event is approved.
+        </div>
+      )}
+
+      {isApprovedEdit && existing?.pending_changes && (
+        <div className="alert alert-warning">
+          A change to this event is already waiting on Hilom. You can still edit the description,
+          image and other cosmetic details below — those save immediately — but another change to
+          the title, date, location or format will be refused until that one is decided.
+        </div>
+      )}
 
       <label className="field">
         <span>Title</span>

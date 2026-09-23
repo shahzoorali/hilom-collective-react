@@ -70,7 +70,7 @@ import {
 import { buildRoster, sendJoinDetailsToRegistrants } from '../lib/event-roster.js';
 import { cancelEventDate } from '../lib/event-cancellation.js';
 import { httpUrlOrNull, validateEvent } from '../lib/cms-events.js';
-import { sendEventProposalSubmitted } from '../lib/booking-email.js';
+import { sendEventProposalSubmitted, sendEventEditSubmitted } from '../lib/booking-email.js';
 import { selfActor, recordAudit } from '../lib/audit.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
@@ -1899,25 +1899,39 @@ const HOSTED_EVENT_COLUMNS =
   // for; nothing else in this file needs it.
   'id, title, subtitle, excerpt, description, image_url, image_alt, location, starts_at, ends_at, ' +
   'status, ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions, ' +
-  'review_status, submitted_at, reviewed_at, review_note, submitted_by';
+  'review_status, submitted_at, reviewed_at, review_note, submitted_by, ' +
+  // 0058. A pending edit to an already-approved event.
+  'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note';
 
 /**
  * What a facilitator may write on their own event, and when.
  *
- * Split into two sets rather than one, because the answer changes the moment
- * an admin approves it:
+ * Three sets, because the answer changes twice as a proposal moves through
+ * its life:
  *
- *   DRAFT_FIELDS — the proposal. Editable while the row is theirs to shape
- *                  (draft or rejected) and frozen once submitted, so that what
- *                  an admin reviews cannot change underneath them, and frozen
- *                  again once approved, because the title and date of a
- *                  published event are what attendees bought.
+ *   DRAFT_FIELDS    — the whole content. Editable while the row is theirs to
+ *                      shape (draft or rejected) and frozen once submitted, so
+ *                      that what an admin reviews cannot change underneath
+ *                      them.
  *
- *   HOST_FIELDS  — operational detail, editable at any point by the host. A
- *                  corrected Zoom link two hours before the doors open must
- *                  not require an admin.
+ *   MATERIAL_FIELDS — the subset of DRAFT_FIELDS that is what someone
+ *                      registered for: title, when, where, format. Once
+ *                      approved, changing one of these does not write the
+ *                      row — it stages a `pending_changes` edit for Hilom to
+ *                      decide, and the *current* values keep showing on the
+ *                      live, sold event until that decision lands. See 0058.
  *
- * Deliberately absent from both: `status`, `review_status`, `capacity`,
+ *   COSMETIC_FIELDS — DRAFT_FIELDS minus MATERIAL_FIELDS: subtitle, excerpt,
+ *                      description, the image, practical details. None of
+ *                      these change what somebody paid for, so once approved
+ *                      they write straight onto the row — a typo fix or a
+ *                      better poster image should not need Hilom's help.
+ *
+ *   HOST_FIELDS     — operational detail, editable at any point by the host,
+ *                      approved or not. A corrected Zoom link two hours
+ *                      before the doors open must not require an admin.
+ *
+ * Deliberately absent from all four: `status`, `review_status`, `capacity`,
  * `ticketing_enabled`, `currency` and anything on `event_payment_plans`. Those
  * are the money and the publish decision, and they belong to the admin — see
  * the check constraint in 0048, which is what actually enforces the publish
@@ -1936,6 +1950,11 @@ const DRAFT_FIELDS = [
   'venue_details',
   'format',
 ] as const;
+
+const MATERIAL_FIELDS = ['title', 'starts_at', 'ends_at', 'location', 'format'] as const;
+const COSMETIC_FIELDS = DRAFT_FIELDS.filter(
+  (f) => !(MATERIAL_FIELDS as readonly string[]).includes(f),
+) as Exclude<(typeof DRAFT_FIELDS)[number], (typeof MATERIAL_FIELDS)[number]>[];
 
 const HOST_FIELDS = ['join_url', 'join_instructions'] as const;
 
@@ -2259,15 +2278,28 @@ async function createProposal(
 /**
  * Saves an edit.
  *
- * Which fields are accepted depends on where the row is:
- *   draft / rejected → the proposal plus the host fields
- *   submitted        → host fields only; the proposal is frozen under review
- *   approved         → host fields only; the proposal is what people bought
+ * Which fields are accepted, and what happens to them, depends on where the
+ * row is:
  *
- * An edit to a rejected event moves it back to 'draft' so it leaves the
- * admin's queue until it is resubmitted. Without that, a rejected row either
- * sits in the queue being re-reviewed unchanged, or the facilitator has no
- * way to signal that they acted on the note.
+ *   draft / rejected → the whole proposal plus the host fields, written
+ *                       straight onto the row — nothing is live yet, so
+ *                       there is nothing to protect.
+ *   submitted        → host fields only; the proposal is frozen under review
+ *                       so what an admin is looking at cannot change under
+ *                       them.
+ *   approved         → host fields and COSMETIC_FIELDS write straight onto
+ *                       the row. Any MATERIAL_FIELDS that actually changed
+ *                       are staged as `pending_changes` (0058) instead of
+ *                       written — the live, sold event keeps its current
+ *                       values until an admin decides — and Hilom is
+ *                       alerted. Refused outright if an edit is already
+ *                       awaiting a decision, so a second attempt cannot
+ *                       silently overwrite the first admins haven't seen yet.
+ *
+ * An edit to a rejected *proposal* moves it back to 'draft' so it leaves the
+ * admin's queue until it is resubmitted — unrelated to `pending_changes`,
+ * which is a rejection of an *edit to an approved event* and never touches
+ * `review_status` at all (see the note on 0058's columns).
  */
 async function saveProposal(
   supabase: SupabaseClient,
@@ -2282,11 +2314,37 @@ async function saveProposal(
   const editable = EDITABLE_REVIEW_STATES.has(reviewStatus);
 
   const patch: Record<string, unknown> = { ...hostFields(body) };
+  let editSubmitted: string[] | null = null;
+
   if (editable) {
     Object.assign(patch, proposalFields(body));
     if (reviewStatus === 'rejected') {
       patch.review_status = 'draft';
       patch.review_note = null;
+    }
+  } else if (reviewStatus === 'approved') {
+    const content = proposalFields(body);
+    const material = (MATERIAL_FIELDS as readonly string[]).filter((f) => f in content);
+    // Changed against the *live* row, not merely present in the body — the
+    // form resends every field on every save, and resaving unchanged values
+    // must not open a review.
+    const changed = material.filter((f) => JSON.stringify(existing[f]) !== JSON.stringify(content[f]));
+
+    for (const field of COSMETIC_FIELDS) {
+      if (field in content) patch[field] = content[field];
+    }
+
+    if (changed.length > 0) {
+      if (existing.pending_changes) {
+        return badRequest(
+          'A change to this event is already waiting on Hilom. Wait for that decision before proposing another.',
+        );
+      }
+      patch.pending_changes = Object.fromEntries(changed.map((f) => [f, content[f]]));
+      patch.edit_submitted_at = new Date().toISOString();
+      patch.edit_reviewed_at = null;
+      patch.edit_review_note = null;
+      editSubmitted = changed;
     }
   }
 
@@ -2301,6 +2359,16 @@ async function saveProposal(
     .select(HOSTED_EVENT_COLUMNS)
     .single<HostedEventRow>();
   if (error) throw error;
+
+  if (editSubmitted) {
+    await sendEventEditSubmitted({
+      facilitatorName: facilitator.display_name,
+      eventTitle: existing.title,
+      changedFields: editSubmitted,
+    }).catch((err: unknown) => {
+      console.error('[facilitatorPortal.saveProposal] edit-review alert failed', { eventId, err });
+    });
+  }
 
   return ok({ event: data });
 }
