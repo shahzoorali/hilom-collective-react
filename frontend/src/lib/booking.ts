@@ -1852,6 +1852,8 @@ export const getMyHostedRoster = (eventId: string) =>
     registrations: AdminRegistration[];
     money: RosterMoney;
     joinLink: HostedJoinLink;
+    /** Still waiting for a seat to open up (0060). */
+    waitlistCount: number;
   }>(`/facilitator/events/${encodeURIComponent(eventId)}/roster`, { headers: authHeaders() });
 
 export const saveMyHostedJoinLink = (

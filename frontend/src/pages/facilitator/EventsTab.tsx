@@ -343,6 +343,7 @@ function EventDetail({
     title: string;
     registrations: AdminRegistration[];
     money: RosterMoney;
+    waitlistCount: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -362,7 +363,7 @@ function EventDetail({
     getMyHostedRoster(eventId)
       .then((res) => {
         if (!live) return;
-        setRoster({ title: res.event.title, registrations: res.registrations, money: res.money });
+        setRoster({ title: res.event.title, registrations: res.registrations, money: res.money, waitlistCount: res.waitlistCount });
         setSavedUrl(res.joinLink.join_url ?? '');
         setUrl(res.joinLink.join_url ?? '');
         setInstructions(res.joinLink.join_instructions ?? '');
@@ -546,6 +547,9 @@ function EventDetail({
             {money(roster.money.collectedCentavos, roster.money.currency)} collected
             {roster.money.outstandingCentavos > 0 && (
               <> · {money(roster.money.outstandingCentavos, roster.money.currency)} still owed</>
+            )}
+            {roster.waitlistCount > 0 && (
+              <> · {roster.waitlistCount} on the waitlist</>
             )}
           </p>
 

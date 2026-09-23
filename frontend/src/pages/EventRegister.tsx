@@ -31,6 +31,7 @@ import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../comp
 import {
   getEventTicketing,
   registerForEvent,
+  joinEventWaitlist,
   formatDueDate,
   formatEventDates,
   dueNow,
@@ -394,6 +395,9 @@ export default function EventRegister() {
   const [agreementOpen, setAgreementOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [waitlistBusy, setWaitlistBusy] = useState(false);
+  const [waitlistJoined, setWaitlistJoined] = useState(false);
+  const [waitlistError, setWaitlistError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!eventId) return;
@@ -551,6 +555,20 @@ export default function EventRegister() {
     }
   }
 
+  async function onJoinWaitlist() {
+    if (!eventId) return;
+    setWaitlistBusy(true);
+    setWaitlistError(null);
+    try {
+      await joinEventWaitlist(eventId, { name: name.trim() || undefined, phone: phone.trim() || undefined });
+      setWaitlistJoined(true);
+    } catch (err) {
+      setWaitlistError(err instanceof Error ? err.message : 'Could not join the waitlist.');
+    } finally {
+      setWaitlistBusy(false);
+    }
+  }
+
   return (
     <>
       <EventHeader event={event} />
@@ -562,11 +580,33 @@ export default function EventRegister() {
 
           {soldOut ? (
             <div className="panel">
-              <p style={{ margin: 0 }}>
-                Every place has been taken. Write to us at{' '}
-                <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a> — we keep a
-                list in case one frees up.
-              </p>
+              {waitlistJoined ? (
+                <p style={{ margin: 0 }}>
+                  You&rsquo;re on the waitlist. We&rsquo;ll email you the moment a place opens — first
+                  come, first served, so register as soon as you get that email.
+                </p>
+              ) : (
+                <>
+                  <p style={{ margin: 0 }}>
+                    Every place has been taken. Join the waitlist and we&rsquo;ll email you the moment
+                    one opens up — it isn&rsquo;t held for you, so register quickly once you hear.
+                  </p>
+                  {waitlistError && (
+                    <p className="small" style={{ color: 'var(--danger-fg, #b3261e)', marginTop: '0.75rem' }}>
+                      {waitlistError}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-accent"
+                    style={{ marginTop: '1rem' }}
+                    disabled={waitlistBusy}
+                    onClick={() => void onJoinWaitlist()}
+                  >
+                    {waitlistBusy ? 'Joining…' : 'Join the waitlist'}
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <p className="small" style={{ marginBottom: '1.5rem' }}>

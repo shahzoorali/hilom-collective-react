@@ -1077,6 +1077,60 @@ export async function sendEventReminder(input: {
 }
 
 /**
+ * Confirms joining the waitlist for a sold-out date (0054, Phase 2).
+ *
+ * Sets the expectation plainly: this is a notify-me list, not a hold. See
+ * the header comment on migration 0060 for why that distinction is load
+ * bearing — the whole point is not promising a seat this cannot guarantee.
+ */
+export async function sendWaitlistJoined(input: { to: string; name: string; eventTitle: string }): Promise<void> {
+  const { to, name, eventTitle } = input;
+  const heading = `You're on the waitlist for ${eventTitle}`;
+
+  const body =
+    p(`Hi ${escapeHtml(name)}, ${eventTitle} is full right now, and you're on the list.`) +
+    note(
+      "We'll email you the moment a place opens, so you can register — first come, first served, the " +
+        'same as everyone else. Being on this list does not hold a place for you.',
+    );
+
+  const html = renderEmail({ preheader: `You're on the waitlist for ${eventTitle}.`, heading, body });
+  const text = renderText(heading, [
+    `Hi ${name}, ${eventTitle} is full right now, and you're on the list.`,
+    "We'll email you the moment a place opens, so you can register. Being on this list does not hold a place for you.",
+  ]);
+
+  await send(to, `Waitlisted: ${eventTitle}`, text, html);
+}
+
+/** Tells a waitlisted person a seat has opened, with a link to register — first come, first served. */
+export async function sendWaitlistSpotOpen(input: {
+  to: string;
+  name: string;
+  eventTitle: string;
+  eventId: string;
+}): Promise<void> {
+  const { to, name, eventTitle, eventId } = input;
+  const registerUrl = `${SITE}/events/${eventId}/register`;
+  const heading = `A place opened up at ${eventTitle}`;
+
+  const body =
+    p(`Hi ${escapeHtml(name)}, a place at <strong>${escapeHtml(eventTitle)}</strong> has opened up.`) +
+    note('It is first come, first served — this is not held for you, so register as soon as you can.') +
+    button('Register now', registerUrl);
+
+  const html = renderEmail({ preheader: `A place at ${eventTitle} has opened up.`, heading, body });
+  const text = renderText(heading, [
+    `Hi ${name}, a place at ${eventTitle} has opened up.`,
+    'It is first come, first served — this is not held for you, so register as soon as you can.',
+    '',
+    registerUrl,
+  ]);
+
+  await send(to, `A place opened up: ${eventTitle}`, text, html);
+}
+
+/**
  * Tells the facilitator hosting an event that someone has paid for a place.
  *
  * ## Why this is a separate send and not a CC on the attendee's confirmation

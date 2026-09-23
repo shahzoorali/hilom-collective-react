@@ -149,6 +149,8 @@ export async function buildRoster(
   event: EventRow;
   registrations: Record<string, unknown>[];
   money: Record<string, number | string>;
+  /** Still waiting for a seat (0060) — `notified` counts too, since they have not converted yet. */
+  waitlistCount: number;
 } | null> {
   const { data: eventRow, error: eventError } = await supabase
     .from('events')
@@ -157,6 +159,13 @@ export async function buildRoster(
     .maybeSingle<EventRow>();
   if (eventError) throw eventError;
   if (!eventRow) return null;
+
+  const { count: waitlistCount, error: waitlistError } = await supabase
+    .from('event_waitlist')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', eventId)
+    .in('status', ['waiting', 'notified']);
+  if (waitlistError) throw waitlistError;
 
   const { data: registrations, error } = await supabase
     .from('event_registrations')
@@ -186,6 +195,7 @@ export async function buildRoster(
   return {
     event: eventRow,
     registrations: decorated,
+    waitlistCount: waitlistCount ?? 0,
     money: {
       currency: eventRow.currency,
       capacity,

@@ -998,7 +998,7 @@ export interface AuditEntry {
 }
 
 export const adminGetRoster = (adminKey: string, eventId: string) =>
-  apiFetch<{ event: AdminEvent; registrations: AdminRegistration[]; money: RosterMoney }>(
+  apiFetch<{ event: AdminEvent; registrations: AdminRegistration[]; money: RosterMoney; waitlistCount: number }>(
     `/admin/events/${eventId}/roster`,
     adminInit(adminKey),
   );

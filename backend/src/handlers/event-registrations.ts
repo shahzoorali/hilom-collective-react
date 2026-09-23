@@ -39,6 +39,7 @@ import {
   type ReviewSubject,
 } from '../lib/reviews.js';
 import { sendAttendeeTransferred, sendCancellationRequested, sendCancellationRequestedAdminAlert } from '../lib/registration-email.js';
+import { joinWaitlist, convertWaitlistEntry, WaitlistError } from '../lib/event-waitlist.js';
 import {
   buildSchedule,
   activePlans,
@@ -141,6 +142,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (eventId && method === 'POST' && path.endsWith('/register')) {
       return await register(event, eventId, buyer);
     }
+    if (eventId && method === 'POST' && path.endsWith('/waitlist')) {
+      return await joinWaitlistRoute(event, eventId, buyer);
+    }
     if (method === 'GET' && path.endsWith('/me/registrations')) {
       return await listMine(buyer.email);
     }
@@ -174,6 +178,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     return badRequest(`Unsupported route ${method} ${path}`);
   } catch (err) {
     if (err instanceof TicketingValidationError) return badRequest(err.message);
+    if (err instanceof WaitlistError) return conflict(err.message);
     return serverError('eventRegistrations', err);
   }
 }
@@ -185,6 +190,37 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
   } catch {
     throw new TicketingValidationError('Request body is not valid JSON');
   }
+}
+
+/**
+ * Joins the waitlist for a sold-out date (0054, Phase 2).
+ *
+ *   POST /events/{eventId}/waitlist   { name?, phone? }
+ *
+ * The buyer's own Cognito identity is the entry, the same as a registration
+ * — no separate registrant here, because nobody is claiming a place for
+ * someone else on a list that does not hold one.
+ */
+async function joinWaitlistRoute(
+  event: APIGatewayProxyEventV2,
+  eventId: string,
+  buyer: { sub: string; email: string; givenName?: string | undefined; familyName?: string | undefined },
+): Promise<APIGatewayProxyResultV2> {
+  const body = parseBody(event);
+  const name =
+    typeof body.name === 'string' && body.name.trim()
+      ? body.name.trim()
+      : [buyer.givenName, buyer.familyName].filter(Boolean).join(' ') || buyer.email;
+
+  const supabase = await getSupabase();
+  const entry = await joinWaitlist(supabase, {
+    eventId,
+    email: buyer.email,
+    name,
+    phone: typeof body.phone === 'string' ? body.phone : null,
+  });
+
+  return ok({ waitlistId: entry.id });
 }
 
 async function register(
@@ -296,6 +332,11 @@ async function register(
   }
 
   const newRegistrationId = String(registrationId);
+
+  // Best-effort, and never awaited into the response: a seat was just
+  // claimed, and tidying up a waitlist row must not slow down or risk the
+  // checkout that follows.
+  void convertWaitlistEntry(supabase, eventId, buyer.email);
 
   const { data: deposit, error: depositError } = await supabase
     .from('registration_charges')

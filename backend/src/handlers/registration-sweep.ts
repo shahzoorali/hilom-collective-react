@@ -43,6 +43,10 @@
  *     Every other reminder in this file is about a payment; this is the only
  *     one about the event.
  *
+ *  7. **Tell the waitlist a seat opened up** (0054, phase 2). One event at a
+ *     time — see the note on `notifyOpenSeats` for why this reads capacity
+ *     fresh per event rather than trying to hold a lock across the batch.
+ *
  * Idempotent throughout. Reminders use claim-by-insert into
  * registration_charge_reminders (0017) — the unique index on (charge_id,
  * tier) makes the insert itself the claim, which is a stronger guarantee than
@@ -55,6 +59,7 @@
  */
 import { getSupabase } from '../lib/supabase.js';
 import { sendChargeReminder, sendOverdueAdminAlert, sendEventReminder } from '../lib/registration-email.js';
+import { notifyOpenSeats } from '../lib/event-waitlist.js';
 
 async function releaseExpiredHolds(now: Date): Promise<number> {
   const supabase = await getSupabase();
@@ -403,10 +408,38 @@ async function sendUpcomingEventReminders(now: Date): Promise<number> {
   return sent;
 }
 
+/**
+ * Notifies every event with someone `waiting` that a seat may have opened.
+ *
+ * One `notifyOpenSeats` call per event rather than a single cross-event
+ * query, because the answer ("how many seats are actually free") is scoped
+ * to one event's capacity, and computing all of them in a single pass would
+ * mean carrying that per-event state through the loop by hand anyway.
+ */
+async function notifyWaitlists(): Promise<number> {
+  const supabase = await getSupabase();
+  const { data, error } = await supabase
+    .from('event_waitlist')
+    .select('event_id')
+    .eq('status', 'waiting')
+    .returns<{ event_id: string }[]>();
+  if (error) throw error;
+
+  const eventIds = [...new Set((data ?? []).map((r) => r.event_id))];
+  let notified = 0;
+  for (const eventId of eventIds) {
+    notified += await notifyOpenSeats(supabase, eventId).catch((err: unknown) => {
+      console.error('[registrationSweep] notifying waitlist failed', { eventId, err });
+      return 0;
+    });
+  }
+  return notified;
+}
+
 export async function handler(): Promise<void> {
   const now = new Date();
 
-  const [released, flagged, reminded, completed, expiredCheckouts, eventReminders] = await Promise.all([
+  const [released, flagged, reminded, completed, expiredCheckouts, eventReminders, waitlisted] = await Promise.all([
     releaseExpiredHolds(now).catch((err) => {
       console.error('[registrationSweep] releasing expired holds failed', err);
       return 0;
@@ -431,13 +464,21 @@ export async function handler(): Promise<void> {
       console.error('[registrationSweep] sending event reminders failed', err);
       return 0;
     }),
+    notifyWaitlists().catch((err) => {
+      console.error('[registrationSweep] notifying waitlists failed', err);
+      return 0;
+    }),
   ]);
 
-  if (released > 0 || flagged > 0 || reminded > 0 || completed > 0 || expiredCheckouts > 0 || eventReminders > 0) {
+  if (
+    released > 0 || flagged > 0 || reminded > 0 || completed > 0 || expiredCheckouts > 0 ||
+    eventReminders > 0 || waitlisted > 0
+  ) {
     console.log(
       `[registrationSweep] released ${released} hold(s), flagged ${flagged} overdue charge(s), ` +
         `sent ${reminded} payment reminder(s), completed ${completed} registration(s), ` +
-        `expired ${expiredCheckouts} stale checkout(s), sent ${eventReminders} event reminder(s)`,
+        `expired ${expiredCheckouts} stale checkout(s), sent ${eventReminders} event reminder(s), ` +
+        `notified ${waitlisted} waitlisted registrant(s)`,
     );
   }
 }

@@ -536,6 +536,8 @@ export class HilomMarketplaceStack extends cdk.Stack {
 
     attach(eventRegistrations, 'EventRegistrationsInt', [
       ['/events/{eventId}/register', [POST]],
+      // A sold-out date's "notify me" list (0054, Phase 2) — not a held seat, see 0060.
+      ['/events/{eventId}/waitlist', [POST]],
       ['/me/registrations', [GET]],
       ['/registrations/{registrationId}/status', [GET]],
       ['/registrations/{registrationId}/pay-balance', [POST]],

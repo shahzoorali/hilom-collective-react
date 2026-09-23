@@ -164,6 +164,19 @@ export const registerForEvent = (eventId: string, input: RegisterInput) =>
     }),
   );
 
+/**
+ * Joins the "tell me when a seat opens up" list for a sold-out date (0054).
+ * Not a hold — see the note on the backend's `joinWaitlist` for why.
+ */
+export const joinEventWaitlist = (eventId: string, input: { name?: string; phone?: string } = {}) =>
+  withAuth(() =>
+    apiFetch<{ waitlistId: string }>(`/events/${eventId}/waitlist`, {
+      method: 'POST',
+      headers: jsonAuthHeaders(),
+      body: JSON.stringify(input),
+    }),
+  );
+
 export interface RegistrationStatus {
   registrationId: string;
   status: 'pending_payment' | 'confirmed' | 'expired' | 'cancelled' | 'completed';
