@@ -1783,7 +1783,10 @@ export interface MyHostedEvent {
   format: string | null;
   join_url: string | null;
   join_instructions: string | null;
-  registrations: { confirmed: number; pending: number };
+  /** checkouts: every seat attempt ever made, whatever became of it. confirmed: the sales. */
+  registrations: { confirmed: number; pending: number; checkouts: number };
+  /** Raw hits on this date's ticket page (0063) — not unique visitors. See the note on the backend column. */
+  view_count: number;
   /** Moderation state (0048). Independent of `status`, which is publication. */
   review_status: EventReviewStatus;
   submitted_by: string | null;

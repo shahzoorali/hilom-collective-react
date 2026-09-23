@@ -455,6 +455,8 @@ export interface AdminEvent extends CmsEvent {
   edit_submitted_at: string | null;
   edit_reviewed_at: string | null;
   edit_review_note: string | null;
+  /** Raw hits on this date's ticket page (0063) — not unique visitors. */
+  view_count: number;
 }
 
 export type EventFormat = 'residential' | 'virtual' | 'day';

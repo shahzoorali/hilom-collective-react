@@ -1901,7 +1901,9 @@ const HOSTED_EVENT_COLUMNS =
   'status, ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions, ' +
   'review_status, submitted_at, reviewed_at, review_note, submitted_by, ' +
   // 0058. A pending edit to an already-approved event.
-  'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note';
+  'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note, ' +
+  // 0063. The top of the views -> checkouts -> sales funnel.
+  'view_count';
 
 /**
  * What a facilitator may write on their own event, and when.
@@ -2064,9 +2066,14 @@ async function listHostedEvents(
     .returns<{ event_id: string; status: string }[]>();
   if (countError) throw countError;
 
-  const counts = new Map<string, { confirmed: number; pending: number }>();
+  // `checkouts` is every attempt ever made at a seat, not just the ones still
+  // pending — the sweep keeps a lapsed hold as `expired` rather than deleting
+  // it (0016) precisely so this count stays honest instead of only ever
+  // showing whoever happens to be mid-checkout right now.
+  const counts = new Map<string, { confirmed: number; pending: number; checkouts: number }>();
   for (const r of registrations ?? []) {
-    const c = counts.get(r.event_id) ?? { confirmed: 0, pending: 0 };
+    const c = counts.get(r.event_id) ?? { confirmed: 0, pending: 0, checkouts: 0 };
+    c.checkouts += 1;
     if (r.status === 'confirmed' || r.status === 'completed') c.confirmed += 1;
     else if (r.status === 'pending_payment') c.pending += 1;
     counts.set(r.event_id, c);
@@ -2075,7 +2082,7 @@ async function listHostedEvents(
   return ok({
     events: rows.map((r) => ({
       ...r,
-      registrations: counts.get(r.id) ?? { confirmed: 0, pending: 0 },
+      registrations: counts.get(r.id) ?? { confirmed: 0, pending: 0, checkouts: 0 },
     })),
   });
 }

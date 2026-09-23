@@ -323,6 +323,16 @@ export default function EventsTab() {
               <span className="muted"> · no joining link set</span>
             )}
           </p>
+
+          {/* The funnel (0063). Only shown once there is something to show —
+              a proposal nobody could see yet has nothing to report. */}
+          {e.ticketing_enabled && (e.view_count > 0 || e.registrations.checkouts > 0) && (
+            <p className="small muted" style={{ margin: '0.25rem 0 0' }}>
+              {e.view_count} view{e.view_count === 1 ? '' : 's'} → {e.registrations.checkouts} checkout
+              {e.registrations.checkouts === 1 ? '' : 's'} → {e.registrations.confirmed} sale
+              {e.registrations.confirmed === 1 ? '' : 's'}
+            </p>
+          )}
         </div>
       ))}
     </>

@@ -115,6 +115,13 @@ export async function ticketing(event: APIGatewayProxyEventV2): Promise<APIGatew
       return notFound('Event not found');
     }
 
+    // Best-effort and never awaited into the response: a view is the top of
+    // the funnel (0063), not something a registrant is waiting on, and a
+    // failed count must not turn into a failed page load.
+    void supabase.rpc('increment_event_view', { p_event_id: eventId }).then(({ error: viewError }) => {
+      if (viewError) console.error('[events.ticketing] view count failed', { eventId, viewError });
+    });
+
     const { data: plans, error: planError } = await supabase
       .from('event_payment_plans')
       // The pay-what-you-want fields are public by the same reasoning as the

@@ -43,7 +43,9 @@ const COLUMNS =
   // 0054, step 3. Whether this date was pulled after going on sale.
   'cancelled_at, cancel_reason, ' +
   // 0058. A facilitator's pending edit to an already-approved event.
-  'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note';
+  'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note, ' +
+  // 0063. Raw hits on this date's ticket page.
+  'view_count';
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +
