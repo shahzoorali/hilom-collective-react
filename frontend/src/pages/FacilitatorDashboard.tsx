@@ -34,6 +34,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import hilomLogo from '../assets/hilom-logo.png';
+import './facilitator/facilitator.css';
 import { currentUser, login, logout } from '../lib/auth';
 import { money } from '../components/Layout';
 import MessageThread from '../components/MessageThread';
@@ -134,9 +135,9 @@ function initials(name: string): string {
 
 function Avatar({ profile, size = 40 }: { profile: OwnProfile; size?: number }) {
   return profile.photo_url ? (
-    <img className="fac-avatar" src={profile.photo_url} alt="" style={{ width: size, height: size }} />
+    <img className="fs-avatar" src={profile.photo_url} alt="" style={{ width: size, height: size }} />
   ) : (
-    <span className="fac-avatar fac-avatar--initials" style={{ width: size, height: size, fontSize: size * 0.38 }}>
+    <span className="fs-avatar fs-avatar--initials" style={{ width: size, height: size, fontSize: size * 0.38 }}>
       {initials(profile.display_name)}
     </span>
   );
@@ -220,7 +221,7 @@ export default function FacilitatorDashboard() {
   const isLive = profile.status === 'published';
 
   return (
-    <div className="admin-shell admin-shell--sidebar fac-shell">
+    <div className="admin-shell admin-shell--sidebar fs-shell">
       <header className="admin-mobile-topbar">
         <button
           type="button"
@@ -239,20 +240,20 @@ export default function FacilitatorDashboard() {
         <div className="admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
       )}
 
-      <aside className={`admin-sidebar fac-sidebar ${drawerOpen ? 'admin-sidebar--open' : ''}`}>
+      <aside className={`admin-sidebar fs-sidebar ${drawerOpen ? 'admin-sidebar--open' : ''}`}>
         <Link to="/facilitator/overview" className="admin-sidebar-brand">
           <img src={hilomLogo} alt="Hilom" className="brand-logo" />
           <div className="admin-brand-text">
             <span className="admin-brand-title">Facilitator Studio</span>
-            <span className="fac-brand-sub">Hilom Collective</span>
+            <span className="fs-brand-sub">Hilom Collective</span>
           </div>
         </Link>
 
-        <div className="fac-identity">
+        <div className="fs-identity">
           <Avatar profile={profile} size={42} />
-          <div className="fac-identity-text">
+          <div className="fs-identity-text">
             <strong title={profile.display_name}>{profile.display_name}</strong>
-            <span className={`fac-status ${isLive ? 'fac-status--live' : 'fac-status--draft'}`}>
+            <span className={`fs-status ${isLive ? 'fs-status--live' : 'fs-status--draft'}`}>
               {isLive ? 'Live on Hilom' : profile.status === 'suspended' ? 'Listing paused' : 'Not yet listed'}
             </span>
           </div>
@@ -306,7 +307,7 @@ export default function FacilitatorDashboard() {
         </div>
       </aside>
 
-      <main className="admin-content fac-content">
+      <main className="admin-content fs-content">
         {profile.status === 'approved' && (
           <div className="alert alert-warning">
             <strong>You're approved, but not listed yet.</strong> Finish your{' '}
@@ -503,9 +504,9 @@ function relativeFromNow(iso: string): string {
 
 function DateTile({ iso, zone }: { iso: string; zone: string }) {
   return (
-    <div className="fac-datetile" aria-hidden="true">
-      <span className="fac-datetile-month">{formatInZone(iso, zone, { dateStyle: undefined, timeStyle: undefined, month: 'short' })}</span>
-      <span className="fac-datetile-day">{formatInZone(iso, zone, { dateStyle: undefined, timeStyle: undefined, day: 'numeric' })}</span>
+    <div className="fs-datetile" aria-hidden="true">
+      <span className="fs-datetile-month">{formatInZone(iso, zone, { dateStyle: undefined, timeStyle: undefined, month: 'short' })}</span>
+      <span className="fs-datetile-day">{formatInZone(iso, zone, { dateStyle: undefined, timeStyle: undefined, day: 'numeric' })}</span>
     </div>
   );
 }
@@ -558,10 +559,10 @@ function Overview({ profile }: { profile: OwnProfile }) {
   );
 
   return (
-    <div className="fac-page">
-      <section className="fac-hero">
-        <div className="fac-hero-text">
-          <span className="fac-eyebrow">{today}</span>
+    <div className="fs-page">
+      <section className="fs-hero">
+        <div className="fs-hero-text">
+          <span className="fs-eyebrow">{today}</span>
           <h1>
             {greeting()}, {firstName}.
           </h1>
@@ -573,11 +574,11 @@ function Overview({ profile }: { profile: OwnProfile }) {
                 : `You have ${weekAhead} ${weekAhead === 1 ? 'session' : 'sessions'} in the next 7 days.`}
           </p>
         </div>
-        <div className="fac-hero-actions">
-          <button type="button" className="fac-hero-btn fac-hero-btn--primary" onClick={() => navigate('/facilitator/bookings')}>
+        <div className="fs-hero-actions">
+          <button type="button" className="fs-hero-btn fs-hero-btn--primary" onClick={() => navigate('/facilitator/bookings')}>
             ＋ Book a client in
           </button>
-          <button type="button" className="fac-hero-btn" onClick={() => navigate('/facilitator/availability')}>
+          <button type="button" className="fs-hero-btn" onClick={() => navigate('/facilitator/availability')}>
             Edit availability
           </button>
         </div>
@@ -604,7 +605,7 @@ function Overview({ profile }: { profile: OwnProfile }) {
         </div>
       )}
 
-      <div className="fac-kpis">
+      <div className="fs-kpis">
         <Kpi
           icon="💰"
           label="Your earnings · this month"
@@ -627,26 +628,26 @@ function Overview({ profile }: { profile: OwnProfile }) {
         />
       </div>
 
-      <div className="fac-grid">
-        <div className="fac-col">
-          <section className="fac-card">
-            <header className="fac-card-head">
+      <div className="fs-grid">
+        <div className="fs-col">
+          <section className="fs-card">
+            <header className="fs-card-head">
               <h2>Next session</h2>
-              <Link to="/facilitator/bookings" className="fac-link">All bookings →</Link>
+              <Link to="/facilitator/bookings" className="fs-link">All bookings →</Link>
             </header>
             {bookings === null && <div className="spinner" aria-label="Loading" />}
             {bookings !== null && !next && (
-              <div className="fac-empty">
+              <div className="fs-empty">
                 <span aria-hidden="true">🌱</span>
                 <p>Nothing booked yet. Open some hours and share your profile to fill your diary.</p>
               </div>
             )}
             {next && (
-              <div className="fac-spotlight">
+              <div className="fs-spotlight">
                 <DateTile iso={next.starts_at} zone={zone} />
-                <div className="fac-spotlight-body">
-                  <span className="fac-countdown">Starts {relativeFromNow(next.starts_at)}</span>
-                  <strong className="fac-spotlight-title">{next.facilitator_services?.title ?? 'Session'}</strong>
+                <div className="fs-spotlight-body">
+                  <span className="fs-countdown">Starts {relativeFromNow(next.starts_at)}</span>
+                  <strong className="fs-spotlight-title">{next.facilitator_services?.title ?? 'Session'}</strong>
                   <span className="small muted">
                     with {next.client_name || next.client_email} ·{' '}
                     {formatDualZone(
@@ -680,11 +681,11 @@ function Overview({ profile }: { profile: OwnProfile }) {
           </section>
 
           {upcoming.length > 0 && (
-            <section className="fac-card">
-              <header className="fac-card-head">
+            <section className="fs-card">
+              <header className="fs-card-head">
                 <h2>Coming up</h2>
               </header>
-              <ul className="fac-agenda">
+              <ul className="fs-agenda">
                 {upcoming.map((b) => (
                   <li key={b.id}>
                     <DateTile iso={b.starts_at} zone={zone} />
@@ -707,20 +708,20 @@ function Overview({ profile }: { profile: OwnProfile }) {
           )}
         </div>
 
-        <div className="fac-col">
+        <div className="fs-col">
           {doneCount < checklist.length && (
-            <section className="fac-card">
-              <header className="fac-card-head">
+            <section className="fs-card">
+              <header className="fs-card-head">
                 <h2>Get fully set up</h2>
-                <span className="fac-pct">{checklistPct}%</span>
+                <span className="fs-pct">{checklistPct}%</span>
               </header>
-              <div className="fac-progress" role="progressbar" aria-valuenow={checklistPct} aria-valuemin={0} aria-valuemax={100}>
+              <div className="fs-progress" role="progressbar" aria-valuenow={checklistPct} aria-valuemin={0} aria-valuemax={100}>
                 <span style={{ width: `${checklistPct}%` }} />
               </div>
-              <ul className="fac-checklist">
+              <ul className="fs-checklist">
                 {checklist.map((c) => (
                   <li key={c.label} className={c.done ? 'is-done' : undefined}>
-                    <span className="fac-check" aria-hidden="true">{c.done ? '✓' : ''}</span>
+                    <span className="fs-check" aria-hidden="true">{c.done ? '✓' : ''}</span>
                     {c.done ? (
                       <span>{c.label}</span>
                     ) : (
@@ -732,18 +733,18 @@ function Overview({ profile }: { profile: OwnProfile }) {
             </section>
           )}
 
-          <section className="fac-card">
-            <header className="fac-card-head">
+          <section className="fs-card">
+            <header className="fs-card-head">
               <h2>Shortcuts</h2>
             </header>
-            <div className="fac-shortcuts">
+            <div className="fs-shortcuts">
               {[
                 { icon: '💬', label: 'Messages', to: 'messages' },
                 { icon: '🫂', label: 'Clients', to: 'clients' },
                 { icon: '🌿', label: 'Services', to: 'services' },
                 { icon: '💰', label: 'Earnings', to: 'earnings' },
               ].map((s) => (
-                <Link key={s.to} to={`/facilitator/${s.to}`} className="fac-shortcut">
+                <Link key={s.to} to={`/facilitator/${s.to}`} className="fs-shortcut">
                   <span aria-hidden="true">{s.icon}</span>
                   {s.label}
                 </Link>
@@ -770,11 +771,11 @@ function Kpi({
   featured?: boolean;
 }) {
   return (
-    <div className={`fac-kpi${featured ? ' fac-kpi--featured' : ''}`}>
-      <span className="fac-kpi-icon" aria-hidden="true">{icon}</span>
-      <span className="fac-kpi-label">{label}</span>
-      <span className="fac-kpi-value">{value}</span>
-      {hint && <span className="fac-kpi-hint">{hint}</span>}
+    <div className={`fs-kpi${featured ? ' fs-kpi--featured' : ''}`}>
+      <span className="fs-kpi-icon" aria-hidden="true">{icon}</span>
+      <span className="fs-kpi-label">{label}</span>
+      <span className="fs-kpi-value">{value}</span>
+      {hint && <span className="fs-kpi-hint">{hint}</span>}
     </div>
   );
 }
@@ -1181,7 +1182,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
     );
 
   return (
-    <div className="fac-page">
+    <div className="fs-page">
       <PageHeader
         title="Bookings"
         subtitle="Every session in your diary — reschedule, message or book someone in by hand."
@@ -1196,7 +1197,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
         }
       />
 
-      <div className="fac-segmented" role="tablist" aria-label="Filter bookings">
+      <div className="fs-segmented" role="tablist" aria-label="Filter bookings">
         {(['upcoming', 'past', 'all'] as const).map((f) => (
           <button
             key={f}
@@ -1207,7 +1208,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
             onClick={() => setFilter(f)}
           >
             {f[0].toUpperCase() + f.slice(1)}
-            <span className="fac-count">{counts[f]}</span>
+            <span className="fs-count">{counts[f]}</span>
           </button>
         ))}
       </div>
@@ -1230,7 +1231,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
       )}
       {bookings === null && <div className="spinner" aria-label="Loading" />}
       {bookings !== null && visible.length === 0 && (
-        <div className="fac-empty fac-card">
+        <div className="fs-empty fs-card">
           <span aria-hidden="true">📭</span>
           <p>{filter === 'upcoming' ? 'No upcoming sessions.' : filter === 'past' ? 'No past sessions yet.' : 'No bookings yet.'}</p>
         </div>
@@ -1239,12 +1240,12 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
       {visible.map((b) => {
         const isFuture = new Date(b.starts_at).getTime() > now;
         return (
-          <div key={b.id} className={`fac-booking${isFuture ? '' : ' fac-booking--past'}`}>
+          <div key={b.id} className={`fs-booking${isFuture ? '' : ' fs-booking--past'}`}>
             <DateTile iso={b.starts_at} zone={zone} />
-            <div className="fac-booking-body">
+            <div className="fs-booking-body">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <strong className="fac-booking-title">{b.facilitator_services?.title ?? 'Session'}</strong>
-              <span className={`fac-pill fac-pill--${b.status}`}>{b.status.replace(/_/g, ' ')}</span>
+              <strong className="fs-booking-title">{b.facilitator_services?.title ?? 'Session'}</strong>
+              <span className={`fs-pill fs-pill--${b.status}`}>{b.status.replace(/_/g, ' ')}</span>
             </div>
             {/* Vacation mode never touched sessions already in the diary; this
                 is where the facilitator finds the ones that need a decision. */}
@@ -1439,7 +1440,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
 
 function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
   return (
-    <header className="fac-pagehead">
+    <header className="fs-pagehead">
       <div>
         <h1>{title}</h1>
         {subtitle && <p>{subtitle}</p>}
@@ -1482,21 +1483,21 @@ function EarningsTab() {
   const keptPct = gross > 0 ? Math.round((data.thisMonth.net / gross) * 100) : 100;
 
   return (
-    <div className="fac-page">
+    <div className="fs-page">
       <PageHeader title="Earnings" subtitle="What you've earned, what Hilom kept, and when it lands." />
 
-      <div className="fac-earn-hero">
+      <div className="fs-earn-hero">
         <div>
-          <span className="fac-eyebrow">Your earnings this month</span>
-          <div className="fac-earn-big">{money(data.thisMonth.net)}</div>
-          <span className="fac-earn-sub">
+          <span className="fs-eyebrow">Your earnings this month</span>
+          <div className="fs-earn-big">{money(data.thisMonth.net)}</div>
+          <span className="fs-earn-sub">
             from {data.thisMonth.sessions} {data.thisMonth.sessions === 1 ? 'session' : 'sessions'}
           </span>
         </div>
-        <div className="fac-earn-side">
-          <span className="fac-eyebrow">Awaiting payout</span>
+        <div className="fs-earn-side">
+          <span className="fs-eyebrow">Awaiting payout</span>
           <strong>{money(data.awaitingPayout.net)}</strong>
-          <span className="fac-earn-sub">{data.awaitingPayout.sessions} delivered sessions</span>
+          <span className="fs-earn-sub">{data.awaitingPayout.sessions} delivered sessions</span>
         </div>
       </div>
 
@@ -1519,7 +1520,7 @@ function EarningsTab() {
           label={`Hilom platform fee (${(data.platformFeeBps / 100).toFixed(data.platformFeeBps % 100 ? 2 : 0)}%)`}
           value={`−${money(data.thisMonth.fees)}`}
         />
-        <div className="fac-split" aria-hidden="true">
+        <div className="fs-split" aria-hidden="true">
           <span style={{ width: `${keptPct}%` }} />
         </div>
         <Line label="Your earnings" value={money(data.thisMonth.net)} strong />
@@ -1561,15 +1562,15 @@ function EarningsTab() {
         )}
       </div>
 
-      <h3 className="fac-section-title">Payout history</h3>
+      <h3 className="fs-section-title">Payout history</h3>
       {data.payouts.length === 0 && (
-        <div className="fac-empty fac-card">
+        <div className="fs-empty fs-card">
           <span aria-hidden="true">🏦</span>
           <p>No payouts yet — delivered sessions roll into your next payout.</p>
         </div>
       )}
       {data.payouts.map((p) => (
-        <div key={p.id} className="fac-card fac-payout">
+        <div key={p.id} className="fs-card fs-payout">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <strong>{money(p.net_centavos)}</strong>
             <span className={`pill ${p.status === 'paid' ? 'pill-ok' : 'pill-warn'}`}>{p.status}</span>
