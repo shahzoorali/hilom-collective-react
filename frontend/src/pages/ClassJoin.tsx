@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getClassSession, joinClassSession, viewerTimezone, formatInZone } from '../lib/booking';
 import { displayPrice } from '../components/Layout';
+import AmountChooser, { isValidAmount, pesoInputToCentavos } from '../components/AmountChooser';
 import { currentUser, login } from '../lib/auth';
 import { useDocumentHead } from '../lib/useDocumentHead';
 
@@ -23,6 +24,7 @@ export default function ClassJoin() {
   const [session, setSession] = useState<Record<string, any> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
+  const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [joined, setJoined] = useState(false);
 
@@ -40,6 +42,10 @@ export default function ClassJoin() {
 
   const cls = session?.facilitator_classes;
   const facilitator = session?.facilitators;
+  const pwyw = session?.is_pay_what_you_want === true;
+  const floorCentavos = Math.max(Number(session?.min_centavos ?? 0), 1);
+  const amountCentavos = pesoInputToCentavos(amount);
+  const amountValid = !pwyw || isValidAmount(amountCentavos, floorCentavos);
 
   useDocumentHead({
     title: cls ? `${cls.title} — Hilom Collective` : 'Group class — Hilom Collective',
@@ -56,7 +62,10 @@ export default function ClassJoin() {
     setBusy(true);
     setError(null);
     try {
-      const result = await joinClassSession(sessionId, { notes });
+      const result = await joinClassSession(sessionId, {
+        notes,
+        ...(pwyw && amountCentavos !== null ? { amountCentavos } : {}),
+      });
       if (result.free) {
         setJoined(true);
       } else if (result.checkoutUrl) {
@@ -151,7 +160,11 @@ export default function ClassJoin() {
 
         <div className="panel" style={{ marginTop: '1.25rem' }}>
           <p style={{ margin: 0, fontWeight: 600 }}>
-            {price === 0 ? 'Free' : displayPrice(price)}
+            {pwyw
+              ? `Pay what you want · from ${displayPrice(floorCentavos)}`
+              : price === 0
+                ? 'Free'
+                : displayPrice(price)}
           </p>
           <p className="small muted" style={{ margin: '0.25rem 0 0' }}>
             {full
@@ -190,6 +203,19 @@ export default function ClassJoin() {
 
         {!full && (
           <>
+            {pwyw && (
+              <div style={{ marginTop: '1rem' }}>
+                <AmountChooser
+                  suggestedCentavos={session.suggested_centavos}
+                  currency={String(session.currency ?? 'PHP')}
+                  value={amount}
+                  onChange={setAmount}
+                  floorCentavos={floorCentavos}
+                  valid={amountValid}
+                />
+              </div>
+            )}
+
             <label className="field" style={{ marginTop: '1rem' }}>
               <span>Anything {facilitator?.display_name} should know? (optional)</span>
               <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -198,10 +224,18 @@ export default function ClassJoin() {
             <button
               type="button"
               className="btn btn-accent"
-              disabled={busy}
+              disabled={busy || !amountValid}
               onClick={() => void join()}
             >
-              {busy ? 'One moment…' : price === 0 ? 'Join this class' : 'Join and pay'}
+              {busy
+                ? 'One moment…'
+                : pwyw
+                  ? amountValid && amountCentavos !== null
+                    ? `Join and pay ${displayPrice(amountCentavos)}`
+                    : 'Join and pay'
+                  : price === 0
+                    ? 'Join this class'
+                    : 'Join and pay'}
             </button>
           </>
         )}

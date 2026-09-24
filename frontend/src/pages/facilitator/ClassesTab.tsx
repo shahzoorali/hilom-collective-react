@@ -51,6 +51,24 @@ const MODE_LABEL: Record<string, string> = {
   both: 'Online or in person',
 };
 
+function priceLabel(p: { price_centavos: number; is_pay_what_you_want?: boolean; min_centavos?: number | null }) {
+  if (p.is_pay_what_you_want) return `Pay what you want, from ${money(p.min_centavos ?? p.price_centavos)}`;
+  return p.price_centavos === 0 ? 'Free' : money(p.price_centavos);
+}
+
+/** Whether a scheduled date still charges what the class now charges. */
+function samePricing(
+  s: { price_centavos: number; is_pay_what_you_want?: boolean; min_centavos?: number | null; suggested_centavos?: number[] },
+  c: { price_centavos: number; is_pay_what_you_want?: boolean; min_centavos?: number | null; suggested_centavos?: number[] },
+) {
+  if (Boolean(s.is_pay_what_you_want) !== Boolean(c.is_pay_what_you_want)) return false;
+  if (!c.is_pay_what_you_want) return s.price_centavos === c.price_centavos;
+  return (
+    (s.min_centavos ?? null) === (c.min_centavos ?? null) &&
+    (s.suggested_centavos ?? []).join(',') === (c.suggested_centavos ?? []).join(',')
+  );
+}
+
 const BLANK: GroupClassInput = {
   title: '',
   description: '',
@@ -121,7 +139,7 @@ export default function ClassesTab() {
               {!c.is_active && <span className="small muted"> · not on sale</span>}
               <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
                 {MODE_LABEL[c.delivery_mode]} · {c.duration_minutes} min ·{' '}
-                {c.price_centavos === 0 ? 'Free' : money(c.price_centavos)} · up to {c.max_joiners}
+                {priceLabel(c)} · up to {c.max_joiners}
                 {/* Said in full rather than as a bare number, because the
                     number alone reads as a rule that is enforced. */}
                 {c.min_joiners > 1 && (
@@ -235,6 +253,29 @@ function SessionList({
    * below only shows the control then), and the backend re-checks it.
    */
   async function fixPrice(session: ClassSession) {
+    const when = formatInZone(session.starts_at, zone, { dateStyle: 'medium', timeStyle: 'short' });
+    // Pay-what-you-want has more than one number, so a prompt can't carry it —
+    // the fix is "use the class's current pricing" for this date.
+    if (cls.is_pay_what_you_want || session.is_pay_what_you_want) {
+      if (!window.confirm(`Update ${when} to the class's current pricing (${priceLabel(cls)})?`)) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await updateMyClassSessionPrice(session.id, cls.price_centavos, {
+          is_pay_what_you_want: Boolean(cls.is_pay_what_you_want),
+          min_centavos: cls.min_centavos ?? null,
+          suggested_centavos: cls.suggested_centavos ?? [],
+        });
+        reload();
+        setNotice('Pricing updated for that date.');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not update that price');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     const current = (session.price_centavos / 100).toFixed(2);
     const raw = window.prompt(
       `Correct the price for ${formatInZone(session.starts_at, zone, { dateStyle: 'medium', timeStyle: 'short' })}.\n\n` +
@@ -325,12 +366,11 @@ function SessionList({
                     it actually charges; the class's current price is shown
                     only when the two have come apart. */}
                 <p className="small" style={{ margin: '0.15rem 0 0' }}>
-                  {s.price_centavos === 0 ? 'Free' : money(s.price_centavos)}
-                  {s.price_centavos !== cls.price_centavos && (
+                  {priceLabel(s)}
+                  {!samePricing(s, cls) && (
                     <span className="muted">
                       {' '}
-                      — the class is now{' '}
-                      {cls.price_centavos === 0 ? 'free' : money(cls.price_centavos)}
+                      — the class is now {priceLabel(cls).toLowerCase()}
                     </span>
                   )}
                   {s.status === 'scheduled' && s.seatsTaken === 0 && (
@@ -400,6 +440,9 @@ function ClassForm({
           meeting_url: existing.meeting_url ?? '',
           duration_minutes: existing.duration_minutes,
           price_centavos: existing.price_centavos,
+          is_pay_what_you_want: Boolean(existing.is_pay_what_you_want),
+          min_centavos: existing.min_centavos ?? null,
+          suggested_centavos: existing.suggested_centavos ?? [],
           min_joiners: existing.min_joiners,
           max_joiners: existing.max_joiners,
           is_active: existing.is_active,
@@ -536,18 +579,58 @@ function ClassForm({
         </label>
       )}
 
-      <label className="field">
-        <span>Price (₱)</span>
+      <label className="field" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <input
-          type="number"
-          min={0}
-          // Stored in centavos, typed in pesos: nobody thinks in centavos, and
-          // the conversion in one place is safer than in every reader.
-          value={draft.price_centavos / 100}
-          onChange={(e) => set('price_centavos', Math.round(Number(e.target.value) * 100))}
+          type="checkbox"
+          style={{ width: 'auto' }}
+          checked={Boolean(draft.is_pay_what_you_want)}
+          onChange={(e) => {
+            const on = e.target.checked;
+            setDraft((d) => ({
+              ...d,
+              is_pay_what_you_want: on,
+              min_centavos: on ? (d.min_centavos ?? (d.price_centavos || 10_000)) : null,
+            }));
+          }}
         />
-        <small className="muted">Leave at 0 for a free class — people join without a checkout.</small>
+        <span>Pay what you want (donation-based)</span>
       </label>
+
+      {draft.is_pay_what_you_want ? (
+        <div className="two-col">
+          <label className="field">
+            <span>Minimum (₱)</span>
+            <input
+              type="number"
+              min={1}
+              value={(draft.min_centavos ?? 0) / 100}
+              onChange={(e) => set('min_centavos', Math.round(Number(e.target.value) * 100))}
+            />
+            <small className="muted">People can pay this or more. It can't be ₱0 — use a free class for that.</small>
+          </label>
+          <label className="field">
+            <span>Suggested amounts (₱, optional)</span>
+            <SuggestedInput
+              value={draft.suggested_centavos ?? []}
+              onChange={(next) => set('suggested_centavos', next)}
+            />
+            <small className="muted">Comma-separated, e.g. 300, 500, 800. Shown as quick-pick buttons.</small>
+          </label>
+        </div>
+      ) : (
+        <label className="field">
+          <span>Price (₱)</span>
+          <input
+            type="number"
+            min={0}
+            // Stored in centavos, typed in pesos: nobody thinks in centavos, and
+            // the conversion in one place is safer than in every reader.
+            value={draft.price_centavos / 100}
+            onChange={(e) => set('price_centavos', Math.round(Number(e.target.value) * 100))}
+          />
+          <small className="muted">Leave at 0 for a free class — people join without a checkout.</small>
+        </label>
+      )}
 
       <div className="two-col">
         <label className="field">
@@ -575,5 +658,25 @@ function ClassForm({
         </label>
       </div>
     </>
+  );
+}
+
+/** Pesos typed as "300, 500" ↔ centavos. Keeps the raw text so typing a comma isn't eaten. */
+function SuggestedInput({ value, onChange }: { value: number[]; onChange: (next: number[]) => void }) {
+  const [text, setText] = useState(value.map((c) => c / 100).join(', '));
+  return (
+    <input
+      value={text}
+      placeholder="300, 500, 800"
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(
+          e.target.value
+            .split(',')
+            .map((part) => Math.round(Number(part.trim()) * 100))
+            .filter((c) => Number.isInteger(c) && c > 0),
+        );
+      }}
+    />
   );
 }

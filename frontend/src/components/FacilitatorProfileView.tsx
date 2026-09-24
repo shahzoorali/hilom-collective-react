@@ -17,6 +17,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 import { Link } from 'react-router-dom';
 import { displayPrice } from './Layout';
 import {
+  classPriceLabel,
   describeRefundPolicy,
   formatDuration,
   type Facilitator,
@@ -1020,7 +1021,7 @@ function GroupClassCard({ cls, preview }: { cls: PublicGroupClass; preview?: boo
         {' · '}
         {cls.duration_minutes} min
         {' · '}
-        {cls.price_centavos === 0 ? 'Free' : displayPrice(cls.price_centavos)}
+        {classPriceLabel(cls, displayPrice)}
         {cls.min_joiners > 1 && <> · runs with {cls.min_joiners}+</>}
       </p>
 
@@ -1044,10 +1045,10 @@ function GroupClassCard({ cls, preview }: { cls: PublicGroupClass; preview?: boo
                 class shows above — shown only when they actually differ,
                 since that is the case docs/class-and-event-bugfixes-plan.md
                 §3 found nothing told a browsing client about. */}
-            {s.price_centavos !== cls.price_centavos && (
+            {classPriceLabel(s, displayPrice) !== classPriceLabel(cls, displayPrice) && (
               <span className="muted">
                 {' '}
-                · {s.price_centavos === 0 ? 'free' : displayPrice(s.price_centavos, s.currency)}
+                · {classPriceLabel(s, displayPrice).toLowerCase()}
               </span>
             )}
             {s.full ? (

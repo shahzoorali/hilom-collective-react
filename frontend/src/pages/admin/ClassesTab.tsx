@@ -3,6 +3,7 @@ import {
   adminListClasses,
   adminGetClassSessions,
   adminCancelClassSession,
+  classPriceLabel,
   type AdminClass,
   type AdminClassSession,
 } from '../../lib/booking';
@@ -154,7 +155,7 @@ export default function ClassesTab({ adminKey }: { adminKey: string }) {
                     </strong>
                     <span className="small muted">
                       {c.facilitators?.display_name ?? 'Unknown facilitator'} ·{' '}
-                      {money(c.price_centavos, c.currency)} · up to {c.max_joiners}
+                      {classPriceLabel(c, money)} · up to {c.max_joiners}
                     </span>
                   </span>
 

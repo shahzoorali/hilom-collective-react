@@ -1106,7 +1106,7 @@ export const adminUpdatePayout = (
 // ---- admin: the Classes screen (docs/admin-dashboard-plan.md §5) ----
 
 /** One row of the Classes list. */
-export interface AdminClass {
+export interface AdminClass extends ClassPwyw {
   id: string;
   facilitator_id: string;
   title: string;
@@ -2004,7 +2004,25 @@ export const submitMyEventSeries = (seriesId: string) =>
 // Group classes (0049)
 // ---------------------------------------------------------------------------
 
-export interface GroupClass {
+/** Pay-what-you-want settings (0065). When on, `price_centavos` equals the floor. */
+export interface ClassPwyw {
+  is_pay_what_you_want?: boolean;
+  min_centavos?: number | null;
+  suggested_centavos?: number[];
+}
+
+/** "Free", "₱500", or "Pay what you want · from ₱300". */
+export function classPriceLabel(
+  p: ClassPwyw & { price_centavos: number; currency?: string },
+  format: (centavos: number, currency?: string) => string,
+): string {
+  if (p.is_pay_what_you_want) {
+    return `Pay what you want · from ${format(p.min_centavos ?? p.price_centavos, p.currency)}`;
+  }
+  return p.price_centavos === 0 ? 'Free' : format(p.price_centavos, p.currency);
+}
+
+export interface GroupClass extends ClassPwyw {
   id: string;
   title: string;
   description: string | null;
@@ -2020,7 +2038,7 @@ export interface GroupClass {
   is_active: boolean;
 }
 
-export interface ClassSession {
+export interface ClassSession extends ClassPwyw {
   id: string;
   class_id: string;
   starts_at: string;
@@ -2048,7 +2066,7 @@ export interface ClassRosterEntry {
 }
 
 /** What a facilitator sets on a class. */
-export interface GroupClassInput {
+export interface GroupClassInput extends ClassPwyw {
   title: string;
   description: string;
   delivery_mode: DeliveryMode;
@@ -2120,11 +2138,15 @@ export const scheduleMyClassSession = (classId: string, startsAt: string) =>
  * belongs to. Only works while nobody has a seat on it yet; see the backend
  * handler for why.
  */
-export const updateMyClassSessionPrice = (sessionId: string, priceCentavos: number) =>
+export const updateMyClassSessionPrice = (
+  sessionId: string,
+  priceCentavos: number,
+  pwyw: ClassPwyw = {},
+) =>
   apiFetch<{ session: ClassSession }>(`/facilitator/classes/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'PUT',
     headers: jsonAuthHeaders(),
-    body: JSON.stringify({ price_centavos: priceCentavos }),
+    body: JSON.stringify({ price_centavos: priceCentavos, ...pwyw }),
   }).then((r) => r.session);
 
 export const cancelMyClassSession = (sessionId: string, reason: string) =>
@@ -2153,7 +2175,10 @@ export const getClassSession = (sessionId: string) =>
   ).then((r) => r.session);
 
 /** Claims a seat and returns a PayMongo checkout URL, or confirms a free class. */
-export const joinClassSession = (sessionId: string, input: { name?: string; notes?: string }) =>
+export const joinClassSession = (
+  sessionId: string,
+  input: { name?: string; notes?: string; amountCentavos?: number },
+) =>
   apiFetch<{
     registrationId: string;
     free: boolean;

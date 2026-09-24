@@ -65,6 +65,7 @@ import {
   validateService,
   validateAvailability,
   validateBlackout,
+  classPwywInput,
   FacilitatorInputError,
 } from '../lib/facilitator-input.js';
 import { buildRoster, sendJoinDetailsToRegistrants } from '../lib/event-roster.js';
@@ -3070,6 +3071,8 @@ function classInput(body: Record<string, unknown>): Record<string, unknown> {
     throw new FacilitatorInputError('Pick online, in person, or both.');
   }
 
+  const pwyw = classPwywInput(body);
+
   return {
     title,
     description: text(body.description, 5000),
@@ -3077,7 +3080,9 @@ function classInput(body: Record<string, unknown>): Record<string, unknown> {
     location: text(body.location, 300),
     meeting_url: httpUrlOrNull(body.meeting_url, 'meeting_url'),
     duration_minutes: duration,
-    price_centavos: price,
+    // A PWYW class lists at its floor, so sorting and "from ₱X" read sensibly.
+    price_centavos: pwyw.is_pay_what_you_want ? pwyw.min_centavos : price,
+    ...pwyw,
     min_joiners: minJoiners,
     max_joiners: maxJoiners,
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
@@ -3256,6 +3261,9 @@ async function scheduleClassSession(
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),
       price_centavos: cls.price_centavos,
+      is_pay_what_you_want: Boolean(cls.is_pay_what_you_want),
+      min_centavos: cls.min_centavos ?? null,
+      suggested_centavos: cls.suggested_centavos ?? [],
       currency: cls.currency,
       capacity: cls.max_joiners,
       min_joiners: cls.min_joiners,
@@ -3364,7 +3372,8 @@ async function updateClassSessionPrice(
   sessionId: string,
   body: Record<string, unknown>,
 ): Promise<APIGatewayProxyResultV2> {
-  const price = Number(body.price_centavos);
+  const pwyw = classPwywInput(body);
+  const price = pwyw.is_pay_what_you_want ? Number(pwyw.min_centavos) : Number(body.price_centavos);
   if (!Number.isInteger(price) || price < 0) {
     throw new FacilitatorInputError('That price is not a number of centavos.');
   }
@@ -3395,7 +3404,7 @@ async function updateClassSessionPrice(
 
   const { data: updated, error: updateError } = await supabase
     .from('facilitator_class_sessions')
-    .update({ price_centavos: price })
+    .update({ price_centavos: price, ...pwyw })
     .eq('id', sessionId)
     .select('*')
     .maybeSingle();

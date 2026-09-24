@@ -71,6 +71,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
 /** Every class any facilitator teaches, plus what the list screen needs without a second round trip. */
 const CLASS_COLUMNS =
   'id, facilitator_id, title, description, duration_minutes, price_centavos, currency, ' +
+  'is_pay_what_you_want, min_centavos, suggested_centavos, ' +
   'max_joiners, min_joiners, meeting_url, is_active, created_at, ' +
   'facilitators(slug, display_name, email)';
 

@@ -53,11 +53,12 @@ const conflict = (message: string) => json(409, { error: message });
 /** Columns safe to return on a public read. Note the absence of meeting_url. */
 const CLASS_COLUMNS =
   'id, title, description, delivery_mode, location, duration_minutes, ' +
-  'price_centavos, currency, min_joiners, max_joiners, is_active';
+  'price_centavos, currency, min_joiners, max_joiners, is_active, ' +
+  'is_pay_what_you_want, min_centavos, suggested_centavos';
 
 const SESSION_COLUMNS =
   'id, class_id, facilitator_id, starts_at, ends_at, price_centavos, currency, ' +
-  'capacity, min_joiners, status';
+  'capacity, min_joiners, status, is_pay_what_you_want, min_centavos, suggested_centavos';
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
   const method = event.requestContext.http.method;
@@ -235,6 +236,16 @@ async function join(
     (typeof body.name === 'string' ? body.name.trim() : '') ||
     null;
 
+  const pwyw = Boolean(row.is_pay_what_you_want);
+  let chosenCentavos: number | null = null;
+  if (pwyw) {
+    chosenCentavos = Number(body.amountCentavos);
+    const floor = Math.max(Number(row.min_centavos ?? 1), 1);
+    if (!Number.isInteger(chosenCentavos) || chosenCentavos < floor) {
+      return badRequest(`Please choose an amount of at least ₱${(floor / 100).toFixed(2)}.`);
+    }
+  }
+
   const { data: claimed, error: claimError } = await supabase.rpc('claim_class_seat', {
     p_session_id: sessionId,
     p_client_email: user.email,
@@ -242,10 +253,14 @@ async function join(
     p_client_name: name,
     p_client_notes: notes,
     p_hold_minutes: HOLD_MINUTES,
+    ...(pwyw ? { p_price_centavos: chosenCentavos } : {}),
   });
 
   if (claimError) {
     const message = String(claimError.message ?? '');
+    if (message.includes('amount_required') || message.includes('amount_below_minimum')) {
+      return badRequest('That amount is below the minimum for this class.');
+    }
     if (message.includes('class_full')) return conflict('That class just filled up.');
     if (message.includes('already_registered')) {
       return conflict('You already have a place in this class.');
@@ -261,7 +276,10 @@ async function join(
   // The fee split, written now rather than at payment: what the facilitator is
   // owed must not move if their rate changes between joining and paying. Same
   // snapshot rule as bookings.
-  const fee = splitFee(Number(row.price_centavos), Number(row.facilitators.platform_fee_bps));
+  const fee = splitFee(
+    chosenCentavos ?? Number(row.price_centavos),
+    Number(row.facilitators.platform_fee_bps),
+  );
   await supabase
     .from('class_registrations')
     .update({

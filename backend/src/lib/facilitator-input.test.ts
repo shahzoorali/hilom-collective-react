@@ -11,7 +11,39 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateService, FacilitatorInputError } from './facilitator-input.js';
+import { validateService, classPwywInput, FacilitatorInputError } from './facilitator-input.js';
+
+describe('classPwywInput — pay-what-you-want classes', () => {
+  it('is off unless asked for, and then carries no floor', () => {
+    assert.deepEqual(classPwywInput({ min_centavos: 500 }), {
+      is_pay_what_you_want: false,
+      min_centavos: null,
+      suggested_centavos: [],
+    });
+  });
+
+  it('requires a positive minimum — free is not a PWYW amount', () => {
+    assert.throws(() => classPwywInput({ is_pay_what_you_want: true }), FacilitatorInputError);
+    assert.throws(
+      () => classPwywInput({ is_pay_what_you_want: true, min_centavos: 0 }),
+      FacilitatorInputError,
+    );
+    assert.throws(
+      () => classPwywInput({ is_pay_what_you_want: true, min_centavos: 12.5 }),
+      FacilitatorInputError,
+    );
+  });
+
+  it('drops suggestions below the floor, junk and duplicates, keeping order', () => {
+    const r = classPwywInput({
+      is_pay_what_you_want: true,
+      min_centavos: 10_000,
+      suggested_centavos: [30_000, 5_000, 'x', 15_000, 30_000, -1],
+    });
+    assert.equal(r.min_centavos, 10_000);
+    assert.deepEqual(r.suggested_centavos, [30_000, 15_000]);
+  });
+});
 
 const base = {
   title: 'Coaching session',

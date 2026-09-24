@@ -26,6 +26,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom';
 import { currentUser, login } from '../lib/auth';
 import { money } from '../components/Layout';
+import AmountChooser from '../components/AmountChooser';
 import { REGISTRANT_FIELD_LABELS } from '../lib/cms';
 import { Skeleton, SkeletonText, SkeletonMedia, SkeletonBoundary } from '../components/Skeleton';
 import {
@@ -659,7 +660,8 @@ export default function EventRegister() {
 
               {pwyw && chosenPlan && (
                 <AmountChooser
-                  plan={chosenPlan}
+                  suggestedCentavos={chosenPlan.suggested_centavos}
+                  currency={chosenPlan.currency}
                   value={amount}
                   onChange={setAmount}
                   floorCentavos={floorCentavos}
@@ -992,94 +994,3 @@ function PlanOption({
   );
 }
 
-/**
- * The amount box for a pay-what-you-want plan.
- *
- * Presets and a free-entry field together, rather than either alone. The
- * buttons are what most people use and are the only reason an average donation
- * is more than the minimum; the box is what makes the offer honest, since a
- * grid of fixed buttons is just a price list with extra steps.
- *
- * The minimum is stated up front rather than enforced silently on submit.
- * Someone who types ₱20 into a ₱50 event should be told while they are looking
- * at the box, not after they press the button.
- *
- * Nothing here is authoritative. The server validates the amount against the
- * plan's own floor and the database re-checks it inside the row lock; this is
- * for the person's benefit, not the system's.
- */
-function AmountChooser({
-  plan,
-  value,
-  onChange,
-  floorCentavos,
-  valid,
-}: {
-  plan: EventPlan;
-  value: string;
-  onChange: (next: string) => void;
-  floorCentavos: number;
-  valid: boolean;
-}) {
-  const presets = (plan.suggested_centavos ?? []).filter((c) => c >= floorCentavos);
-  // Pesos, as the box wants them. Whole amounts lose the ".00" so a preset
-  // click leaves "100" in the field rather than "100.00".
-  const toPesoString = (centavos: number) =>
-    centavos % 100 === 0 ? String(centavos / 100) : (centavos / 100).toFixed(2);
-
-  const typed = value.trim();
-  const touched = typed !== '';
-  const showError = touched && !valid;
-
-  return (
-    <div className="field" style={{ display: 'grid', gap: 8 }}>
-      <span style={{ fontWeight: 600 }}>How much would you like to pay?</span>
-      <span className="small muted" style={{ marginTop: -4 }}>
-        This class is donation-based — you choose the amount. Minimum{' '}
-        {money(floorCentavos, plan.currency)}.
-      </span>
-
-      {presets.length > 0 && (
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          {presets.map((centavos) => {
-            const asString = toPesoString(centavos);
-            const active = typed === asString;
-            return (
-              <button
-                key={centavos}
-                type="button"
-                className={active ? 'btn btn-small' : 'btn btn-secondary btn-small'}
-                onClick={() => onChange(asString)}
-              >
-                {money(centavos, plan.currency)}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <label style={{ display: 'grid', gap: 4 }}>
-        <span className="small muted">Or enter your own amount</span>
-        <input
-          type="number"
-          inputMode="decimal"
-          // `min` and `step` make a phone show a numeric keypad and let the
-          // browser catch the obvious cases; neither is relied on.
-          min={floorCentavos / 100}
-          step="0.01"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={toPesoString(floorCentavos)}
-          aria-label={`Amount in ${plan.currency}`}
-          aria-invalid={showError || undefined}
-        />
-      </label>
-
-      {showError && (
-        <span className="small" style={{ color: 'var(--error, #a33)' }}>
-          Please enter at least {money(floorCentavos, plan.currency)}.
-        </span>
-      )}
-    </div>
-  );
-}

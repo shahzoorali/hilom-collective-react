@@ -14,6 +14,32 @@ import { validateIntakeQuestions, IntakeError, type IntakeQuestion } from './int
 
 export class FacilitatorInputError extends Error {}
 
+const MAX_CLASS_PRICE_CENTAVOS = 100_000_000;
+
+/** Pay-what-you-want settings for a class or session. Free is never a PWYW amount. */
+export function classPwywInput(body: Record<string, unknown>): {
+  is_pay_what_you_want: boolean;
+  min_centavos: number | null;
+  suggested_centavos: number[];
+} {
+  if (!body.is_pay_what_you_want) {
+    return { is_pay_what_you_want: false, min_centavos: null, suggested_centavos: [] };
+  }
+  const min = Number(body.min_centavos);
+  if (!Number.isInteger(min) || min < 1 || min > MAX_CLASS_PRICE_CENTAVOS) {
+    throw new FacilitatorInputError('Pay what you want needs a minimum above ₱0.');
+  }
+  const raw = Array.isArray(body.suggested_centavos) ? body.suggested_centavos : [];
+  const suggested = [
+    ...new Set(
+      raw
+        .map(Number)
+        .filter((n) => Number.isInteger(n) && n >= min && n <= MAX_CLASS_PRICE_CENTAVOS),
+    ),
+  ].slice(0, 10);
+  return { is_pay_what_you_want: true, min_centavos: min, suggested_centavos: suggested };
+}
+
 function str(value: unknown, field: string, max: number, required = false): string | null {
   if (value === undefined || value === null || value === '') {
     if (required) throw new FacilitatorInputError(`${field} is required`);
