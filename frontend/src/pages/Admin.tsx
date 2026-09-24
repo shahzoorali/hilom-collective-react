@@ -394,6 +394,16 @@ export default function Admin() {
             <Icon name="cap" size={15} />
             <span>Moodle staff login ↗</span>
           </a>
+          <a
+            href="https://poky.canny.io/hilom-feature-requests"
+            target="_blank"
+            rel="noreferrer"
+            className="admin-view-site-link"
+            title="Suggest or vote on a feature"
+          >
+            <Icon name="bulb" size={15} />
+            <span>Feature requests ↗</span>
+          </a>
           <button
             type="button"
             className="btn btn-ghost small"

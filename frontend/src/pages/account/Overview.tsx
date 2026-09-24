@@ -52,7 +52,17 @@ export default function Overview() {
 
   return (
     <div>
-      <h1>Welcome back{user?.givenName ? `, ${user.givenName}` : ''}</h1>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <h1>Welcome back{user?.givenName ? `, ${user.givenName}` : ''}</h1>
+        <a
+          className="small"
+          href="https://poky.canny.io/hilom-feature-requests"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Have an idea? Suggest a feature ↗
+        </a>
+      </div>
 
       <div className="admin-stats-grid">
         <div className="admin-stat-card">

@@ -119,6 +119,16 @@ function UserMenu({ email }: { email: string }) {
           >
             Hilom Learning Hub
           </a>
+          <a
+            href="https://poky.canny.io/hilom-feature-requests"
+            target="_blank"
+            rel="noreferrer"
+            role="menuitem"
+            className="user-menu-item"
+          >
+            Feature requests
+          </a>
+          <div className="user-menu-sep" role="separator" />
           <button type="button" className="user-menu-item" role="menuitem" onClick={logout}>
             Log out
           </button>

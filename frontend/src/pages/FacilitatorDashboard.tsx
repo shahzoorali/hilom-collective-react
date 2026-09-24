@@ -183,6 +183,9 @@ export default function FacilitatorDashboard() {
               View profile
             </Link>
           )}
+          <a className="btn btn-ghost small" href="https://poky.canny.io/hilom-feature-requests" target="_blank" rel="noreferrer">
+            Feature requests
+          </a>
           <button className="btn btn-ghost small" type="button" onClick={() => { logout(); navigate('/'); }}>
             Log out
           </button>
