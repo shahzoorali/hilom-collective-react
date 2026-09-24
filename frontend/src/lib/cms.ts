@@ -405,6 +405,12 @@ export const adminDeleteSubmission = (adminKey: string, formId: string, submissi
     adminInit(adminKey, 'DELETE'),
   );
 
+export const adminDeleteForm = (adminKey: string, formId: string, force?: boolean) =>
+  apiFetch<{ deleted: boolean }>(
+    `/admin/forms/${formId}${force ? '?force=1' : ''}`,
+    adminInit(adminKey, 'DELETE'),
+  );
+
 export interface AdminEvent extends CmsEvent {
   image_id: string | null;
   status: 'draft' | 'published';

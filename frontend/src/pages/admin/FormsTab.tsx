@@ -9,6 +9,7 @@ import { DataTable, type Column } from './ui/DataTable';
 import { BarList } from './ui/Charts';
 import {
   adminCreateForm,
+  adminDeleteForm,
   adminDeleteSubmission,
   adminListForms,
   adminListSubmissions,
@@ -99,6 +100,44 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
     }
   }
 
+  async function deleteForm() {
+    if (!open) return;
+    if (!(await adminConfirm({ title: `Delete "${open.name}"?`, body: 'This removes the form itself.', confirmLabel: 'Delete', danger: true }))) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminDeleteForm(adminKey, open.id);
+      setOpenId(null);
+      await reload();
+      adminToast.success('Form deleted');
+    } catch (e) {
+      const message = (e as Error).message;
+      if (/stored submissions/.test(message)) {
+        if (
+          await adminConfirm({
+            title: `Delete "${open.name}" and its submissions?`,
+            body: message,
+            confirmLabel: 'Delete everything',
+            danger: true,
+          })
+        ) {
+          try {
+            await adminDeleteForm(adminKey, open.id, true);
+            setOpenId(null);
+            await reload();
+            adminToast.success('Form and submissions deleted');
+          } catch (e2) {
+            setError((e2 as Error).message);
+          }
+        }
+      } else {
+        setError(message);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /** CSV is built in the browser from rows already loaded — no extra endpoint,
    *  and no submission data passing through anything new. */
   function exportCsv() {
@@ -164,9 +203,14 @@ export default function FormsTab({ adminKey }: { adminKey: string }) {
       {open && (
         <>
           <div className="panel" style={{ marginBottom: '1.5rem' }}>
-            <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>
-              {open.name} <span className="small mono muted">{open.slug}</span>
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ fontSize: '1.15rem', marginTop: 0 }}>
+                {open.name} <span className="small mono muted">{open.slug}</span>
+              </h2>
+              <button className="btn btn-ghost small" onClick={deleteForm} disabled={busy}>
+                Delete form
+              </button>
+            </div>
 
             {open.fields.map((field, i) => {
               const replace = (next: Partial<FormFieldDef>) =>
