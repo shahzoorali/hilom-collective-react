@@ -29,6 +29,12 @@ import {
   type Connection,
   type IntegrationProvider,
 } from '../../lib/booking';
+import { GoogleCalendarLogo, GoogleMeetLogo, ZoomLogo } from './ProviderLogos';
+
+const LOGO: Record<IntegrationProvider, () => React.ReactNode> = {
+  google_meet: () => <GoogleMeetLogo size={30} />,
+  zoom: () => <ZoomLogo size={32} />,
+};
 
 /** Copy that belongs to the provider rather than to the connection's state. */
 const BLURB: Record<IntegrationProvider, { requires: string; effect: string }> = {
@@ -83,8 +89,11 @@ const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
  */
 function UnverifiedAppNote({ label }: { label: string }) {
   return (
-    <div className="alert alert-info" style={{ margin: '0.6rem 0 0' }}>
-      <strong>Google will say this app isn't verified — that's expected.</strong>
+    <details className="fs-note">
+      <summary>
+        <strong>Google will say this app isn't verified — that's expected.</strong>{' '}
+        <span className="muted">How to continue</span>
+      </summary>
       <p className="small" style={{ margin: '0.4rem 0 0' }}>
         Hilom is new, and {label} access is still going through Google's review. Until that
         finishes you'll see a screen headed <em>"Google hasn't verified this app"</em>. Your
@@ -104,7 +113,7 @@ function UnverifiedAppNote({ label }: { label: string }) {
         Hilom only ever sees the meetings it creates for you. It cannot read your calendar,
         your email or anything else in your account.
       </p>
-    </div>
+    </details>
   );
 }
 
@@ -203,118 +212,122 @@ export default function ConnectionsTab() {
   }
 
   return (
-    <>
-      <h2>Connections</h2>
-      <p className="small muted" style={{ maxWidth: '60ch' }}>
-        Connect a video account and Hilom will create the meeting link for each session
-        automatically, in your own account, with you as host. You can always enter a link by hand
-        instead — connecting is optional.
-      </p>
+    <div className="fs-page">
+      <header className="fs-pagehead">
+        <div>
+          <h1>Connections</h1>
+          <p>
+            Connect a video account and Hilom creates the meeting link for each session in your own
+            account, with you as host. Optional — you can always paste a link by hand.
+          </p>
+        </div>
+      </header>
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
       {connections === null && <div className="spinner" aria-label="Loading" />}
 
-      {(connections ?? []).map((c) => (
-        <div key={c.provider} className="card" style={{ marginBottom: '0.75rem' }}>
-          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <strong>{c.label}</strong>
-            {c.connected ? (
-              <span className={`pill ${c.broken ? 'pill-bad' : 'pill-ok'}`}>
-                {c.broken ? 'Needs reconnecting' : 'Connected'}
-              </span>
-            ) : (
-              <span className="pill">Not connected</span>
-            )}
-          </div>
+      <div className="fs-integrations">
+        {(connections ?? []).map((c) => {
+          const state = !c.connected ? 'off' : c.broken ? 'broken' : 'on';
+          return (
+            <section key={c.provider} className={`fs-card fs-integration fs-integration--${state}`}>
+              <header className="fs-integration-head">
+                <span className="fs-logo">{LOGO[c.provider]()}</span>
+                <div className="fs-integration-title">
+                  <h2>{c.label}</h2>
+                  <span className={`fs-state fs-state--${state}`}>
+                    {state === 'on' ? 'Connected' : state === 'broken' ? 'Needs reconnecting' : 'Not connected'}
+                  </span>
+                </div>
+              </header>
 
-          {c.connected && c.email && (
-            <p className="small muted" style={{ margin: '0.3rem 0 0' }}>
-              Connected as {c.email}
-              {c.connectedAt && (
-                <>
-                  {' · '}
-                  since{' '}
-                  {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(
-                    new Date(c.connectedAt),
-                  )}
-                </>
+              <p className="fs-integration-copy">{BLURB[c.provider].effect}</p>
+              <p className="fs-integration-req">{BLURB[c.provider].requires}</p>
+
+              {c.connected && c.email && (
+                <div className="fs-account">
+                  <span className="fs-account-dot" aria-hidden="true" />
+                  <span>
+                    {c.email}
+                    {c.connectedAt && (
+                      <span className="muted">
+                        {' · since '}
+                        {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(c.connectedAt))}
+                      </span>
+                    )}
+                  </span>
+                </div>
               )}
-            </p>
-          )}
 
-          {/* A revoked connection is only useful information if it says what to
-              do about it. "Reconnect" is the only fix — retrying does nothing. */}
-          {c.broken && (
-            <div className="alert alert-error" style={{ margin: '0.6rem 0 0' }}>
-              This connection stopped working — usually because access was removed from your{' '}
-              {c.label} account. Reconnect it to keep creating links automatically.
-            </div>
-          )}
+              {/* A revoked connection is only useful information if it says what to
+                  do about it. "Reconnect" is the only fix — retrying does nothing. */}
+              {c.broken && (
+                <div className="alert alert-error" style={{ margin: '0.75rem 0 0' }}>
+                  This connection stopped working — usually because access was removed from your{' '}
+                  {c.label} account. Reconnect it to keep creating links automatically.
+                </div>
+              )}
 
-          {c.provider === 'google_meet' && c.connected && !c.broken && !c.scopes.includes(CALENDAR_SCOPE) && (
-            <div className="alert alert-info" style={{ margin: '0.6rem 0 0' }}>
-              Calendar sync is new — reconnect this account to start adding your sessions to Google
-              Calendar automatically.
-            </div>
-          )}
+              {c.provider === 'google_meet' && c.connected && !c.broken && !c.scopes.includes(CALENDAR_SCOPE) && (
+                <div className="alert alert-info" style={{ margin: '0.75rem 0 0' }}>
+                  Calendar sync is new — reconnect this account to start adding your sessions to Google
+                  Calendar automatically.
+                </div>
+              )}
 
-          <p className="small" style={{ margin: '0.5rem 0 0.75rem' }}>
-            {BLURB[c.provider].effect}
-            <br />
-            <strong>{BLURB[c.provider].requires}</strong>
-          </p>
+              {/* Only while unconnected: once they are through the warning it is
+                  noise, and a note that hides itself needs no dismiss button and no
+                  per-facilitator state to remember. Still shown for a broken
+                  connection, because reconnecting means meeting the screen again. */}
+              {GOOGLE_UNVERIFIED &&
+                SHOWS_UNVERIFIED_WARNING.includes(c.provider) &&
+                (!c.connected || c.broken) && <UnverifiedAppNote label={c.label} />}
 
-          {/* Only while unconnected: once they are through the warning it is
-              noise, and a note that hides itself needs no dismiss button and no
-              per-facilitator state to remember. Still shown for a broken
-              connection, because reconnecting means meeting the screen again. */}
-          {GOOGLE_UNVERIFIED &&
-            SHOWS_UNVERIFIED_WARNING.includes(c.provider) &&
-            (!c.connected || c.broken) && <UnverifiedAppNote label={c.label} />}
+              <footer className="fs-integration-foot">
+                {c.connected ? (
+                  <>
+                    <button
+                      type="button"
+                      className={`fs-btn${c.broken ? ' fs-btn--primary' : ''}`}
+                      disabled={busy === c.provider}
+                      onClick={() => void connect(c.provider)}
+                    >
+                      {c.broken ? 'Reconnect' : 'Switch account'}
+                    </button>
+                    <button
+                      type="button"
+                      className="fs-btn fs-btn--quiet fs-btn--danger"
+                      disabled={busy === c.provider}
+                      onClick={() => void remove(c)}
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="fs-btn fs-btn--primary"
+                    disabled={busy === c.provider}
+                    onClick={() => void connect(c.provider)}
+                  >
+                    {busy === c.provider ? 'Opening…' : 'Connect'}
+                  </button>
+                )}
+              </footer>
+            </section>
+          );
+        })}
+      </div>
 
-          <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
-            {c.connected ? (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-ghost small"
-                  disabled={busy === c.provider}
-                  onClick={() => void connect(c.provider)}
-                >
-                  {c.broken ? 'Reconnect' : 'Reconnect a different account'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost small"
-                  disabled={busy === c.provider}
-                  onClick={() => void remove(c)}
-                >
-                  Disconnect
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-accent small"
-                disabled={busy === c.provider}
-                onClick={() => void connect(c.provider)}
-              >
-                {busy === c.provider ? 'Opening…' : `Connect ${c.label}`}
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
-
-      <p className="small muted" style={{ marginTop: '1.5rem', maxWidth: '60ch' }}>
-        Hilom stores only what it needs to create meetings on your behalf, encrypted, and never
-        reads your calendar or your existing meetings. Disconnecting removes Hilom's access
-        immediately.
+      <p className="fs-privacy">
+        <span aria-hidden="true">🔒</span> Hilom stores only what it needs to create meetings on your
+        behalf, encrypted, and never reads your calendar or your existing meetings. Disconnecting
+        removes Hilom's access immediately.
       </p>
 
       <CalendarFeed />
-    </>
+    </div>
   );
 }
 
@@ -371,85 +384,83 @@ function CalendarFeed() {
   }
 
   return (
-    <>
-      <h2 style={{ marginTop: '2.5rem' }}>Your sessions in your own calendar</h2>
-      <p className="small muted" style={{ maxWidth: '60ch' }}>
-        Subscribe to this link in Google Calendar, Apple Calendar or Outlook and your Hilom
-        sessions appear alongside everything else. It is read-only — nothing you do in your
-        calendar changes a booking here — and it updates on its own.
+    <section className="fs-card fs-section">
+      <header className="fs-integration-head">
+        <span className="fs-logo"><GoogleCalendarLogo size={28} /></span>
+        <div className="fs-integration-title">
+          <h2>Calendar feed</h2>
+          <span className={`fs-state fs-state--${url ? 'on' : 'off'}`}>{url ? 'On' : 'Off'}</span>
+        </div>
+      </header>
+      <p className="fs-integration-copy">
+        Subscribe in Google Calendar, Apple Calendar or Outlook and your Hilom sessions appear
+        alongside everything else. Read-only, and it updates on its own.
       </p>
 
       {error && <div className="alert alert-error">{error}</div>}
+      {!loaded && <div className="spinner" aria-label="Loading" />}
 
-      <div className="panel">
-        {!loaded && <div className="spinner" aria-label="Loading" />}
+      {loaded && !url && (
+        <footer className="fs-integration-foot">
+          <button
+            type="button"
+            className="fs-btn fs-btn--primary"
+            disabled={busy}
+            onClick={() => void run(createMyCalendarFeed)}
+          >
+            {busy ? 'Creating…' : 'Create my calendar link'}
+          </button>
+        </footer>
+      )}
 
-        {loaded && !url && (
-          <>
-            <p className="small" style={{ marginTop: 0 }}>
-              You haven't set this up yet.
-            </p>
+      {loaded && url && (
+        <>
+          <div className="fs-copyfield">
+            <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} aria-label="Your private calendar link" />
+            <button type="button" className="fs-btn fs-btn--primary" onClick={() => void copy()}>
+              {copied ? '✓ Copied' : 'Copy'}
+            </button>
+          </div>
+          <p className="small muted" style={{ margin: '0.5rem 0 0' }}>
+            Treat this like a password — anyone with the link can see your schedule. If you ever
+            share it by accident, generate a new one and the old link stops working.
+          </p>
+          <footer className="fs-integration-foot">
             <button
               type="button"
-              className="btn btn-accent"
+              className="fs-btn"
               disabled={busy}
-              onClick={() => void run(createMyCalendarFeed)}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Generate a new link?\n\nThe old one stops working immediately, and any calendar already subscribed to it will need the new one.',
+                  )
+                ) {
+                  void run(createMyCalendarFeed);
+                }
+              }}
             >
-              {busy ? 'Creating…' : 'Create my calendar link'}
+              Generate new link
             </button>
-          </>
-        )}
-
-        {loaded && url && (
-          <>
-            <label className="field">
-              <span>Your private calendar link</span>
-              <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
-            </label>
-            <p className="small muted" style={{ marginTop: '-0.4rem' }}>
-              Treat this like a password — anyone with the link can see your schedule. If you
-              ever share it by accident, generate a new one and the old link stops working.
-            </p>
-            <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button type="button" className="btn btn-accent small" onClick={() => void copy()}>
-                {copied ? 'Copied' : 'Copy link'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost small"
-                disabled={busy}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'Generate a new link?\n\nThe old one stops working immediately, and any calendar already subscribed to it will need the new one.',
-                    )
-                  ) {
-                    void run(createMyCalendarFeed);
-                  }
-                }}
-              >
-                Generate a new link
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost small"
-                disabled={busy}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'Turn off the calendar feed?\n\nAny calendar subscribed to it will stop updating.',
-                    )
-                  ) {
-                    void run(revokeMyCalendarFeed);
-                  }
-                }}
-              >
-                Turn it off
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </>
+            <button
+              type="button"
+              className="fs-btn fs-btn--quiet fs-btn--danger"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Turn off the calendar feed?\n\nAny calendar subscribed to it will stop updating.',
+                  )
+                ) {
+                  void run(revokeMyCalendarFeed);
+                }
+              }}
+            >
+              Turn off
+            </button>
+          </footer>
+        </>
+      )}
+    </section>
   );
 }
