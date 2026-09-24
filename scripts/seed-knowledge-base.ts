@@ -1792,7 +1792,7 @@ If you need an indefinite break, tell us and we can unpublish your profile. Your
 
 ## Getting the link
 
-Your dashboard, under **Bookings** or **Profile**, as a calendar subscription URL.
+Your dashboard, under **Connections**, as a calendar subscription URL.
 
 ## Adding it
 
@@ -1943,6 +1943,8 @@ That is a different action — **Take off sale** on the class itself. It stops n
         tags: ['events'],
         body: `You can propose an event — a workshop, a retreat, a one-off — from **Events** in your dashboard. Hilom reviews it before it goes anywhere.
 
+Running the same programme over several dates, reviewed as one submission? See [Proposing a series](/help/for-facilitators/proposing-a-series) instead.
+
 ## Nothing is public until it is approved
 
 This is the first thing to understand. A proposal is invisible to everyone except you and Hilom until an admin approves it. It is not on the events page, it is not on your profile, and its link does not work. There is no half-published state.
@@ -1972,6 +1974,36 @@ It goes live on the events page and on your profile, and people can register.
 From then on the title, date and description are **fixed**. They are what people are buying, and changing them after someone has paid changes what they bought. Ask an admin if something genuinely has to change.
 
 What you can still edit yourself is the **joining link and joining instructions** — a corrected Zoom link two hours before the doors open should not need anybody's permission. See [Hosting an event](/help/for-facilitators/hosting-an-event).`,
+      },
+      {
+        slug: 'proposing-a-series',
+        title: 'Proposing a series',
+        summary: 'A multi-date programme reviewed once, with its own price and capacity ask.',
+        kind: 'guide',
+        audience: 'facilitator',
+        tags: ['events'],
+        body: `A series is a multi-date programme — six weekly sessions, a three-part course — reviewed by Hilom as one submission rather than one proposal per date. Propose one from **Events → Propose a series** in your dashboard.
+
+## How it differs from a single event
+
+Everything in [proposing an event](/help/for-facilitators/proposing-an-event) applies — nothing is public until Hilom approves it, and you cannot edit a submission once it is sent for review. A series adds two things a single event does not ask for:
+
+- **A list of dates.** Add as many as the programme runs for. Each becomes its own date once approved, with its own roster and joining link.
+- **Your price and capacity ask.** What you would charge per date and how many places you would offer. These are a starting point for the conversation, not the final numbers — Hilom sets the real price, capacity and commission when approving, the same as it sets everything for a single event.
+
+## Writing it
+
+The title, description, poster and practical details are shared across every date in the series — you are not writing them once per date. If a date needs its own title or details later, that becomes possible once the series is approved and each date exists on its own.
+
+**Save draft** keeps your work private, editable, and visible only to you. **Send to Hilom** submits it for review — do this once the dates, description and ask are ready, since you cannot edit a submitted series.
+
+## If changes are asked for
+
+Same as a single event: an admin can send it back with a note, which you'll see on the series in your dashboard. Edit it and send it again — it goes back into the queue as a fresh submission.
+
+## Once it is approved
+
+Each date in the series appears on the events page and on your profile as its own listing, and people can register for the ones they want. See [Hosting an event](/help/for-facilitators/hosting-an-event) for the roster, joining link and attendee notifications — they work the same per date as they do for a single event.`,
       },
       {
         slug: 'hosting-an-event',
