@@ -86,22 +86,61 @@ function inVacation(booking: Booking, vacationUntil: string | null | undefined):
   return startsAt > Date.now() && startsAt < new Date(vacationUntil).getTime();
 }
 
-const TABS = [
-  { label: 'Overview', path: 'overview', icon: '📊' },
-  { label: 'Bookings', path: 'bookings', icon: '📅' },
-  { label: 'Clients', path: 'clients', icon: '🫂' },
-  { label: 'Messages', path: 'messages', icon: '💬' },
-  // Only meaningful for a facilitator hosting an event, and the tab says so
-  // when they are not. A tab that appears and disappears with the data is
-  // worse: the dashboard's shape would change under someone between visits.
-  { label: 'Events', path: 'events', icon: '🎟️' },
-  { label: 'Classes', path: 'classes', icon: '👥' },
-  { label: 'Services', path: 'services', icon: '🌿' },
-  { label: 'Availability', path: 'availability', icon: '🕰️' },
-  { label: 'Earnings', path: 'earnings', icon: '💰' },
-  { label: 'Profile', path: 'profile', icon: '👤' },
-  { label: 'Connections', path: 'connections', icon: '🔗' },
+const NAV_GROUPS = [
+  {
+    label: 'Workspace',
+    items: [
+      { label: 'Overview', path: 'overview', icon: '📊' },
+      { label: 'Bookings', path: 'bookings', icon: '📅' },
+      { label: 'Messages', path: 'messages', icon: '💬' },
+      { label: 'Clients', path: 'clients', icon: '🫂' },
+    ],
+  },
+  {
+    label: 'Hosting',
+    // Only meaningful for a facilitator hosting an event, and the tab says so
+    // when they are not. A tab that appears and disappears with the data is
+    // worse: the dashboard's shape would change under someone between visits.
+    items: [
+      { label: 'Events', path: 'events', icon: '🎟️' },
+      { label: 'Classes', path: 'classes', icon: '👥' },
+    ],
+  },
+  {
+    label: 'Your practice',
+    items: [
+      { label: 'Services', path: 'services', icon: '🌿' },
+      { label: 'Availability', path: 'availability', icon: '🕰️' },
+      { label: 'Profile', path: 'profile', icon: '👤' },
+      { label: 'Connections', path: 'connections', icon: '🔗' },
+    ],
+  },
+  {
+    label: 'Money',
+    items: [{ label: 'Earnings', path: 'earnings', icon: '💰' }],
+  },
 ] as const;
+
+function initials(name: string): string {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase())
+      .join('') || '•'
+  );
+}
+
+function Avatar({ profile, size = 40 }: { profile: OwnProfile; size?: number }) {
+  return profile.photo_url ? (
+    <img className="fac-avatar" src={profile.photo_url} alt="" style={{ width: size, height: size }} />
+  ) : (
+    <span className="fac-avatar fac-avatar--initials" style={{ width: size, height: size, fontSize: size * 0.38 }}>
+      {initials(profile.display_name)}
+    </span>
+  );
+}
 
 export default function FacilitatorDashboard() {
   const user = currentUser();
@@ -112,6 +151,7 @@ export default function FacilitatorDashboard() {
   const [application, setApplication] = useState<MyFacilitatorStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const signedIn = Boolean(user);
   const isFacilitator = user?.groups.includes('facilitator') ?? false;
@@ -136,10 +176,14 @@ export default function FacilitatorDashboard() {
     };
   }, [signedIn, isFacilitator]);
 
+  // Close the mobile drawer on navigation, as the admin shell does.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
+
   if (!user) {
     return (
-      <Gate title="Facilitator dashboard">
-        <p style={{ marginTop: 0 }}>Sign in to manage your sessions.</p>
+      <Gate title="Facilitator dashboard" subtitle="Your sessions, clients and earnings in one place">
         <button className="btn btn-accent btn-block" type="button" onClick={() => void login('/facilitator')}>
           Continue with your Hilom account
         </button>
@@ -149,8 +193,11 @@ export default function FacilitatorDashboard() {
 
   if (loading) {
     return (
-      <div className="admin-shell">
-        <div className="spinner" aria-label="Loading" />
+      <div className="admin-auth-page">
+        <div style={{ textAlign: 'center' }}>
+          <img src={hilomLogo} alt="Hilom Collective" className="admin-auth-logo" />
+          <p className="muted">Opening your studio…</p>
+        </div>
       </div>
     );
   }
@@ -162,50 +209,104 @@ export default function FacilitatorDashboard() {
   if (error || !profile) {
     return (
       <Gate title="Facilitator dashboard">
-        <div className="alert alert-error">{error ?? 'No facilitator profile found'}</div>
+        <div className="alert alert-error" style={{ margin: 0 }}>{error ?? 'No facilitator profile found'}</div>
       </Gate>
     );
   }
 
   const active = location.pathname.split('/')[2] ?? 'overview';
+  const activeLabel =
+    NAV_GROUPS.map((g) => g.items.find((t) => t.path === active)).find(Boolean)?.label ?? 'Dashboard';
+  const isLive = profile.status === 'published';
 
   return (
-    <div className="admin-shell">
-      <header className="admin-topbar">
-        <img src={hilomLogo} alt="Hilom" style={{ height: 28 }} />
-        <span className="small muted">{profile.display_name}</span>
-        <span className={`pill ${profile.status === 'published' ? 'pill-ok' : 'pill-warn'}`}>
-          {profile.status === 'published' ? 'Live' : 'Not yet listed'}
-        </span>
-        <div className="row" style={{ marginLeft: 'auto', gap: '0.5rem' }}>
-          {profile.status === 'published' && (
-            <Link className="btn btn-ghost small" to={`/facilitators/${profile.slug}`}>
-              View profile
-            </Link>
-          )}
-          <a className="btn btn-ghost small" href="https://poky.canny.io/hilom-feature-requests" target="_blank" rel="noreferrer">
-            Feature requests
-          </a>
-          <button className="btn btn-ghost small" type="button" onClick={() => { logout(); navigate('/'); }}>
-            Log out
-          </button>
-        </div>
+    <div className="admin-shell admin-shell--sidebar fac-shell">
+      <header className="admin-mobile-topbar">
+        <button
+          type="button"
+          className="admin-mobile-menu-btn"
+          onClick={() => setDrawerOpen(true)}
+          aria-label="Open menu"
+          aria-expanded={drawerOpen}
+        >
+          ☰
+        </button>
+        <span className="admin-mobile-topbar-title">{activeLabel}</span>
+        <Avatar profile={profile} size={30} />
       </header>
 
-      <nav className="admin-tabs">
-        {TABS.map((tab) => (
-          <button
-            key={tab.path}
-            type="button"
-            className={`admin-tab-btn${active === tab.path ? ' admin-tab-btn--active' : ''}`}
-            onClick={() => navigate(`/facilitator/${tab.path}`)}
-          >
-            <span aria-hidden="true">{tab.icon}</span> {tab.label}
-          </button>
-        ))}
-      </nav>
+      {drawerOpen && (
+        <div className="admin-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
 
-      <main className="admin-content">
+      <aside className={`admin-sidebar fac-sidebar ${drawerOpen ? 'admin-sidebar--open' : ''}`}>
+        <Link to="/facilitator/overview" className="admin-sidebar-brand">
+          <img src={hilomLogo} alt="Hilom" className="brand-logo" />
+          <div className="admin-brand-text">
+            <span className="admin-brand-title">Facilitator Studio</span>
+            <span className="fac-brand-sub">Hilom Collective</span>
+          </div>
+        </Link>
+
+        <div className="fac-identity">
+          <Avatar profile={profile} size={42} />
+          <div className="fac-identity-text">
+            <strong title={profile.display_name}>{profile.display_name}</strong>
+            <span className={`fac-status ${isLive ? 'fac-status--live' : 'fac-status--draft'}`}>
+              {isLive ? 'Live on Hilom' : profile.status === 'suspended' ? 'Listing paused' : 'Not yet listed'}
+            </span>
+          </div>
+        </div>
+
+        <nav className="admin-sidebar-nav" aria-label="Facilitator navigation">
+          {NAV_GROUPS.map((group) => (
+            <div className="admin-sidebar-group" key={group.label}>
+              <div className="admin-sidebar-group-label">{group.label}</div>
+              {group.items.map((t) => (
+                <button
+                  key={t.path}
+                  type="button"
+                  className={`admin-sidebar-btn ${active === t.path ? 'admin-sidebar-btn--active' : ''}`}
+                  aria-current={active === t.path ? 'page' : undefined}
+                  onClick={() => navigate(`/facilitator/${t.path}`)}
+                >
+                  <span aria-hidden="true">{t.icon}</span>
+                  <span>{t.label}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        <div className="admin-sidebar-actions">
+          {isLive && (
+            <Link to={`/facilitators/${profile.slug}`} className="admin-view-site-link">
+              <span>🌐</span>
+              <span>View public profile</span>
+            </Link>
+          )}
+          <a
+            href="https://poky.canny.io/hilom-feature-requests"
+            target="_blank"
+            rel="noreferrer"
+            className="admin-view-site-link"
+          >
+            <span>💡</span>
+            <span>Feature requests ↗</span>
+          </a>
+          <button
+            className="btn btn-ghost small"
+            type="button"
+            onClick={() => { logout(); navigate('/'); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', justifyContent: 'center' }}
+          >
+            <span>🚪</span>
+            <span>Log out</span>
+          </button>
+        </div>
+      </aside>
+
+      <main className="admin-content fac-content">
         {profile.status === 'approved' && (
           <div className="alert alert-warning">
             <strong>You're approved, but not listed yet.</strong> Finish your{' '}
@@ -363,14 +464,18 @@ function NoAccessGate({
   );
 }
 
-function Gate({ title, children }: { title: string; children: React.ReactNode }) {
+function Gate({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <section className="section">
-      <div className="container" style={{ maxWidth: 520 }}>
-        <h1>{title}</h1>
-        <div className="panel">{children}</div>
+    <div className="admin-auth-page">
+      <div className="admin-auth-card">
+        <div className="admin-auth-header">
+          <img src={hilomLogo} alt="Hilom Collective" className="admin-auth-logo" />
+          <h1 className="admin-auth-title">{title}</h1>
+          {subtitle && <p className="admin-auth-subtitle">{subtitle}</p>}
+        </div>
+        {children}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -378,16 +483,48 @@ function Gate({ title, children }: { title: string; children: React.ReactNode })
 // Overview
 // ---------------------------------------------------------------------------
 
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/** "in 3 days", "in 2 hours", "in 12 minutes" — for the next-session spotlight. */
+function relativeFromNow(iso: string): string {
+  const diff = new Date(iso).getTime() - Date.now();
+  const minutes = Math.round(diff / 60_000);
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  if (Math.abs(minutes) < 60) return rtf.format(minutes, 'minute');
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 36) return rtf.format(hours, 'hour');
+  return rtf.format(Math.round(hours / 24), 'day');
+}
+
+function DateTile({ iso, zone }: { iso: string; zone: string }) {
+  return (
+    <div className="fac-datetile" aria-hidden="true">
+      <span className="fac-datetile-month">{formatInZone(iso, zone, { dateStyle: undefined, timeStyle: undefined, month: 'short' })}</span>
+      <span className="fac-datetile-day">{formatInZone(iso, zone, { dateStyle: undefined, timeStyle: undefined, day: 'numeric' })}</span>
+    </div>
+  );
+}
+
 function Overview({ profile }: { profile: OwnProfile }) {
   const [earnings, setEarnings] = useState<{ thisMonth: EarningsTotals; awaitingPayout: EarningsTotals } | null>(
     null,
   );
   const [bookings, setBookings] = useState<Booking[] | null>(null);
+  const [services, setServices] = useState<FacilitatorService[] | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let live = true;
     void getMyEarnings().then((r) => live && setEarnings(r));
     void listMyFacilitatorBookings().then((r) => live && setBookings(r.bookings));
+    void listMyServices()
+      .then((r) => live && setServices(r))
+      .catch(() => live && setServices([]));
     return () => {
       live = false;
     };
@@ -395,21 +532,56 @@ function Overview({ profile }: { profile: OwnProfile }) {
 
   const zone = viewerTimezone();
   const now = Date.now();
-  const upcoming = (bookings ?? [])
+  const upcomingAll = (bookings ?? [])
     .filter((b) => b.status === 'confirmed' && new Date(b.starts_at).getTime() > now)
-    .sort((a, b) => a.starts_at.localeCompare(b.starts_at))
-    .slice(0, 5);
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  const [next, ...rest] = upcomingAll;
+  const upcoming = rest.slice(0, 5);
+  const weekAhead = upcomingAll.filter((b) => new Date(b.starts_at).getTime() < now + 7 * 86_400_000).length;
+  const pendingReschedules = (bookings ?? []).filter((b) => b.proposed_starts_at).length;
 
   const awayConflicts = (bookings ?? []).filter((b) => inVacation(b, profile.vacation_until));
 
+  const checklist = [
+    { done: Boolean(profile.photo_url), label: 'Add a profile photo', to: 'profile' },
+    { done: Boolean(profile.headline && profile.bio), label: 'Write your headline and bio', to: 'profile' },
+    { done: profile.specialties.length > 0, label: 'List your specialties', to: 'profile' },
+    { done: (services?.length ?? 0) > 0, label: 'Create your first service', to: 'services' },
+    { done: profile.status === 'published', label: 'Get listed on Hilom', to: 'profile' },
+  ];
+  const doneCount = checklist.filter((c) => c.done).length;
+  const checklistPct = Math.round((doneCount / checklist.length) * 100);
+
+  const firstName = profile.display_name.split(' ')[0];
+  const today = new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric', timeZone: zone }).format(
+    new Date(),
+  );
+
   return (
-    <>
-      {profile.status !== 'published' && (
-        <div className="alert alert-info">
-          <strong>You're not listed yet.</strong> Set up your services and availability — Hilom
-          publishes your profile once it's ready.
+    <div className="fac-page">
+      <section className="fac-hero">
+        <div className="fac-hero-text">
+          <span className="fac-eyebrow">{today}</span>
+          <h1>
+            {greeting()}, {firstName}.
+          </h1>
+          <p>
+            {bookings === null
+              ? 'Gathering your week…'
+              : weekAhead === 0
+                ? 'Your week ahead is open — a good moment to share your profile.'
+                : `You have ${weekAhead} ${weekAhead === 1 ? 'session' : 'sessions'} in the next 7 days.`}
+          </p>
         </div>
-      )}
+        <div className="fac-hero-actions">
+          <button type="button" className="fac-hero-btn fac-hero-btn--primary" onClick={() => navigate('/facilitator/bookings')}>
+            ＋ Book a client in
+          </button>
+          <button type="button" className="fac-hero-btn" onClick={() => navigate('/facilitator/availability')}>
+            Edit availability
+          </button>
+        </div>
+      </section>
 
       {/* Kept on screen for the whole away period rather than shown once at
           save time: someone books time off in March for a trip in June, and
@@ -432,41 +604,177 @@ function Overview({ profile }: { profile: OwnProfile }) {
         </div>
       )}
 
-      <div className="admin-stats-grid">
-        <Stat label="Sessions this month" value={String(earnings?.thisMonth.sessions ?? '—')} />
-        <Stat label="Gross this month" value={earnings ? money(earnings.thisMonth.gross) : '—'} />
-        <Stat label="Hilom fees" value={earnings ? `−${money(earnings.thisMonth.fees)}` : '—'} />
-        <Stat label="Your earnings" value={earnings ? money(earnings.thisMonth.net) : '—'} />
+      <div className="fac-kpis">
+        <Kpi
+          icon="💰"
+          label="Your earnings · this month"
+          value={earnings ? money(earnings.thisMonth.net) : '—'}
+          hint={earnings ? `${money(earnings.thisMonth.gross)} gross · −${money(earnings.thisMonth.fees)} fees` : undefined}
+          featured
+        />
+        <Kpi icon="🗓️" label="Sessions this month" value={String(earnings?.thisMonth.sessions ?? '—')} />
+        <Kpi
+          icon="🏦"
+          label="Awaiting payout"
+          value={earnings ? money(earnings.awaitingPayout.net) : '—'}
+          hint={earnings ? `${earnings.awaitingPayout.sessions} delivered sessions` : undefined}
+        />
+        <Kpi
+          icon="⏳"
+          label="Upcoming sessions"
+          value={bookings ? String(upcomingAll.length) : '—'}
+          hint={pendingReschedules > 0 ? `${pendingReschedules} awaiting a reply on a new time` : undefined}
+        />
       </div>
 
-      <h2>Next sessions</h2>
-      {bookings === null && <div className="spinner" aria-label="Loading" />}
-      {bookings !== null && upcoming.length === 0 && (
-        <p className="muted">Nothing booked yet.</p>
-      )}
-      {upcoming.map((b) => (
-        <div key={b.id} className="card" style={{ marginBottom: '0.6rem' }}>
-          <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
-          <p className="small muted" style={{ margin: '0.25rem 0 0' }}>
-            {formatDualZone(
-              b.starts_at,
-              { timezone: b.client_timezone, label: 'for them' },
-              { dateStyle: 'medium', timeStyle: 'short' },
-              zone,
-            )}{' '}
-            · {b.client_name || b.client_email}
-          </p>
+      <div className="fac-grid">
+        <div className="fac-col">
+          <section className="fac-card">
+            <header className="fac-card-head">
+              <h2>Next session</h2>
+              <Link to="/facilitator/bookings" className="fac-link">All bookings →</Link>
+            </header>
+            {bookings === null && <div className="spinner" aria-label="Loading" />}
+            {bookings !== null && !next && (
+              <div className="fac-empty">
+                <span aria-hidden="true">🌱</span>
+                <p>Nothing booked yet. Open some hours and share your profile to fill your diary.</p>
+              </div>
+            )}
+            {next && (
+              <div className="fac-spotlight">
+                <DateTile iso={next.starts_at} zone={zone} />
+                <div className="fac-spotlight-body">
+                  <span className="fac-countdown">Starts {relativeFromNow(next.starts_at)}</span>
+                  <strong className="fac-spotlight-title">{next.facilitator_services?.title ?? 'Session'}</strong>
+                  <span className="small muted">
+                    with {next.client_name || next.client_email} ·{' '}
+                    {formatDualZone(
+                      next.starts_at,
+                      { timezone: next.client_timezone, label: 'for them' },
+                      { dateStyle: undefined, timeStyle: 'short' },
+                      zone,
+                    )}
+                  </span>
+                  <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.75rem' }}>
+                    {next.meeting_url && (
+                      <a className="btn btn-accent small" href={next.meeting_url} target="_blank" rel="noreferrer">
+                        Join session
+                      </a>
+                    )}
+                    <AddToCalendar
+                      small
+                      event={{
+                        id: next.id,
+                        title: `${next.facilitator_services?.title ?? 'Session'} with ${next.client_name || next.client_email}`,
+                        startsAt: next.starts_at,
+                        endsAt: next.ends_at,
+                        location: next.meeting_url ?? undefined,
+                        description: next.meeting_url ? `Join: ${next.meeting_url}` : undefined,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {upcoming.length > 0 && (
+            <section className="fac-card">
+              <header className="fac-card-head">
+                <h2>Coming up</h2>
+              </header>
+              <ul className="fac-agenda">
+                {upcoming.map((b) => (
+                  <li key={b.id}>
+                    <DateTile iso={b.starts_at} zone={zone} />
+                    <div>
+                      <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
+                      <span className="small muted">
+                        {formatDualZone(
+                          b.starts_at,
+                          { timezone: b.client_timezone, label: 'for them' },
+                          { dateStyle: 'medium', timeStyle: 'short' },
+                          zone,
+                        )}{' '}
+                        · {b.client_name || b.client_email}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
-      ))}
-    </>
+
+        <div className="fac-col">
+          {doneCount < checklist.length && (
+            <section className="fac-card">
+              <header className="fac-card-head">
+                <h2>Get fully set up</h2>
+                <span className="fac-pct">{checklistPct}%</span>
+              </header>
+              <div className="fac-progress" role="progressbar" aria-valuenow={checklistPct} aria-valuemin={0} aria-valuemax={100}>
+                <span style={{ width: `${checklistPct}%` }} />
+              </div>
+              <ul className="fac-checklist">
+                {checklist.map((c) => (
+                  <li key={c.label} className={c.done ? 'is-done' : undefined}>
+                    <span className="fac-check" aria-hidden="true">{c.done ? '✓' : ''}</span>
+                    {c.done ? (
+                      <span>{c.label}</span>
+                    ) : (
+                      <Link to={`/facilitator/${c.to}`}>{c.label}</Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <section className="fac-card">
+            <header className="fac-card-head">
+              <h2>Shortcuts</h2>
+            </header>
+            <div className="fac-shortcuts">
+              {[
+                { icon: '💬', label: 'Messages', to: 'messages' },
+                { icon: '🫂', label: 'Clients', to: 'clients' },
+                { icon: '🌿', label: 'Services', to: 'services' },
+                { icon: '💰', label: 'Earnings', to: 'earnings' },
+              ].map((s) => (
+                <Link key={s.to} to={`/facilitator/${s.to}`} className="fac-shortcut">
+                  <span aria-hidden="true">{s.icon}</span>
+                  {s.label}
+                </Link>
+              ))}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Kpi({
+  icon,
+  label,
+  value,
+  hint,
+  featured,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  hint?: string;
+  featured?: boolean;
+}) {
   return (
-    <div className="admin-stat-card">
-      <span className="admin-stat-card__label">{label}</span>
-      <span className="admin-stat-card__value">{value}</span>
+    <div className={`fac-kpi${featured ? ' fac-kpi--featured' : ''}`}>
+      <span className="fac-kpi-icon" aria-hidden="true">{icon}</span>
+      <span className="fac-kpi-label">{label}</span>
+      <span className="fac-kpi-value">{value}</span>
+      {hint && <span className="fac-kpi-hint">{hint}</span>}
     </div>
   );
 }
@@ -802,6 +1110,7 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
   const [adding, setAdding] = useState(false);
   // Which booking's conversation is open inline, if any.
   const [messagingId, setMessagingId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'upcoming' | 'past' | 'all'>('upcoming');
 
   function reload() {
     listMyFacilitatorBookings()
@@ -858,17 +1167,49 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
   const zone = viewerTimezone();
   const now = Date.now();
 
+  const isUpcoming = (b: Booking) => new Date(b.starts_at).getTime() > now;
+  const counts = {
+    upcoming: (bookings ?? []).filter(isUpcoming).length,
+    past: (bookings ?? []).filter((b) => !isUpcoming(b)).length,
+    all: bookings?.length ?? 0,
+  };
+  // Upcoming reads soonest-first; history reads most-recent-first.
+  const visible = (bookings ?? [])
+    .filter((b) => (filter === 'all' ? true : filter === 'upcoming' ? isUpcoming(b) : !isUpcoming(b)))
+    .sort((a, b) =>
+      filter === 'upcoming' ? a.starts_at.localeCompare(b.starts_at) : b.starts_at.localeCompare(a.starts_at),
+    );
+
   return (
-    <>
-      <div className="admin-toolbar">
-        <h2 style={{ margin: 0 }}>Bookings</h2>
-        <button
-          type="button"
-          className="btn btn-accent small"
-          onClick={() => setAdding((open) => !open)}
-        >
-          {adding ? 'Close' : 'Book a client in'}
-        </button>
+    <div className="fac-page">
+      <PageHeader
+        title="Bookings"
+        subtitle="Every session in your diary — reschedule, message or book someone in by hand."
+        action={
+          <button
+            type="button"
+            className="btn btn-accent small"
+            onClick={() => setAdding((open) => !open)}
+          >
+            {adding ? 'Close' : '＋ Book a client in'}
+          </button>
+        }
+      />
+
+      <div className="fac-segmented" role="tablist" aria-label="Filter bookings">
+        {(['upcoming', 'past', 'all'] as const).map((f) => (
+          <button
+            key={f}
+            type="button"
+            role="tab"
+            aria-selected={filter === f}
+            className={filter === f ? 'is-active' : undefined}
+            onClick={() => setFilter(f)}
+          >
+            {f[0].toUpperCase() + f.slice(1)}
+            <span className="fac-count">{counts[f]}</span>
+          </button>
+        ))}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -888,15 +1229,22 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
         />
       )}
       {bookings === null && <div className="spinner" aria-label="Loading" />}
-      {bookings !== null && bookings.length === 0 && <p className="muted">No bookings yet.</p>}
+      {bookings !== null && visible.length === 0 && (
+        <div className="fac-empty fac-card">
+          <span aria-hidden="true">📭</span>
+          <p>{filter === 'upcoming' ? 'No upcoming sessions.' : filter === 'past' ? 'No past sessions yet.' : 'No bookings yet.'}</p>
+        </div>
+      )}
 
-      {(bookings ?? []).map((b) => {
+      {visible.map((b) => {
         const isFuture = new Date(b.starts_at).getTime() > now;
         return (
-          <div key={b.id} className="card" style={{ marginBottom: '0.75rem' }}>
+          <div key={b.id} className={`fac-booking${isFuture ? '' : ' fac-booking--past'}`}>
+            <DateTile iso={b.starts_at} zone={zone} />
+            <div className="fac-booking-body">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <strong>{b.facilitator_services?.title ?? 'Session'}</strong>
-              <span className="pill">{b.status.replace(/_/g, ' ')}</span>
+              <strong className="fac-booking-title">{b.facilitator_services?.title ?? 'Session'}</strong>
+              <span className={`fac-pill fac-pill--${b.status}`}>{b.status.replace(/_/g, ' ')}</span>
             </div>
             {/* Vacation mode never touched sessions already in the diary; this
                 is where the facilitator finds the ones that need a decision. */}
@@ -1081,10 +1429,23 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
                 </button>
               )}
             </div>
+            </div>
           </div>
         );
       })}
-    </>
+    </div>
+  );
+}
+
+function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
+  return (
+    <header className="fac-pagehead">
+      <div>
+        <h1>{title}</h1>
+        {subtitle && <p>{subtitle}</p>}
+      </div>
+      {action}
+    </header>
   );
 }
 
@@ -1117,9 +1478,27 @@ function EarningsTab() {
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!data) return <div className="spinner" aria-label="Loading" />;
 
+  const gross = data.thisMonth.gross;
+  const keptPct = gross > 0 ? Math.round((data.thisMonth.net / gross) * 100) : 100;
+
   return (
-    <>
-      <h2>Earnings</h2>
+    <div className="fac-page">
+      <PageHeader title="Earnings" subtitle="What you've earned, what Hilom kept, and when it lands." />
+
+      <div className="fac-earn-hero">
+        <div>
+          <span className="fac-eyebrow">Your earnings this month</span>
+          <div className="fac-earn-big">{money(data.thisMonth.net)}</div>
+          <span className="fac-earn-sub">
+            from {data.thisMonth.sessions} {data.thisMonth.sessions === 1 ? 'session' : 'sessions'}
+          </span>
+        </div>
+        <div className="fac-earn-side">
+          <span className="fac-eyebrow">Awaiting payout</span>
+          <strong>{money(data.awaitingPayout.net)}</strong>
+          <span className="fac-earn-sub">{data.awaitingPayout.sessions} delivered sessions</span>
+        </div>
+      </div>
 
       {/* The split is shown in full rather than as one net figure. A
           facilitator who cannot see the fee they are paying does not trust the
@@ -1140,7 +1519,9 @@ function EarningsTab() {
           label={`Hilom platform fee (${(data.platformFeeBps / 100).toFixed(data.platformFeeBps % 100 ? 2 : 0)}%)`}
           value={`−${money(data.thisMonth.fees)}`}
         />
-        <hr />
+        <div className="fac-split" aria-hidden="true">
+          <span style={{ width: `${keptPct}%` }} />
+        </div>
         <Line label="Your earnings" value={money(data.thisMonth.net)} strong />
       </div>
 
@@ -1180,10 +1561,15 @@ function EarningsTab() {
         )}
       </div>
 
-      <h3>Payout history</h3>
-      {data.payouts.length === 0 && <p className="muted">No payouts yet.</p>}
+      <h3 className="fac-section-title">Payout history</h3>
+      {data.payouts.length === 0 && (
+        <div className="fac-empty fac-card">
+          <span aria-hidden="true">🏦</span>
+          <p>No payouts yet — delivered sessions roll into your next payout.</p>
+        </div>
+      )}
       {data.payouts.map((p) => (
-        <div key={p.id} className="card" style={{ marginBottom: '0.6rem' }}>
+        <div key={p.id} className="fac-card fac-payout">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
             <strong>{money(p.net_centavos)}</strong>
             <span className={`pill ${p.status === 'paid' ? 'pill-ok' : 'pill-warn'}`}>{p.status}</span>
@@ -1195,7 +1581,7 @@ function EarningsTab() {
           </p>
         </div>
       ))}
-    </>
+    </div>
   );
 }
 
