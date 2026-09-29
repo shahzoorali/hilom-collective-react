@@ -223,7 +223,7 @@ export default function ProfileTab({
 
           <Section title="Your story" hint="The words that help a client decide you're the right person.">
             <label className="field">
-              <span>My approach</span>
+              <span>About you</span>
               <textarea rows={8} value={draft.bio} onChange={(e) => set('bio', e.target.value)} />
               <small className="muted">Basic formatting is kept; anything else is stripped when saved.</small>
             </label>
@@ -233,9 +233,13 @@ export default function ProfileTab({
                 rows={5}
                 value={draft.specialties}
                 onChange={(e) => set('specialties', e.target.value)}
-                placeholder={'Emotional wellbeing\nCareer transitions\nStress management'}
+                placeholder={'Emotional wellbeing (Tools for naming and working with big feelings)\nCareer transitions — Clarity through a change of direction\nStress management'}
               />
-              <small className="muted">Shown on your directory card and profile. The first few appear on the card.</small>
+              <small className="muted">
+                Shown on your directory card and profile. The first few appear on the card. To add a
+                short description under a topic on your profile, write it as “Topic (description)” or
+                “Topic — description”. Only the topic name appears on the card.
+              </small>
             </label>
           </Section>
 
