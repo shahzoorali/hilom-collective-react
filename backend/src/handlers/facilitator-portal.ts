@@ -3,6 +3,9 @@
  *
  *   GET    /facilitators/apply                     (any signed-in user)
  *   POST   /facilitators/apply                     (any signed-in user)
+ *   GET    /facilitators/agreement                 (any signed-in user)
+ *   POST   /facilitators/agreement                 (any signed-in user)
+ *   GET    /facilitators/agreement/pdf             (any signed-in user)
  *   GET    /facilitator/me                         (facilitator group)
  *   PUT    /facilitator/me
  *   GET    /facilitator/services
@@ -76,6 +79,21 @@ import { selfActor, recordAudit } from '../lib/audit.js';
 import { BlockValidationError } from '../lib/cms-blocks.js';
 import { normalizeSlug, slugify, findAvailableFacilitatorSlug, SlugError } from '../lib/slug.js';
 import { randomBytes } from 'node:crypto';
+import {
+  agreementPdfFilename,
+  agreementState,
+  buildAgreementPdf,
+  fieldsFor,
+  getAcceptance,
+  getVersion,
+  recordAcceptance,
+  renderAgreement,
+  validateSignature,
+  type AgreementAcceptance,
+  type AgreementVersion,
+  type SignerMeta,
+} from '../lib/facilitator-agreement.js';
+import { sendSignedAgreementCopy } from '../lib/facilitator-agreement-email.js';
 
 const OWN_COLUMNS =
   'id, slug, email, display_name, short_name, headline, bio, photo_media_id, photo_url, credentials, specialties, languages, location, delivery_mode, scope_note, social_links, website_url, years_experience, legal_name, phone, timezone, status, platform_fee_bps, vacation_until, payout_details, applied_at, approved_at';
@@ -106,7 +124,17 @@ export async function handler(ev: APIGatewayProxyEventV2): Promise<APIGatewayPro
     if (path.endsWith('/facilitators/apply')) {
       const user = await requireUser(ev);
       if (method === 'GET') return await applicationStatus(user);
-      return await apply(user, parseBody(ev));
+      return await apply(user, parseBody(ev), signerMeta(ev, user.sub));
+    }
+
+    // The agreement is open to any signed-in user for the same reason apply is:
+    // an applicant signs it before they are in the facilitator group.
+    if (path.endsWith('/facilitators/agreement') || path.endsWith('/facilitators/agreement/pdf')) {
+      const user = await requireUser(ev);
+      if (path.endsWith('/pdf')) return await agreementPdf(user, ev);
+      if (method === 'GET') return await agreementView(user);
+      if (method === 'POST') return await agreementSign(user, parseBody(ev), signerMeta(ev, user.sub));
+      return badRequest(`Unsupported method ${method}`);
     }
 
     const user = await requireGroup(ev, 'facilitator');
@@ -272,6 +300,7 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
 async function apply(
   user: { email: string; sub: string; givenName?: string; familyName?: string },
   body: Record<string, unknown>,
+  meta: SignerMeta,
 ): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
 
@@ -290,6 +319,17 @@ async function apply(
     display_name:
       body.display_name ?? [user.givenName, user.familyName].filter(Boolean).join(' ') ?? user.email,
   });
+
+  // The agreement is part of applying, but only once one has been published.
+  // Validated here, before either write below, so a missing signature never
+  // leaves a half-created application behind.
+  const currentAgreement = await agreementState(supabase, existing?.id ?? NO_FACILITATOR);
+  const signature = currentAgreement.current ? validateSignature(body) : null;
+  if (signature && currentAgreement.current && signature.agreement_version !== currentAgreement.current.version) {
+    throw new FacilitatorInputError(
+      'The agreement was updated while you were reading it - reload the page and review the latest version',
+    );
+  }
 
   if (existing) {
     const { data, error } = await supabase
@@ -313,6 +353,9 @@ async function apply(
       .maybeSingle();
     if (error) throw error;
     if (!data) return ok({ alreadyApplied: true, status: 'applied' });
+    if (signature && currentAgreement.current) {
+      await recordAcceptance(supabase, { id: data.id, status: 'applied' }, currentAgreement.current, signature, meta);
+    }
     return ok({ facilitator: data, status: 'applied', reapplied: true });
   }
 
@@ -338,7 +381,144 @@ async function apply(
     .maybeSingle();
 
   if (error) throw error;
+  if (data && signature && currentAgreement.current) {
+    await recordAcceptance(supabase, { id: data.id, status: 'applied' }, currentAgreement.current, signature, meta);
+  }
   return ok({ facilitator: data, status: 'applied' });
+}
+
+/** A uuid that matches no row: "state of the agreement for someone with no application yet". */
+const NO_FACILITATOR = '00000000-0000-0000-0000-000000000000';
+
+/** Where a signature came from - the evidence half of the record. */
+function signerMeta(ev: APIGatewayProxyEventV2, sub: string): SignerMeta {
+  return {
+    ip: ev.requestContext.http.sourceIp ?? null,
+    userAgent: ev.headers?.['user-agent'] ?? null,
+    cognitoSub: sub,
+  };
+}
+
+/** The caller's own facilitator row, without the side effects `me()` has. */
+async function ownRow(
+  supabase: SupabaseClient,
+  user: { email: string; sub: string },
+): Promise<{ id: string; status: string; display_name: string; email: string } | null> {
+  const { data, error } = await supabase
+    .from('facilitators')
+    .select('id, status, display_name, email')
+    .or(`cognito_sub.eq.${user.sub},email.eq.${user.email}`)
+    .maybeSingle<{ id: string; status: string; display_name: string; email: string }>();
+  if (error) throw error;
+  return data;
+}
+
+function acceptanceView(a: AgreementAcceptance) {
+  return {
+    signer_name: a.signer_name,
+    signer_address: a.signer_address,
+    signer_contact: a.signer_contact,
+    signed_at: a.signed_at,
+    countersigned_at: a.countersigned_at,
+  };
+}
+
+function versionView(v: AgreementVersion) {
+  return {
+    version: v.version,
+    title: v.title,
+    body_md: v.body_md,
+    hilom_signatory: v.hilom_signatory,
+    hilom_address: v.hilom_address,
+  };
+}
+
+/**
+ * `GET /facilitators/agreement` - what the signing screen needs.
+ *
+ * Works before the person has applied (`facilitator: null`): the apply form
+ * shows the agreement and collects the signature in the same submit.
+ * `required: false` means no version is published and nothing should be asked.
+ */
+async function agreementView(user: { email: string; sub: string }): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const row = await ownRow(supabase, user);
+  const state = await agreementState(supabase, row?.id ?? NO_FACILITATOR);
+  return ok({
+    required: state.required,
+    needs_signature: state.needsSignature,
+    facilitator: row ? { status: row.status } : null,
+    version: state.current ? versionView(state.current) : null,
+    acceptance: state.acceptance ? acceptanceView(state.acceptance) : null,
+    rendered_md:
+      state.current && state.acceptance
+        ? renderAgreement(state.current.body_md, fieldsFor(state.current, state.acceptance))
+        : null,
+  });
+}
+
+/**
+ * `POST /facilitators/agreement` - sign as an existing applicant or facilitator
+ * (a new version, or the first rollout to people approved before it existed).
+ * First-time applicants sign inside `apply` instead.
+ */
+async function agreementSign(
+  user: { email: string; sub: string },
+  body: Record<string, unknown>,
+  meta: SignerMeta,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const row = await ownRow(supabase, user);
+  if (!row) return badRequest('Apply to become a facilitator first');
+  if (!['applied', 'approved', 'published'].includes(row.status)) {
+    return badRequest('Your account cannot sign the agreement in its current state');
+  }
+  const input = validateSignature(body);
+  const version = await getVersion(supabase, input.agreement_version);
+  if (!version) return notFound('Agreement version not found');
+
+  const before = await getAcceptance(supabase, row.id, version.version);
+  const acceptance = await recordAcceptance(supabase, row, version, input, meta);
+
+  // Emailed the moment the record becomes fully executed - either just now
+  // (already approved) or, for an applicant, at approval (admin-facilitators).
+  if (!before && acceptance.countersigned_at) {
+    await sendSignedAgreementCopy(row.email, row.display_name, version, acceptance);
+  }
+  return ok({
+    acceptance: acceptanceView(acceptance),
+    rendered_md: renderAgreement(version.body_md, fieldsFor(version, acceptance)),
+  });
+}
+
+/** `GET /facilitators/agreement/pdf[?version=]` - the caller's own signed copy. */
+async function agreementPdf(
+  user: { email: string; sub: string },
+  ev: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const row = await ownRow(supabase, user);
+  if (!row) return notFound('No signed agreement on file');
+  const requested = ev.queryStringParameters?.version;
+  const state = await agreementState(supabase, row.id);
+  const versionId = requested ?? state.current?.version;
+  if (!versionId) return notFound('No signed agreement on file');
+  const version = await getVersion(supabase, versionId);
+  const acceptance = version ? await getAcceptance(supabase, row.id, versionId) : null;
+  if (!version || !acceptance) return notFound('No signed agreement on file');
+
+  const pdf = await buildAgreementPdf(version, acceptance);
+  return {
+    statusCode: 200,
+    isBase64Encoded: true,
+    headers: {
+      'Access-Control-Allow-Origin': process.env.CORS_ORIGIN ?? '*',
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${agreementPdfFilename(acceptance)}"`,
+      'Cache-Control': 'private, no-store',
+    },
+    body: Buffer.from(pdf).toString('base64'),
+  };
 }
 
 /**

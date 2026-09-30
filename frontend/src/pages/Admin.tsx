@@ -10,6 +10,7 @@ import ClassesTab from './admin/ClassesTab';
 import SettingsTab from './admin/SettingsTab';
 import PromoCodesTab from './admin/PromoCodesTab';
 import FacilitatorsTab from './admin/FacilitatorsTab';
+import AgreementsTab from './admin/AgreementsTab';
 import FacilitatorEditor from './admin/FacilitatorEditor';
 import PayoutsTab from './admin/PayoutsTab';
 import ReviewsTab from './admin/ReviewsTab';
@@ -78,6 +79,7 @@ const NAV_GROUPS = [
       // including sign-ups that have never transacted.
       { label: 'Accounts', path: 'accounts', icon: 'key' },
       { label: 'Facilitators', path: 'facilitators', icon: 'leaf' },
+      { label: 'Agreement', path: 'facilitator-agreement', icon: 'scroll' },
       { label: 'Forms', path: 'forms', icon: 'clipboard' },
     ],
   },
@@ -468,6 +470,7 @@ export default function Admin() {
           <Route path="commerce" element={<CommerceRedirect />} />
           <Route path="promo-codes" element={<PromoCodesTab adminKey={adminKey} />} />
           <Route path="facilitators" element={<FacilitatorsTab adminKey={adminKey} />} />
+          <Route path="facilitator-agreement" element={<AgreementsTab adminKey={adminKey} />} />
           <Route
             path="facilitators/:facilitatorId"
             element={<FacilitatorEditor adminKey={adminKey} />}

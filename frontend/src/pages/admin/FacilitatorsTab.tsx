@@ -33,6 +33,7 @@ import {
   labelFor,
 } from '../../lib/facilitator-intake';
 import { shortName } from '../../lib/names';
+import { adminDownloadAgreement, type AdminAgreementAcceptance } from '../../lib/facilitator-agreement';
 import { adminConfirm, adminToast } from './ui/feedback';
 import { EmptyState } from './ui/EmptyState';
 
@@ -85,6 +86,7 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
     facilitator: AdminFacilitator;
     services: FacilitatorService[];
     bookings: Booking[];
+    agreements: AdminAgreementAcceptance[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -480,6 +482,18 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
             fee {(f.platform_fee_bps / 100).toFixed(f.platform_fee_bps % 100 ? 2 : 0)}%
           </p>
 
+          {f.agreement && (
+            <p className="small" style={{ margin: '-0.3rem 0 0.6rem' }}>
+              Agreement:{' '}
+              {f.agreement.signed_at ? (
+                <strong>{f.agreement.countersigned_at ? 'signed by both' : 'signed by facilitator'}</strong>
+              ) : (
+                <strong style={{ color: 'var(--danger-fg)' }}>not signed</strong>
+              )}
+              <span className="muted"> · v{f.agreement.version}</span>
+            </p>
+          )}
+
           <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap' }}>
             <button type="button" className="btn btn-ghost small" onClick={() => setOpenId(f.id)}>
               Review
@@ -495,7 +509,8 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
                 <button
                   type="button"
                   className="btn btn-accent small"
-                  disabled={busy}
+                  disabled={busy || Boolean(f.agreement && !f.agreement.signed_at)}
+                  title={f.agreement && !f.agreement.signed_at ? 'Waiting for them to sign the agreement' : undefined}
                   onClick={() => void setStatus(f.id, 'approved')}
                 >
                   Approve
@@ -514,7 +529,8 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
               <button
                 type="button"
                 className="btn btn-accent small"
-                disabled={busy}
+                disabled={busy || Boolean(f.agreement && !f.agreement.signed_at)}
+                title={f.agreement && !f.agreement.signed_at ? 'Waiting for them to sign the agreement' : undefined}
                 onClick={() => void setStatus(f.id, 'published')}
               >
                 Publish
@@ -589,6 +605,38 @@ export default function FacilitatorsTab({ adminKey }: { adminKey: string }) {
                   </p>
 
                   {detail.facilitator.headline && <p>{detail.facilitator.headline}</p>}
+
+                  {/* The signed partnership agreement(s). Each row is the
+                      append-only record; the PDF is rendered from it on
+                      demand, so this is always the executed copy. */}
+                  <h4>Partnership agreement</h4>
+                  {detail.agreements.length === 0 ? (
+                    <p className="small muted" style={{ margin: '0 0 0.6rem' }}>
+                      Not signed. It is requested from the applicant when one is published.
+                    </p>
+                  ) : (
+                    detail.agreements.map((a) => (
+                      <p key={a.id} className="small" style={{ margin: '0 0 0.5rem' }}>
+                        <strong>v{a.agreement_version}</strong> — signed by {a.signer_name}{' '}
+                        {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(a.signed_at))}
+                        {a.countersigned_at
+                          ? `, countersigned ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(a.countersigned_at))}`
+                          : ', awaiting Hilom countersignature (on approval)'}
+                        {' · '}
+                        <button
+                          type="button"
+                          className="linklike"
+                          onClick={() =>
+                            void adminDownloadAgreement(adminKey, detail.facilitator.id, a.agreement_version).catch(
+                              (err: Error) => setError(err.message),
+                            )
+                          }
+                        >
+                          Download PDF
+                        </button>
+                      </p>
+                    ))
+                  )}
 
                   <p className="small" style={{ margin: '0 0 0.6rem' }}>
                     Addressed as{' '}

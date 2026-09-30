@@ -40,6 +40,8 @@ import { money } from '../components/Layout';
 import MessageThread from '../components/MessageThread';
 import AddToCalendar from '../components/AddToCalendar';
 import { shortName } from '../lib/names';
+import { downloadMyAgreement, getAgreement, type AgreementView } from '../lib/facilitator-agreement';
+import { AgreementGate } from '../components/AgreementSigner';
 import {
   getMyEarnings,
   getMyFacilitatorProfile,
@@ -150,6 +152,10 @@ export default function FacilitatorDashboard() {
 
   const [profile, setProfile] = useState<OwnProfile | null>(null);
   const [application, setApplication] = useState<MyFacilitatorStatus | null>(null);
+  // The partnership agreement. A failed lookup reads as "nothing required":
+  // the server still refuses approval and publishing without a signature, so
+  // failing open here cannot put anyone to work unsigned.
+  const [agreement, setAgreement] = useState<AgreementView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -169,7 +175,12 @@ export default function FacilitatorDashboard() {
     const load = isFacilitator
       ? getMyFacilitatorProfile().then((p) => live && setProfile(p))
       : getMyFacilitatorStatus().then((s) => live && setApplication(s));
-    load
+    // Loaded alongside, and awaited, so the gate replaces the dashboard rather
+    // than flashing in after it.
+    const agreementLoad = getAgreement()
+      .then((a) => live && setAgreement(a))
+      .catch(() => undefined);
+    Promise.all([load, agreementLoad])
       .catch((err: Error) => live && setError(err.message))
       .finally(() => live && setLoading(false));
     return () => {
@@ -204,13 +215,37 @@ export default function FacilitatorDashboard() {
   }
 
   if (!isFacilitator) {
-    return <NoAccessGate email={user.email} application={application} />;
+    return (
+      <NoAccessGate
+        email={user.email}
+        application={application}
+        agreement={agreement}
+        onSigned={(acceptance) => setAgreement((a) => (a ? { ...a, needs_signature: false, acceptance } : a))}
+      />
+    );
   }
 
   if (error || !profile) {
     return (
       <Gate title="Facilitator dashboard">
         <div className="alert alert-error" style={{ margin: 0 }}>{error ?? 'No facilitator profile found'}</div>
+      </Gate>
+    );
+  }
+
+  // Approved before agreements existed, or a new version was published: the
+  // dashboard waits for a signature. Only the signing screen and a sign-out.
+  if (agreement?.needs_signature && agreement.version) {
+    return (
+      <Gate title="Sign your agreement" subtitle="One step before you continue to your studio">
+        <AgreementGate
+          version={agreement.version}
+          defaultName={profile.legal_name ?? profile.display_name}
+          defaultContact={profile.email}
+          onSigned={(acceptance) =>
+            setAgreement((a) => (a ? { ...a, needs_signature: false, acceptance } : a))
+          }
+        />
       </Gate>
     );
   }
@@ -286,6 +321,17 @@ export default function FacilitatorDashboard() {
               <span>View public profile</span>
             </Link>
           )}
+          {agreement?.acceptance && (
+            <button
+              type="button"
+              className="admin-view-site-link"
+              style={{ background: 'none', border: 0, cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => void downloadMyAgreement().catch((e: Error) => window.alert(e.message))}
+            >
+              <span>📄</span>
+              <span>Signed agreement (PDF)</span>
+            </button>
+          )}
           <a
             href="https://poky.canny.io/hilom-feature-requests"
             target="_blank"
@@ -359,9 +405,13 @@ export default function FacilitatorDashboard() {
 function NoAccessGate({
   email,
   application,
+  agreement,
+  onSigned,
 }: {
   email: string;
   application: MyFacilitatorStatus | null;
+  agreement: AgreementView | null;
+  onSigned: (acceptance: NonNullable<AgreementView['acceptance']>) => void;
 }) {
   const reSignIn = () => {
     logout();
@@ -383,6 +433,25 @@ function NoAccessGate({
         <button className="btn btn-accent btn-block" type="button" onClick={reSignIn}>
           Sign in again
         </button>
+      </Gate>
+    );
+  }
+
+  // Applied before agreements existed (or before a new version): they cannot
+  // be approved until they sign, so the review screen asks for it right here.
+  if (application?.status === 'applied' && agreement?.needs_signature && agreement.version) {
+    return (
+      <Gate title="Sign your agreement" subtitle="Your application is waiting on this">
+        <p style={{ marginTop: 0 }}>
+          We now ask every facilitator to sign the Hilom Facilitator Partnership Agreement.
+          We can't approve your application until it's on file.
+        </p>
+        <AgreementGate
+          version={agreement.version}
+          defaultName=""
+          defaultContact={email}
+          onSigned={onSigned}
+        />
       </Gate>
     );
   }

@@ -433,6 +433,12 @@ export interface FacilitatorApplication {
   referral_source: ReferralSource;
   referral_source_other?: string;
   privacy_accepted: true;
+  /** Present when an agreement is published; see lib/facilitator-agreement.ts. */
+  agreement_accepted?: true;
+  agreement_version?: string;
+  signer_name?: string;
+  signer_address?: string;
+  signer_contact?: string;
 }
 
 export const applyAsFacilitator = (body: FacilitatorApplication) =>
@@ -862,6 +868,11 @@ export const adminMarkClassRefundSent = (adminKey: string, registrationId: strin
 // ---------------------------------------------------------------------------
 
 export interface AdminFacilitator extends OwnProfile {
+  /**
+   * Signature state for the *current* agreement version; `null` when none is
+   * published (nothing is asked or enforced). Only on the list response.
+   */
+  agreement?: { version: string; signed_at: string | null; countersigned_at: string | null } | null;
   cognito_sub: string | null;
   admin_notes: string | null;
   created_at: string;
@@ -936,7 +947,12 @@ export const adminCreateFacilitator = (
   }).then((r) => r.facilitator);
 
 export const adminGetFacilitator = (adminKey: string, facilitatorId: string) =>
-  apiFetch<{ facilitator: AdminFacilitator; services: FacilitatorService[]; bookings: Booking[] }>(
+  apiFetch<{
+    facilitator: AdminFacilitator;
+    services: FacilitatorService[];
+    bookings: Booking[];
+    agreements: import('./facilitator-agreement').AdminAgreementAcceptance[];
+  }>(
     `/admin/facilitators/${encodeURIComponent(facilitatorId)}`,
     { headers: { 'x-admin-key': adminKey } },
   );

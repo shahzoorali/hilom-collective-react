@@ -410,6 +410,10 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/classes/{classId}', [PUT, DELETE]],
       ['/facilitator/classes/{classId}/sessions', [GET, POST]],
       ['/facilitator/classes/sessions/{sessionId}', [DELETE, PUT]],
+      // The digital partnership agreement (0066). Open to any signed-in user,
+      // like /facilitators/apply: applicants sign before they have the group.
+      ['/facilitators/agreement', [GET, POST]],
+      ['/facilitators/agreement/pdf', [GET]],
     ]);
 
     // A separate function from the portal above, following this stack's rule
@@ -470,6 +474,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/facilitators', [GET, POST]],
       ['/admin/facilitators/{facilitatorId}', [GET, PATCH]],
       ['/admin/facilitators/{facilitatorId}/certificate', [GET]],
+      ['/admin/facilitators/{facilitatorId}/agreement', [GET]],
+      ['/admin/facilitator-agreements', [GET, POST]],
+      ['/admin/facilitator-agreements/{agreementVersion}', [PATCH]],
       ['/admin/bookings', [GET]],
       ['/admin/reviews', [GET]],
       ['/admin/reviews/{reviewId}', [PATCH]],

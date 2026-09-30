@@ -50,6 +50,19 @@ import { refundOwed, reviewsAwaitingModeration } from '../lib/admin-queues.js';
 import { validateProfile, FacilitatorInputError } from '../lib/facilitator-input.js';
 import { adminActorFromEvent, recordAudit, type AuditActor } from '../lib/audit.js';
 import {
+  ACCEPTANCE_COLUMNS,
+  VERSION_COLUMNS,
+  agreementPdfFilename,
+  agreementState,
+  buildAgreementPdf,
+  countersign,
+  getAcceptance,
+  getVersion,
+  type AgreementAcceptance,
+  type AgreementVersion,
+} from '../lib/facilitator-agreement.js';
+import { sendSignedAgreementCopy } from '../lib/facilitator-agreement-email.js';
+import {
   normalizeSlug,
   slugify,
   findAvailableFacilitatorSlug,
@@ -101,6 +114,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // typed-in name — see adminActorFromEvent.
     const actor = await adminActorFromEvent(event);
 
+    if (path.includes('/admin/facilitator-agreements')) {
+      return await agreementVersions(supabase, event, method, parseBodyOrEmpty(event, method), actor);
+    }
     if (path.includes('/admin/reviews')) return await reviews(supabase, event, method);
     if (path.includes('/admin/payouts')) return await payouts(supabase, event, method, actor);
     if (path.includes('/admin/class-registrations')) {
@@ -125,6 +141,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (method === 'GET' && path.endsWith('/certificate')) {
       return await getCertificateUrl(supabase, facilitatorId);
+    }
+    if (method === 'GET' && path.endsWith('/agreement')) {
+      return await getAgreementPdf(supabase, facilitatorId, event.queryStringParameters?.version);
     }
     if (method === 'GET') return await getFacilitator(supabase, facilitatorId);
     if (method === 'PATCH') return await patchFacilitator(supabase, facilitatorId, parseBody(event), actor);
@@ -250,7 +269,38 @@ async function listFacilitators(
 
   const { data, error } = await query;
   if (error) throw error;
-  return ok({ facilitators: data ?? [] });
+
+  // One extra query for the admin table's "signed?" badge rather than a join on
+  // ADMIN_FACILITATOR_COLUMNS, which many other screens share.
+  const rows = (data ?? []) as unknown as { id: string }[];
+  const { data: currentVersion, error: versionError } = await supabase
+    .from('facilitator_agreement_versions')
+    .select('version')
+    .eq('status', 'current')
+    .maybeSingle<{ version: string }>();
+  if (versionError) throw versionError;
+  let signed = new Map<string, { signed_at: string; countersigned_at: string | null }>();
+  if (currentVersion && rows.length > 0) {
+    const { data: acceptances, error: acceptError } = await supabase
+      .from('facilitator_agreement_acceptances')
+      .select('facilitator_id, signed_at, countersigned_at')
+      .eq('agreement_version', currentVersion.version);
+    if (acceptError) throw acceptError;
+    signed = new Map(
+      (acceptances ?? []).map((a) => [
+        a.facilitator_id as string,
+        { signed_at: a.signed_at as string, countersigned_at: (a.countersigned_at as string | null) ?? null },
+      ]),
+    );
+  }
+  return ok({
+    facilitators: rows.map((r) => ({
+      ...r,
+      agreement: currentVersion
+        ? { version: currentVersion.version, ...(signed.get(r.id) ?? { signed_at: null, countersigned_at: null }) }
+        : null,
+    })),
+  });
 }
 
 /**
@@ -366,7 +416,208 @@ async function getFacilitator(
       .limit(50),
   ]);
 
-  return ok({ facilitator: data, services: services.data ?? [], bookings: bookings.data ?? [] });
+  const { data: acceptances, error: acceptError } = await supabase
+    .from('facilitator_agreement_acceptances')
+    .select(ACCEPTANCE_COLUMNS)
+    .eq('facilitator_id', facilitatorId)
+    .order('signed_at', { ascending: false });
+  if (acceptError) throw acceptError;
+
+  return ok({
+    facilitator: data,
+    services: services.data ?? [],
+    bookings: bookings.data ?? [],
+    agreements: acceptances ?? [],
+  });
+}
+
+/** The signed PDF for one facilitator, for an admin. Defaults to the newest signed version. */
+async function getAgreementPdf(
+  supabase: SupabaseClient,
+  facilitatorId: string,
+  requested: string | undefined,
+): Promise<APIGatewayProxyResultV2> {
+  let acceptance: AgreementAcceptance | null;
+  if (requested) {
+    acceptance = await getAcceptance(supabase, facilitatorId, requested);
+  } else {
+    const { data, error } = await supabase
+      .from('facilitator_agreement_acceptances')
+      .select(ACCEPTANCE_COLUMNS)
+      .eq('facilitator_id', facilitatorId)
+      .order('signed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle<AgreementAcceptance>();
+    if (error) throw error;
+    acceptance = data;
+  }
+  if (!acceptance) return notFound('This facilitator has not signed an agreement');
+  const version = await getVersion(supabase, acceptance.agreement_version);
+  if (!version) return notFound('Agreement version not found');
+
+  const pdf = await buildAgreementPdf(version, acceptance);
+  return {
+    statusCode: 200,
+    isBase64Encoded: true,
+    headers: {
+      'Access-Control-Allow-Origin': process.env.CORS_ORIGIN ?? '*',
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${agreementPdfFilename(acceptance)}"`,
+      'Cache-Control': 'private, no-store',
+    },
+    body: Buffer.from(pdf).toString('base64'),
+  };
+}
+
+function parseBodyOrEmpty(event: APIGatewayProxyEventV2, method: string): Record<string, unknown> {
+  return method === 'GET' ? {} : parseBody(event);
+}
+
+const VERSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,59}$/;
+const KNOWN_PLACEHOLDERS = new Set([
+  'effective_date',
+  'hilom_signatory',
+  'hilom_address',
+  'facilitator_name',
+  'facilitator_address',
+  'facilitator_contact',
+]);
+
+/**
+ * The agreement text, versioned.
+ *
+ *   GET   /admin/facilitator-agreements                     every version, with signature counts
+ *   POST  /admin/facilitator-agreements                     new draft
+ *   PATCH /admin/facilitator-agreements/{agreementVersion}  edit a draft, or { action: 'publish' }
+ *
+ * A draft is freely editable; publishing freezes the words (the database
+ * trigger in 0066 enforces it) and retires the previous current version.
+ * Everybody who has not signed the newly-current version is then asked to,
+ * and cannot be approved or published until they do.
+ */
+async function agreementVersions(
+  supabase: SupabaseClient,
+  event: APIGatewayProxyEventV2,
+  method: string,
+  body: Record<string, unknown>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const versionId = event.pathParameters?.agreementVersion;
+
+  if (method === 'GET') {
+    const { data, error } = await supabase
+      .from('facilitator_agreement_versions')
+      .select(VERSION_COLUMNS)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const { data: counts, error: countError } = await supabase
+      .from('facilitator_agreement_acceptances')
+      .select('agreement_version, countersigned_at');
+    if (countError) throw countError;
+    const tally = new Map<string, { signed: number; countersigned: number }>();
+    for (const c of counts ?? []) {
+      const t = tally.get(c.agreement_version as string) ?? { signed: 0, countersigned: 0 };
+      t.signed += 1;
+      if (c.countersigned_at) t.countersigned += 1;
+      tally.set(c.agreement_version as string, t);
+    }
+    return ok({
+      versions: (data ?? []).map((v) => ({
+        ...(v as unknown as AgreementVersion),
+        ...(tally.get((v as unknown as AgreementVersion).version) ?? { signed: 0, countersigned: 0 }),
+      })),
+    });
+  }
+
+  const fields = (): { title: string; body_md: string; hilom_signatory: string | null; hilom_address: string | null } => {
+    const title = String(body.title ?? '').trim().slice(0, 200);
+    const bodyMd = String(body.body_md ?? '').replace(/\r\n/g, '\n').trim();
+    if (!title) throw new FacilitatorInputError('A title is required');
+    if (bodyMd.length < 200) throw new FacilitatorInputError('The agreement text looks too short');
+    if (bodyMd.length > 200_000) throw new FacilitatorInputError('The agreement text is too long');
+    for (const m of bodyMd.matchAll(/\{\{\s*([a-z_]+)\s*\}\}/g)) {
+      if (!KNOWN_PLACEHOLDERS.has(m[1] ?? "")) {
+        throw new FacilitatorInputError(`Unknown placeholder {{${m[1]}}}. Allowed: ${[...KNOWN_PLACEHOLDERS].join(', ')}`);
+      }
+    }
+    return {
+      title,
+      body_md: bodyMd,
+      hilom_signatory: String(body.hilom_signatory ?? '').trim().slice(0, 200) || null,
+      hilom_address: String(body.hilom_address ?? '').trim().slice(0, 400) || null,
+    };
+  };
+
+  if (method === 'POST' && !versionId) {
+    const id = String(body.version ?? '').trim() || new Date().toISOString().slice(0, 10);
+    if (!VERSION_ID.test(id)) {
+      return badRequest('Version id must be 3-60 characters: letters, numbers, dots, dashes');
+    }
+    const { data, error } = await supabase
+      .from('facilitator_agreement_versions')
+      .insert({ version: id, ...fields(), status: 'draft', created_by: actor.label })
+      .select(VERSION_COLUMNS)
+      .single();
+    if (error?.code === '23505') return json(409, { error: `Version "${id}" already exists` });
+    if (error) throw error;
+    return ok({ version: data });
+  }
+
+  if (method === 'PATCH' && versionId) {
+    const existing = await getVersion(supabase, versionId);
+    if (!existing) return notFound('Agreement version not found');
+
+    if (body.action === 'publish') {
+      if (existing.status !== 'draft') return badRequest('Only a draft can be published');
+      if (!existing.hilom_signatory || !existing.hilom_address) {
+        return badRequest("Set Hilom's authorized representative and address before publishing - they appear on every signed copy");
+      }
+      const { data: current, error: currentError } = await supabase
+        .from('facilitator_agreement_versions')
+        .select('version')
+        .eq('status', 'current')
+        .maybeSingle<{ version: string }>();
+      if (currentError) throw currentError;
+      // Retire first, then promote. If the second write fails the platform is
+      // left with no current version - agreement enforcement switched off,
+      // which is the safe direction - and the admin can simply retry.
+      if (current) {
+        const { error: retireError } = await supabase
+          .from('facilitator_agreement_versions')
+          .update({ status: 'retired' })
+          .eq('version', current.version);
+        if (retireError) throw retireError;
+      }
+      const { data, error } = await supabase
+        .from('facilitator_agreement_versions')
+        .update({ status: 'current', published_at: new Date().toISOString() })
+        .eq('version', versionId)
+        .select(VERSION_COLUMNS)
+        .single();
+      if (error) throw error;
+      await recordAudit(actor, {
+        action: 'facilitator_agreement.published',
+        targetTable: 'facilitator_agreement_versions',
+        targetId: versionId,
+        before: { current: current?.version ?? null },
+        after: { current: versionId },
+        note: `Published agreement version ${versionId}`,
+      });
+      return ok({ version: data });
+    }
+
+    if (existing.status !== 'draft') return badRequest('A published version cannot be edited; create a new draft');
+    const { data, error } = await supabase
+      .from('facilitator_agreement_versions')
+      .update(fields())
+      .eq('version', versionId)
+      .select(VERSION_COLUMNS)
+      .single();
+    if (error) throw error;
+    return ok({ version: data });
+  }
+
+  return badRequest(`Unsupported method ${method}`);
 }
 
 /**
@@ -405,6 +656,21 @@ async function patchFacilitator(
 
     const hadAccess = DASHBOARD_STATUSES.has(existing.status);
     const getsAccess = DASHBOARD_STATUSES.has(status);
+
+    // Approving or publishing someone who has not signed the current agreement
+    // would put them to work with no contract in place. Checked before the
+    // Cognito group change below, so a refusal leaves everything untouched.
+    // A no-op (status unchanged) is never blocked, and neither is suspending
+    // or rejecting: only moves *into* an active state need the signature.
+    if (getsAccess && status !== existing.status) {
+      const agreement = await agreementState(supabase, facilitatorId);
+      if (agreement.needsSignature) {
+        return badRequest(
+          `${existing.display_name} has not signed the Facilitator Partnership Agreement (${agreement.current?.version}). ` +
+            'They can sign from their dashboard; you can approve once it is on file.',
+        );
+      }
+    }
 
     if (getsAccess && !hadAccess) {
       await addUserToGroup(existing.email, 'facilitator');
@@ -519,6 +785,24 @@ async function patchFacilitator(
   // Sent only on the transition into access, not on every later edit.
   if (patch.approved_at) {
     await sendFacilitatorApproved(existing.email, existing.display_name);
+
+    // Approval is Hilom's counter-signature. The check above guarantees a
+    // signature exists whenever an agreement is required, so there is nothing
+    // to do when none is published.
+    const agreement = await agreementState(supabase, facilitatorId);
+    if (agreement.current && agreement.acceptance && !agreement.acceptance.countersigned_at) {
+      const signed = await countersign(supabase, agreement.acceptance.id, `${actor.label} (Hilom Collective)`);
+      if (signed) {
+        await recordAudit(actor, {
+          action: 'facilitator_agreement.countersigned',
+          targetTable: 'facilitator_agreement_acceptances',
+          targetId: signed.id,
+          after: { version: signed.agreement_version },
+          note: `${existing.display_name}: countersigned agreement ${signed.agreement_version}`,
+        });
+        await sendSignedAgreementCopy(existing.email, existing.display_name, agreement.current, signed);
+      }
+    }
   }
 
   // Sent only on the transition into `published` — the moment the profile

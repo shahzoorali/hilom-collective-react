@@ -30,6 +30,8 @@ import { Fragment, useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { currentUser, login } from '../lib/auth';
 import { applyAsFacilitator, uploadFacilitatorFile } from '../lib/booking';
+import { getAgreement, signatureBody, type AgreementView, type SignatureFields } from '../lib/facilitator-agreement';
+import { AgreementSigner, EMPTY_SIGNATURE, signatureComplete } from '../components/AgreementSigner';
 import {
   CONTACT_METHODS,
   CONTACT_METHODS_NEEDING_PHONE,
@@ -74,6 +76,16 @@ export default function FacilitatorApplyForm() {
   const [certificate, setCertificate] = useState<Upload | null>(null);
   const [consented, setConsented] = useState(false);
 
+  // The partnership agreement, when one is published. `null` while loading;
+  // `required: false` (nothing published) makes the whole step disappear.
+  const [agreement, setAgreement] = useState<AgreementView | null>(null);
+  const [signature, setSignature] = useState<SignatureFields>({
+    ...EMPTY_SIGNATURE,
+    signer_name: [user?.givenName, user?.familyName].filter(Boolean).join(' '),
+    signer_contact: user?.email ?? '',
+  });
+  const [agreed, setAgreed] = useState(false);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<
@@ -89,6 +101,24 @@ export default function FacilitatorApplyForm() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email]);
+
+  // Failing to load the agreement must not block applying to a platform that
+  // has none published; if one *is* published the server refuses the
+  // application without a signature, so a silent failure here shows up as a
+  // clear error on submit rather than as a missing step.
+  useEffect(() => {
+    if (!user) return;
+    let live = true;
+    getAgreement()
+      .then((a) => live && setAgreement(a))
+      .catch(() => live && setAgreement(null));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
+
+  const agreementVersion = agreement?.required ? agreement.version : null;
 
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -123,6 +153,7 @@ export default function FacilitatorApplyForm() {
         // The server re-checks this and refuses the application without it —
         // the checkbox below is the affordance, not the enforcement.
         privacy_accepted: true,
+        ...(agreementVersion ? signatureBody(agreementVersion.version, signature) : {}),
       }).then(setResult);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
@@ -426,6 +457,16 @@ export default function FacilitatorApplyForm() {
         </label>
       )}
 
+      {agreementVersion && (
+        <AgreementSigner
+          version={agreementVersion}
+          fields={signature}
+          onFields={setSignature}
+          agreed={agreed}
+          onAgreed={setAgreed}
+        />
+      )}
+
       <label className="field row" style={{ gap: '0.6rem', alignItems: 'flex-start' }}>
         <input
           type="checkbox"
@@ -442,7 +483,7 @@ export default function FacilitatorApplyForm() {
         </span>
       </label>
 
-      <button className="btn btn-accent btn-block" type="submit" disabled={busy || !consented}>
+      <button className="btn btn-accent btn-block" type="submit" disabled={busy || !consented || (agreementVersion !== null && !signatureComplete(signature, agreed))}>
         {busy ? 'Sending…' : 'Submit application'}
       </button>
     </form>
