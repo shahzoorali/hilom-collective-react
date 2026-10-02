@@ -12,7 +12,7 @@
  * authentication — the UI says so rather than implying more than a shared key
  * can prove.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { money } from '../../components/Layout';
 import { API_BASE } from '../../config';
@@ -118,7 +118,12 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
 
   const shown = useMemo(() => {
     const all = registrations ?? [];
-    if (filter === 'all') return all;
+    if (filter === 'all') {
+      // Seat numbers are reissued once a place is released, so a lapsed #2 and
+      // the live #2 can coexist. Holders first, released places after, each
+      // group keeping the incoming (seat) order.
+      return [...all.filter((r) => !isReleased(r)), ...all.filter(isReleased)];
+    }
     if (filter === 'confirmed') return all.filter((r) => r.status === 'confirmed');
     if (filter === 'cancelled') return all.filter((r) => r.status === 'cancelled');
     // Same rule as the dashboard's count (backend/src/lib/admin-queues.ts,
@@ -209,24 +214,33 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
       )}
 
       <div style={{ display: 'grid', gap: 10 }}>
-        {shown.map((r) => (
-          <RegistrationRow
-            key={r.id}
-            adminKey={adminKey}
-            registration={r}
-            open={openId === r.id}
-            onToggle={() => setOpenId(openId === r.id ? null : r.id)}
-            onChanged={(message) => {
-              flash(message);
-              void load();
-            }}
-            onError={setError}
-          />
+        {shown.map((r, i) => (
+          <Fragment key={r.id}>
+            {filter === 'all' && isReleased(r) && (i === 0 || !isReleased(shown[i - 1]!)) && (
+              <div className="small muted" style={{ marginTop: 8 }}>
+                Lapsed and cancelled — these no longer hold a seat number
+              </div>
+            )}
+            <RegistrationRow
+              adminKey={adminKey}
+              registration={r}
+              open={openId === r.id}
+              onToggle={() => setOpenId(openId === r.id ? null : r.id)}
+              onChanged={(message) => {
+                flash(message);
+                void load();
+              }}
+              onError={setError}
+            />
+          </Fragment>
         ))}
       </div>
     </div>
   );
 }
+
+/** A lapsed or cancelled place no longer holds its seat number. */
+const isReleased = (r: AdminRegistration) => r.status === 'expired' || r.status === 'cancelled';
 
 const attentionCount = (rows: AdminRegistration[] | null) =>
   (rows ?? []).filter(
@@ -402,7 +416,7 @@ function RegistrationRow({
         }}
       >
         <span style={{ minWidth: 34 }} className="small muted">
-          #{r.seat_no}
+          {isReleased(r) ? '—' : `#${r.seat_no}`}
         </span>
         <span style={{ flex: 1, minWidth: 180 }}>
           <strong>{r.registrant_name}</strong>
