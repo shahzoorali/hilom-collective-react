@@ -119,13 +119,22 @@ export async function login(returnTo?: string): Promise<void> {
     code_challenge: challenge,
     code_challenge_method: 'S256',
   });
-  window.location.href = `https://${COGNITO.domain}/oauth2/authorize?${params}`;
+  // replace, not assign: keeps the Hosted UI out of history so Back from the
+  // page you return to doesn't land on a stale sign-in form.
+  window.location.replace(`https://${COGNITO.domain}/oauth2/authorize?${params}`);
 }
 
 /** Completes the code exchange on /auth/callback. Returns where to go next. */
 export async function handleCallback(code: string): Promise<string> {
   const verifier = sessionStorage.getItem(VERIFIER_KEY);
-  if (!verifier) throw new Error('Missing PKCE verifier — start the login again.');
+  if (!verifier) {
+    // The verifier is spent on the first successful exchange. Landing here with
+    // a session already in place means the browser's Back button took the person
+    // to the Hosted UI page left over from signing in, and they signed in a
+    // second time. Their session is fine; send them on rather than showing an error.
+    if (currentUser()) return sessionStorage.getItem('hilom.returnTo') ?? '/';
+    throw new Error('Missing PKCE verifier — start the login again.');
+  }
 
   const res = await fetch(`https://${COGNITO.domain}/oauth2/token`, {
     method: 'POST',
