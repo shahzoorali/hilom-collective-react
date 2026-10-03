@@ -67,12 +67,33 @@
  *     attendees bought.
  *   * Reviews of 1:1s, events and classes all feed **one** rating per
  *     facilitator. There is no per-format score.
+ * Added with the digital partnership agreement (0066):
+ *   * Nothing is asked of anyone until an admin **publishes** a version. The
+ *     articles about signing describe the feature as live, so they are only
+ *     published at the same moment (`--only=... --publish`), never before.
+ *   * The facilitator signs **when applying**; Hilom counter-signs **on
+ *     approval**. The signed PDF is emailed at counter-signature, and is always
+ *     downloadable from the dashboard sidebar.
+ *   * Signing is refused, not enforced silently: approval and publishing are
+ *     blocked until the current version is signed. The articles do not claim
+ *     that the dashboard blocks individual actions, because it does not.
+ *   * A signature cannot be edited or withdrawn in the product; corrections go
+ *     through Hilom.
  *   * Only an event with a facilitator host can be reviewed. A Hilom-run event
  *     collects no rating, because there is no profile to attach it to.
  */
 const API_BASE = process.env.HILOM_API_BASE ?? 'https://api.hilomcollective.com';
 const ADMIN_KEY = process.env.HILOM_ADMIN_KEY;
 const PUBLISH = process.argv.includes('--publish');
+// `--only=slug-a,slug-b` touches just those articles. Re-running the whole file
+// overwrites every article with this file's copy, including any edited in the
+// admin since; this is how a single new article goes up without that.
+const ONLY = new Set(
+  (process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length) ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
 
 if (!ADMIN_KEY) {
   console.error('HILOM_ADMIN_KEY is not set. Read it from Secrets Manager: hilom/admin-api-key');
@@ -90,6 +111,8 @@ interface SeedArticle {
   audience: Audience;
   tags: string[];
   body: string;
+  /** Overrides the index-based spacing, to slot an article between two existing ones. */
+  position?: number;
 }
 
 interface SeedSection {
@@ -1324,6 +1347,8 @@ Take the scope-of-practice questions seriously. We check claims against credenti
 2. **We may come back with questions.**
 3. **You are approved, or you are not.** Either way we tell you.
 
+The application also includes the **Facilitator Partnership Agreement**, which you read and sign electronically as part of sending it. Hilom countersigns when you are approved — see [signing the partnership agreement](/help/for-facilitators/signing-the-partnership-agreement).
+
 ## If you are approved
 
 You get access to your facilitator dashboard, where you set up your profile, services and availability. **You are not yet visible to clients** — see [going live](/help/for-facilitators/going-live).
@@ -1331,6 +1356,57 @@ You get access to your facilitator dashboard, where you set up your profile, ser
 ## If you are not
 
 We will say so. It is not always permanent — if it is about something that can change, you are welcome to apply again later.`,
+      },
+      {
+        slug: 'signing-the-partnership-agreement',
+        title: 'Signing the partnership agreement',
+        summary: 'How you sign, when Hilom countersigns, and where to find your copy.',
+        kind: 'guide',
+        audience: 'facilitator',
+        tags: ['applying', 'agreement'],
+        position: 15,
+        body: `Every facilitator works with Hilom under the **Facilitator Partnership Agreement**. It sets out how we work together — fees, community slots, how coordination with venues and clients runs, confidentiality, cancellation and termination. Signing is done online; there is nothing to print, scan or post.
+
+## When you sign
+
+You sign as part of your application. Below the application questions you will see the full agreement. To sign:
+
+1. **Read it.** Your name, address and contact details fill into the text as you type them.
+2. **Type your full legal name** — first and last, as on your ID. Typing it is your signature.
+3. **Add your address and contact details.** These are used for notices under the agreement.
+4. **Tick the box** to confirm you have read and agree, then send your application.
+
+The send button stays off until all of that is filled in.
+
+## When Hilom signs
+
+Hilom countersigns **when your application is approved**. Until then the agreement is signed by you and waiting on us. Nothing more is needed from you.
+
+The moment Hilom countersigns, you are emailed the **signed copy as a PDF**.
+
+## Finding your copy
+
+Once you are in your dashboard, **Signed agreement (PDF)** is in the left-hand menu. It always downloads the signed version, with your details, both signatures and the date.
+
+The PDF also records when and how you signed and a reference number. If you ever need to refer to the agreement with us, quote that reference.
+
+## If Hilom updates the agreement
+
+If we publish a new version, you will be asked to read and sign it the next time you open your dashboard. You will see the new agreement on its own screen, with your details ready to confirm. Until you sign, we cannot approve or publish a listing for you.
+
+Sessions already in your diary are not affected.
+
+## If you applied before the agreement existed
+
+You will see the agreement when you next open your dashboard, whether your application is still under review or you are already approved. Sign it there. An application under review cannot be approved until it is signed.
+
+## Something to change?
+
+A signed agreement cannot be edited or withdrawn from your dashboard. If your address or contact details change, or you spot a mistake in what you typed, email [hello@hilomcollective.com](mailto:hello@hilomcollective.com) and we will put it right.
+
+## Did not get the email?
+
+It is sent when Hilom countersigns, not when you apply — so you will not have one until you are approved. After that, check spam, and remember the same PDF is always in your dashboard menu.`,
       },
       {
         slug: 'setting-up-your-profile',
@@ -2297,6 +2373,7 @@ async function main() {
     }
 
     for (const [articleIndex, article] of section.articles.entries()) {
+      if (ONLY.size > 0 && !ONLY.has(article.slug)) continue;
       const payload = {
         title: article.title,
         slug: article.slug,
@@ -2306,7 +2383,7 @@ async function main() {
         kind: article.kind,
         audience: article.audience,
         tags: article.tags,
-        position: (articleIndex + 1) * 10,
+        position: article.position ?? (articleIndex + 1) * 10,
       };
 
       const existing = articleBySlug.get(article.slug);
