@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib/core';
 import { HilomCoreStack } from '../lib/hilom-core-stack';
 import { HilomCmsStack } from '../lib/hilom-cms-stack';
 import { HilomMarketplaceStack } from '../lib/hilom-marketplace-stack';
+import { HilomAssistantStack } from '../lib/hilom-assistant-stack';
 
 const app = new cdk.App();
 
@@ -86,5 +87,15 @@ const marketplace = new HilomMarketplaceStack(app, 'HilomMarketplaceStack', {
 // Explicit, though the cross-stack references above already imply it: both
 // stacks attach routes to an API the core stack owns, so the core must exist
 // and must have finished releasing the routes they are about to claim.
+// Read-only admin chatbot (docs/admin-assistant.md). Its own stack so every
+// read grant it holds across logs, CloudFormation and SQS is in one file.
+const assistant = new HilomAssistantStack(app, 'HilomAssistantStack', {
+  env,
+  description: 'Hilom Collective — read-only admin assistant (Bedrock)',
+  httpApiId: core.httpApi.apiId,
+  ...common,
+});
+
 cms.addDependency(core);
 marketplace.addDependency(core);
+assistant.addDependency(core);

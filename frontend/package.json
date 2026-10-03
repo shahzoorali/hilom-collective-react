@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@puckeditor/core": "^0.23.0",
+    "dompurify": "^3.4.16",
     "gsap": "^3.15.0",
+    "marked": "^18.0.14",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2"

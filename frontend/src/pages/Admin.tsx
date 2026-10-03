@@ -26,6 +26,7 @@ import { MOODLE_URL } from '../config';
 import PostsTab from './admin/PostsTab';
 import PostEditor from './admin/PostEditor';
 import KnowledgeBaseTab from './admin/KnowledgeBaseTab';
+import AssistantTab from './admin/AssistantTab';
 import KbArticleEditor from './admin/KbArticleEditor';
 import { MediaGrid } from './admin/MediaLibrary';
 import { AdminFeedbackProvider } from './admin/ui/feedback';
@@ -50,7 +51,11 @@ const KEY_STORAGE = 'hilom.adminKey';
 const NAV_GROUPS = [
   {
     label: 'Overview',
-    items: [{ label: 'Dashboard', path: 'dashboard', icon: 'home' }],
+    items: [
+      { label: 'Dashboard', path: 'dashboard', icon: 'home' },
+      // Read-only chatbot over data, code, logs and the Help Centre.
+      { label: 'Assistant', path: 'assistant', icon: 'sparkle' },
+    ],
   },
   {
     label: 'Content',
@@ -433,6 +438,7 @@ export default function Admin() {
         <Routes>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<DashboardTab adminKey={adminKey} />} />
+          <Route path="assistant" element={<AssistantTab adminKey={adminKey} />} />
           <Route path="pages" element={<PagesTab adminKey={adminKey} />} />
           <Route path="pages/:pageId" element={<PageEditorRoute adminKey={adminKey} />} />
           <Route path="posts" element={<PostsTab adminKey={adminKey} />} />
