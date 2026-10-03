@@ -6,6 +6,7 @@
  *   GET  /admin/assistant/runs/{runId}             one run: status, live steps, answer
  *   GET  /admin/assistant/conversations            the 50 most recent conversations
  *   GET  /admin/assistant/conversations/{id}       a conversation's runs, oldest first
+ *   DELETE /admin/assistant/conversations/{id}     permanently deletes it and its runs
  *
  * Asking is asynchronous: an answer that reads the schema, runs three queries
  * and searches the logs routinely takes longer than API Gateway's 30-second
@@ -101,6 +102,17 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
         .order('created_at', { ascending: true });
       if (error) throw error;
       return ok({ runs: data });
+    }
+
+    if (method === 'DELETE' && conv) {
+      if (!UUID.test(conv[1]!)) return badRequest('bad id');
+      // Permanent, by decision (2026-10-03): the runs — and with them that
+      // conversation's audit trail — go too, via ON DELETE CASCADE.
+      const { data, error } = await supabase.from('assistant_conversations').delete().eq('id', conv[1]!).select('id');
+      if (error) throw error;
+      if (!data?.length) return notFound('Conversation not found');
+      console.log('assistantConversationDeleted', JSON.stringify({ id: conv[1], by: (await adminActorFromEvent(event)).label }));
+      return ok({ deleted: conv[1] });
     }
 
     const run = path.match(/\/admin\/assistant\/runs\/([^/]+)$/);

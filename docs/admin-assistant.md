@@ -35,7 +35,9 @@ Async because a thorough answer takes 10–90 s and API Gateway cuts off at 30 s
 - Code: `backend/src/handlers/admin-assistant*.ts`, `backend/src/lib/assistant/`.
 - Tables (0067): `assistant_conversations` (full model history for follow-ups),
   `assistant_runs` (question, who asked, every tool call incl. exact SQL, answer, tokens).
-  **This is the audit trail.** Auth: `isAdminCaller` — Cognito admin group or the shared admin key.
+  **This is the audit trail.** Admins can permanently delete a conversation (trash icon in
+  History), which deletes its runs too — by decision, 2026-10-03; deletions are logged to
+  CloudWatch as `assistantConversationDeleted` with who did it. Auth: `isAdminCaller` — Cognito admin group or the shared admin key.
 
 ## Secrets
 

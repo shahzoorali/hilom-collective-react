@@ -13,6 +13,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import {
   askAssistant,
+  deleteAssistantConversation,
   getAssistantConversation,
   getAssistantRun,
   listAssistantConversations,
@@ -21,6 +22,7 @@ import {
   type AssistantStep,
 } from '../../lib/assistant';
 import { Icon } from './ui/Icon';
+import { adminConfirm, adminToast } from './ui/feedback';
 
 const POLL_MS = 1500;
 
@@ -204,6 +206,27 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
     input.current?.focus();
   };
 
+  const removeConversation = async (c: AssistantConversation) => {
+    const yes = await adminConfirm({
+      title: 'Delete this conversation?',
+      body: `“${c.title}” and every answer in it will be permanently deleted, including the record of what was asked and which queries ran. This can't be undone.`,
+      confirmLabel: 'Delete permanently',
+      danger: true,
+    });
+    if (!yes) return;
+    try {
+      await deleteAssistantConversation(adminKey, c.id);
+      setConversations((cs) => cs.filter((x) => x.id !== c.id));
+      if (c.id === conversationId) {
+        setConversationId(undefined);
+        setRuns([]);
+      }
+      adminToast.success('Conversation deleted');
+    } catch (e) {
+      adminToast.error((e as Error).message);
+    }
+  };
+
   const send = async (question: string) => {
     const q = question.trim();
     if (!q || busy) return;
@@ -234,7 +257,7 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
         </button>
         <ul className="assistant-side__list">
           {conversations.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="assistant-side__item">
               <button
                 type="button"
                 className={c.id === conversationId ? 'is-active' : ''}
@@ -245,6 +268,15 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
                 <span className="muted small">
                   {c.actor_label} · {new Date(c.updated_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                 </span>
+              </button>
+              <button
+                type="button"
+                className="assistant-side__delete"
+                onClick={() => void removeConversation(c)}
+                aria-label={`Delete conversation: ${c.title}`}
+                title="Delete conversation"
+              >
+                <Icon name="trash" size={15} />
               </button>
             </li>
           ))}

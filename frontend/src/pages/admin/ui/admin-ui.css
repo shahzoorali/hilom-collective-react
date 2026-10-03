@@ -478,6 +478,13 @@ button.stat:hover { border-color: var(--forest); }
 .assistant-side__list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 .assistant-side__list button { width: 100%; text-align: left; background: none; border: 0; border-radius: 8px; padding: 0.5rem 0.6rem; display: flex; flex-direction: column; gap: 2px; cursor: pointer; color: var(--ink); font: inherit; }
 .assistant-side__list button:hover { background: var(--admin-hover); }
+.assistant-side__item { position: relative; }
+.assistant-side__item > button:first-child { padding-right: 2.2rem; }
+.assistant-side__list .assistant-side__delete { position: absolute; top: 50%; right: 0.3rem; transform: translateY(-50%); width: 30px; height: 30px; padding: 0; display: grid; place-items: center; color: var(--muted); opacity: 0; }
+.assistant-side__item:hover .assistant-side__delete, .assistant-side__delete:focus-visible { opacity: 1; }
+.assistant-side__list .assistant-side__delete:hover { color: #b23a24; background: var(--danger-bg, rgba(178, 58, 36, 0.1)); }
+/* No hover on touch screens: always show the delete button there. */
+@media (hover: none) { .assistant-side__list .assistant-side__delete { opacity: 1; } }
 .assistant-side__list button.is-active { background: var(--admin-sel); }
 .assistant-side__title { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .assistant-main { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }

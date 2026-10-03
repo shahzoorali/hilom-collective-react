@@ -39,11 +39,11 @@ export interface AssistantConversation {
   updated_at: string;
 }
 
-const init = (adminKey: string, body?: unknown): RequestInit => {
+const init = (adminKey: string, body?: unknown, method?: string): RequestInit => {
   const token = idToken();
   const actor = adminActor();
   return {
-    method: body ? 'POST' : 'GET',
+    method: method ?? (body ? 'POST' : 'GET'),
     headers: {
       'x-admin-key': adminKey,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -70,3 +70,7 @@ export const listAssistantConversations = (adminKey: string) =>
 
 export const getAssistantConversation = (adminKey: string, id: string) =>
   apiFetch<{ runs: AssistantRun[] }>(`/admin/assistant/conversations/${id}`, init(adminKey)).then((r) => r.runs);
+
+/** Permanent: the conversation and every run in it, including their audit steps. */
+export const deleteAssistantConversation = (adminKey: string, id: string) =>
+  apiFetch<{ deleted: string }>(`/admin/assistant/conversations/${id}`, init(adminKey, undefined, 'DELETE'));
