@@ -141,6 +141,16 @@ export function decorate(
  * the 404 — the admin and the facilitator are answering different questions
  * ("no such event" vs "not an event of yours") and must not be told apart.
  */
+export interface WaitlistEntry {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  status: 'waiting' | 'notified';
+  joined_at: string;
+  notified_at: string | null;
+}
+
 export async function buildRoster(
   supabase: SupabaseClient,
   eventId: string,
@@ -151,6 +161,8 @@ export async function buildRoster(
   money: Record<string, number | string>;
   /** Still waiting for a seat (0060) — `notified` counts too, since they have not converted yet. */
   waitlistCount: number;
+  /** Who is on it, oldest first, so the list reads in the order they will be told. */
+  waitlist: WaitlistEntry[];
 } | null> {
   const { data: eventRow, error: eventError } = await supabase
     .from('events')
@@ -160,12 +172,15 @@ export async function buildRoster(
   if (eventError) throw eventError;
   if (!eventRow) return null;
 
-  const { count: waitlistCount, error: waitlistError } = await supabase
+  const { data: waitlistRows, error: waitlistError } = await supabase
     .from('event_waitlist')
-    .select('id', { count: 'exact', head: true })
+    .select('id, name, email, phone, status, joined_at, notified_at')
     .eq('event_id', eventId)
-    .in('status', ['waiting', 'notified']);
+    .in('status', ['waiting', 'notified'])
+    .order('joined_at', { ascending: true })
+    .returns<WaitlistEntry[]>();
   if (waitlistError) throw waitlistError;
+  const waitlist = waitlistRows ?? [];
 
   const { data: registrations, error } = await supabase
     .from('event_registrations')
@@ -195,7 +210,8 @@ export async function buildRoster(
   return {
     event: eventRow,
     registrations: decorated,
-    waitlistCount: waitlistCount ?? 0,
+    waitlistCount: waitlist.length,
+    waitlist,
     money: {
       currency: eventRow.currency,
       capacity,

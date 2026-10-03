@@ -36,7 +36,9 @@ import {
   type RosterMoney,
   type AuditEntry,
   type RefundAssessment,
+  type WaitlistEntry,
 } from '../../lib/cms';
+import WaitlistPanel from '../../components/WaitlistPanel';
 import { adminConfirm } from './ui/feedback';
 
 type Filter = 'attention' | 'overdue' | 'all' | 'confirmed' | 'cancelled';
@@ -79,6 +81,7 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
   const [filter, setFilter] = useState<Filter>(linkedFilter ?? (linkedEventId ? 'all' : 'attention'));
   const [registrations, setRegistrations] = useState<AdminRegistration[] | null>(null);
   const [money_, setMoney] = useState<RosterMoney | null>(null);
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -105,9 +108,11 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
         const res = await adminGetRoster(adminKey, eventId);
         setRegistrations(res.registrations);
         setMoney(res.money);
+        setWaitlist(res.waitlist);
       } else {
         setRegistrations(await adminListRegistrations(adminKey));
         setMoney(null);
+        setWaitlist([]);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -235,6 +240,10 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
           </Fragment>
         ))}
       </div>
+
+      {eventId && (
+        <WaitlistPanel entries={waitlist} eventTitle={events.find((e) => e.id === eventId)?.title ?? 'event'} />
+      )}
     </div>
   );
 }

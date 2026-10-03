@@ -27,7 +27,7 @@ import type {
 // figures. Importing the types rather than restating them is what keeps that
 // true. See backend/src/lib/event-roster.ts.
 import { adminActor } from './cms';
-import type { AdminRegistration, RosterMoney } from './cms';
+import type { AdminRegistration, RosterMoney, WaitlistEntry } from './cms';
 
 /** The bearer header, or a thrown error that reads as a prompt to sign in. */
 function authHeaders(): Record<string, string> {
@@ -1881,6 +1881,7 @@ export const getMyHostedRoster = (eventId: string) =>
     joinLink: HostedJoinLink;
     /** Still waiting for a seat to open up (0060). */
     waitlistCount: number;
+    waitlist: WaitlistEntry[];
   }>(`/facilitator/events/${encodeURIComponent(eventId)}/roster`, { headers: authHeaders() });
 
 export const saveMyHostedJoinLink = (

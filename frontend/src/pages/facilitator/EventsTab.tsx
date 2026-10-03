@@ -37,7 +37,8 @@ import {
   type MyEventSeries,
   type EventSeriesInput,
 } from '../../lib/booking';
-import type { AdminRegistration, RosterMoney } from '../../lib/cms';
+import type { AdminRegistration, RosterMoney, WaitlistEntry } from '../../lib/cms';
+import WaitlistPanel from '../../components/WaitlistPanel';
 import { ActionBar, PageHeader, Section, StatusPill, type Tone } from './ui';
 
 /** Review states in which the whole proposal is still the facilitator's to change. */
@@ -447,6 +448,7 @@ function EventDetail({
     registrations: AdminRegistration[];
     money: RosterMoney;
     waitlistCount: number;
+    waitlist: WaitlistEntry[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -466,7 +468,7 @@ function EventDetail({
     getMyHostedRoster(eventId)
       .then((res) => {
         if (!live) return;
-        setRoster({ title: res.event.title, registrations: res.registrations, money: res.money, waitlistCount: res.waitlistCount });
+        setRoster({ title: res.event.title, registrations: res.registrations, money: res.money, waitlistCount: res.waitlistCount, waitlist: res.waitlist });
         setSavedUrl(res.joinLink.join_url ?? '');
         setUrl(res.joinLink.join_url ?? '');
         setInstructions(res.joinLink.join_instructions ?? '');
@@ -715,6 +717,8 @@ function EventDetail({
               )}
             </div>
           ))}
+
+          <WaitlistPanel entries={roster.waitlist} eventTitle={roster.title} />
         </>
       )}
     </>

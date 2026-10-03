@@ -985,6 +985,16 @@ export interface AdminRegistration {
   events?: { title: string; starts_at: string; ends_at: string | null; location: string | null } | null;
 }
 
+export interface WaitlistEntry {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  status: 'waiting' | 'notified';
+  joined_at: string;
+  notified_at: string | null;
+}
+
 export interface RosterMoney {
   currency: string;
   capacity: number;
@@ -1018,7 +1028,7 @@ export interface AuditEntry {
 }
 
 export const adminGetRoster = (adminKey: string, eventId: string) =>
-  apiFetch<{ event: AdminEvent; registrations: AdminRegistration[]; money: RosterMoney; waitlistCount: number }>(
+  apiFetch<{ event: AdminEvent; registrations: AdminRegistration[]; money: RosterMoney; waitlistCount: number; waitlist: WaitlistEntry[] }>(
     `/admin/events/${eventId}/roster`,
     adminInit(adminKey),
   );
