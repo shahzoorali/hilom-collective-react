@@ -1971,9 +1971,15 @@ An admin can send it back with a note. You will see the note on the event in you
 
 It goes live on the events page and on your profile, and people can register.
 
-From then on the title, date and description are **fixed**. They are what people are buying, and changing them after someone has paid changes what they bought. Ask an admin if something genuinely has to change.
+**You can change these straight away:** the subtitle, short summary, description, poster image and its description, and the practical details. A typo fix or a better poster does not need anybody's permission. The joining link and joining instructions are yours too — a corrected Zoom link two hours before the doors open should not need anybody's help.
 
-What you can still edit yourself is the **joining link and joining instructions** — a corrected Zoom link two hours before the doors open should not need anybody's permission. See [Hosting an event](/help/for-facilitators/hosting-an-event).`,
+**These go to Hilom first:** the title, the dates, the location and the format. They are what people are buying, and changing them after someone has paid changes what they bought. When you save a change to one of them, Hilom is told and decides. Until then the event keeps showing its current details to everyone, and you cannot send in a second change while one is waiting.
+
+**These are Hilom's:** the price, the capacity, the payment plans, and whether registration is open. Refunds, and cancelling an individual person's place, are Hilom's decisions as well.
+
+If you need to call off a date altogether, you can cancel it yourself from the event. You will be asked why, and everyone registered is shown your reason.
+
+See [Hosting an event](/help/for-facilitators/hosting-an-event).`,
       },
       {
         slug: 'proposing-a-series',
@@ -2017,6 +2023,8 @@ Each date in the series appears on the events page and on your profile as its ow
 ## Who has registered
 
 Open the event to see the roster: who has a place, who is still paying, and what each person answered on the registration form.
+
+If the event is full, anyone who asked to be told when a place opens is listed under **Waitlist** at the bottom of the roster, in the order they joined, with a CSV export. They are emailed when a place opens up; that email does not hold the place for them.
 
 It is the same roster an admin sees, with the same figures. That is on purpose — if you email someone about a payment, you are reading the number the admin is reading, and the two of you cannot contradict each other in front of the person who paid.
 
