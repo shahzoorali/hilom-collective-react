@@ -153,6 +153,8 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // Phones only: the conversation list is a drawer over the thread.
+  const [historyOpen, setHistoryOpen] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
@@ -184,6 +186,7 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
   }, [runs.length, runs[runs.length - 1]?.status, runs[runs.length - 1]?.steps?.length]);
 
   const openConversation = async (id: string) => {
+    setHistoryOpen(false);
     setError(null);
     setConversationId(id);
     try {
@@ -194,6 +197,7 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
   };
 
   const newConversation = () => {
+    setHistoryOpen(false);
     setConversationId(undefined);
     setRuns([]);
     setError(null);
@@ -223,7 +227,8 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
 
   return (
     <div className="assistant">
-      <aside className="assistant-side">
+      {historyOpen && <div className="assistant-backdrop" onClick={() => setHistoryOpen(false)} aria-hidden />}
+      <aside className={`assistant-side${historyOpen ? ' is-open' : ''}`} aria-label="Conversations">
         <button type="button" className="btn btn-primary" onClick={newConversation}>
           + New conversation
         </button>
@@ -247,6 +252,17 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
       </aside>
 
       <section className="assistant-main">
+        <div className="assistant-mobilebar">
+          <button type="button" className="btn btn-ghost small" onClick={() => setHistoryOpen(true)}>
+            <Icon name="menu" size={16} /> History
+          </button>
+          <span className="assistant-mobilebar__title">
+            {conversations.find((c) => c.id === conversationId)?.title ?? 'New conversation'}
+          </span>
+          <button type="button" className="btn btn-ghost small" onClick={newConversation} aria-label="New conversation">
+            +
+          </button>
+        </div>
         <div className="assistant-thread">
           {runs.length === 0 ? (
             <div className="assistant-empty">
@@ -283,7 +299,7 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
             ref={input}
             value={draft}
             rows={2}
-            placeholder={busy ? 'Working on it…' : 'Ask about data, code, payments, logs, or how to do something…'}
+            placeholder={busy ? 'Working on it…' : 'Ask anything about Hilom…'}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {

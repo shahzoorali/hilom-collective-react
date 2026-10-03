@@ -515,13 +515,42 @@ button.stat:hover { border-color: var(--forest); }
 .assistant-md pre code { background: none; padding: 0; }
 .assistant-md table { border-collapse: collapse; margin: 0.5rem 0 0.8rem; font-size: 0.86rem; display: block; overflow-x: auto; max-width: 100%; }
 .assistant-md th, .assistant-md td { border: 1px solid var(--line); padding: 0.35rem 0.6rem; text-align: left; vertical-align: top; }
-.assistant-md th { background: var(--page); }
+.assistant-md th { background: var(--page); white-space: nowrap; overflow-wrap: normal; }
 .assistant-composer { display: flex; gap: 0.6rem; padding: 0.75rem; border-top: 1px solid var(--line); align-items: flex-end; }
 .assistant-composer textarea { flex: 1; resize: none; font: inherit; padding: 0.6rem 0.75rem; border-radius: 10px; border: 1px solid var(--line); background: var(--page); color: var(--ink); max-height: 200px; }
 .assistant-foot { margin: 0 0.9rem 0.6rem; }
-@media (max-width: 860px) {
-  .assistant { grid-template-columns: 1fr; height: auto; }
-  .assistant-side__list { max-height: 160px; }
-  .assistant-main { height: calc(100vh - 140px); }
-  .assistant-q__bubble { max-width: 90%; }
+.assistant-mobilebar, .assistant-backdrop { display: none; }
+@media (max-width: 900px) {
+  /* Fills the space under the 52px admin topbar, minus .admin-content's 1rem
+     padding. dvh so the composer stays above the iOS keyboard and toolbar. */
+  .assistant { display: block; position: relative; height: calc(100dvh - 52px - 2rem); min-height: 0; }
+  .assistant-main { height: 100%; border-radius: 12px; }
+  .assistant-mobilebar { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); flex: none; }
+  /* index.css makes every .btn full-width on phones; these sit in rows. */
+  .assistant .btn { width: auto; flex: none; }
+  .assistant-mobilebar .btn { min-height: 38px; padding: 0.4rem 0.7rem; display: inline-flex; align-items: center; gap: 0.3rem; }
+  .assistant-mobilebar__title { flex: 1; min-width: 0; font-size: 0.86rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+  .assistant-side { position: absolute; z-index: 21; inset: 0 auto 0 0; width: min(300px, 86%); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 0.75rem; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18); transform: translateX(-110%); transition: transform 0.2s ease; }
+  .assistant-side.is-open { transform: none; }
+  .assistant-side__list { flex: 1; }
+  .assistant-side__list button { padding: 0.7rem 0.6rem; }
+  .assistant-backdrop { display: block; position: absolute; inset: 0; z-index: 20; background: rgba(20, 26, 20, 0.35); border-radius: 12px; }
+  .assistant-thread { padding: 0.9rem 0.75rem; gap: 1.1rem; }
+  .assistant-empty { margin: 0.75rem auto; }
+  .assistant-empty h2 { font-size: 1.2rem; }
+  .assistant-empty p { font-size: 0.9rem; }
+  .assistant-starters { grid-template-columns: 1fr; gap: 0.5rem; margin-top: 0.9rem; }
+  .assistant-starters button { padding: 0.7rem 0.8rem; text-align: left; }
+  .assistant-q__bubble { max-width: 88%; }
+  .assistant-a { gap: 0.5rem; }
+  .assistant-a__avatar { width: 26px; height: 26px; font-size: 0.75rem; }
+  .assistant-md { font-size: 0.92rem; }
+  .assistant-md table { font-size: 0.8rem; }
+  .assistant-steps__list pre { max-height: 160px; }
+  .assistant-composer { padding: 0.5rem; padding-bottom: calc(0.5rem + env(safe-area-inset-bottom)); gap: 0.4rem; }
+  /* 16px stops iOS Safari zooming the page when the field is focused. */
+  .assistant-composer textarea { flex: 1; width: auto; min-width: 0; font-size: 16px; padding: 0.55rem 0.65rem; }
+  .assistant-composer .btn { min-height: 44px; padding: 0.5rem 1rem; }
+  .assistant-side > .btn { width: 100%; }
+  .assistant-foot { display: none; }
 }
