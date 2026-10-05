@@ -1799,6 +1799,12 @@ export interface MyHostedEvent {
   format: string | null;
   join_url: string | null;
   join_instructions: string | null;
+  link_url: string | null;
+  link_label: string | null;
+  proposed_registration: 'listing' | 'hilom' | null;
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+  proposed_registration_closes_on: string | null;
   /** checkouts: every seat attempt ever made, whatever became of it. confirmed: the sales. */
   registrations: { confirmed: number; pending: number; checkouts: number };
   /** Raw hits on this date's ticket page (0063) — not unique visitors. See the note on the backend column. */
@@ -1833,6 +1839,14 @@ export interface EventProposalInput {
   venue_details: string;
   format: string;
   image: { id: string | null; url: string; alt: string } | null;
+  /** Listing-only registration button. Sent only by forms that show it. */
+  link_url?: string;
+  link_label?: string;
+  /** The registration ask (0068). Omitted entirely on an approved event. */
+  proposed_registration?: 'listing' | 'hilom' | null;
+  proposed_price_centavos?: number | null;
+  proposed_capacity?: number | null;
+  proposed_registration_closes_on?: string | null;
 }
 
 export interface HostedJoinLink {

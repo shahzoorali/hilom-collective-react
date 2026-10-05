@@ -463,6 +463,11 @@ export interface AdminEvent extends CmsEvent {
   edit_review_note: string | null;
   /** Raw hits on this date's ticket page (0063) — not unique visitors. */
   view_count: number;
+  /** What the facilitator asked for when proposing (0068). An ask, not a plan. */
+  proposed_registration: 'listing' | 'hilom' | null;
+  proposed_price_centavos: number | null;
+  proposed_capacity: number | null;
+  proposed_registration_closes_on: string | null;
 }
 
 export type EventFormat = 'residential' | 'virtual' | 'day';

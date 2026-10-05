@@ -1078,6 +1078,7 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
 
             <div className="field" style={{ gridColumn: 'span 2' }}>
               <label>Registration &amp; payment</label>
+              {openEvent?.proposed_registration && <FacilitatorAsk event={openEvent} />}
               {draft.ticketing === null ? (
                 <div className="panel" style={{ padding: 12 }}>
                   <p className="small muted" style={{ margin: '0 0 10px' }}>
@@ -1088,7 +1089,19 @@ export default function EventsTab({ adminKey }: { adminKey: string }) {
                     type="button"
                     className="btn btn-ghost"
                     onClick={() =>
-                      setDraft((d) => ({ ...d, ticketing: { ...blankTicketing, ticketing_enabled: true } }))
+                      setDraft((d) => ({
+                        ...d,
+                        // Start from what the facilitator asked for, so approving
+                        // does not mean re-typing it. The price is a payment plan
+                        // and is still the admin's to enter below.
+                        ticketing: {
+                          ...blankTicketing,
+                          ticketing_enabled: true,
+                          capacity:
+                            openEvent?.proposed_capacity != null ? String(openEvent.proposed_capacity) : '',
+                          registration_closes_at: openEvent?.proposed_registration_closes_on ?? '',
+                        },
+                      }))
                     }
                   >
                     Set up registration
@@ -1222,6 +1235,33 @@ const CHANGE_LABELS: Record<string, string> = {
   location: 'Where',
   format: 'Format',
 };
+
+/** What the facilitator asked for when proposing (0068). Read-only: an ask, not a plan. */
+function FacilitatorAsk({ event }: { event: AdminEvent }) {
+  const hilom = event.proposed_registration === 'hilom';
+  return (
+    <div className="panel" style={{ padding: 12, marginBottom: 8 }}>
+      <strong className="small">Facilitator&rsquo;s request</strong>
+      <p className="small" style={{ margin: '4px 0 0' }}>
+        {hilom
+          ? [
+              'Register and pay through Hilom',
+              event.proposed_price_centavos != null && `${money(event.proposed_price_centavos)} per person`,
+              event.proposed_capacity != null && `${event.proposed_capacity} places`,
+              event.proposed_registration_closes_on && `closes ${event.proposed_registration_closes_on}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : `Listing only — people register at ${event.link_url || 'a link they have not given yet'}`}
+      </p>
+      {hilom && (
+        <p className="small muted" style={{ margin: '4px 0 0' }}>
+          &ldquo;Set up registration&rdquo; pre-fills the places and deadline. Add the price as a payment plan.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function formatChangeValue(field: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';

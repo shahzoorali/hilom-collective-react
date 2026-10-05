@@ -35,6 +35,7 @@
  * gets this wrong, and the reason `me()` resolves the row once at the top of
  * the handler and every function below takes it as an argument.
  */
+import { parseRegistrationAsk, missingForSubmit } from '../lib/registration-ask.js';
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from '../lib/supabase.js';
@@ -2083,6 +2084,9 @@ const HOSTED_EVENT_COLUMNS =
   // for; nothing else in this file needs it.
   'id, title, subtitle, excerpt, description, image_url, image_alt, location, starts_at, ends_at, ' +
   'status, ticketing_enabled, capacity, currency, venue_details, format, join_url, join_instructions, ' +
+  // The public button, for a listing-only event; and 0068, the registration ask.
+  'link_url, link_label, proposed_registration, proposed_price_centavos, proposed_capacity, ' +
+  'proposed_registration_closes_on, ' +
   'review_status, submitted_at, reviewed_at, review_note, submitted_by, ' +
   // 0058. A pending edit to an already-approved event.
   'pending_changes, edit_submitted_at, edit_reviewed_at, edit_review_note, ' +
@@ -2135,9 +2139,13 @@ const DRAFT_FIELDS = [
   'ends_at',
   'venue_details',
   'format',
+  // A listing-only event's registration button. Material, not cosmetic: a link
+  // that changes after approval sends the public somewhere Hilom has not seen.
+  'link_url',
+  'link_label',
 ] as const;
 
-const MATERIAL_FIELDS = ['title', 'starts_at', 'ends_at', 'location', 'format'] as const;
+const MATERIAL_FIELDS = ['title', 'starts_at', 'ends_at', 'location', 'format', 'link_url', 'link_label'] as const;
 const COSMETIC_FIELDS = DRAFT_FIELDS.filter(
   (f) => !(MATERIAL_FIELDS as readonly string[]).includes(f),
 ) as Exclude<(typeof DRAFT_FIELDS)[number], (typeof MATERIAL_FIELDS)[number]>[];
@@ -2411,8 +2419,15 @@ function proposalFields(body: Record<string, unknown>): Record<string, unknown> 
   const validated = validateEvent(body) as unknown as Record<string, unknown>;
   const picked: Record<string, unknown> = {};
   for (const field of DRAFT_FIELDS) {
+    // validateEvent fills link_* with null when the body omits them, so only
+    // take them when sent: a form that predates them must not wipe an
+    // admin-set button.
+    if ((field === 'link_url' || field === 'link_label') && !(field in body)) continue;
     if (field in validated) picked[field] = validated[field];
   }
+  // 0068. The registration ask; null means the body did not mention it.
+  const ask = parseRegistrationAsk(body);
+  if (ask) Object.assign(picked, ask);
   return picked;
 }
 
@@ -2718,6 +2733,7 @@ async function submitProposal(
     !existing.title && 'a title',
     !existing.starts_at && 'a date',
     !existing.description && 'a description',
+    ...missingForSubmit(existing as unknown as Parameters<typeof missingForSubmit>[0]),
   ].filter((m): m is string => typeof m === 'string');
   if (missing.length > 0) {
     return badRequest(`Add ${missing.join(', ')} before submitting.`);

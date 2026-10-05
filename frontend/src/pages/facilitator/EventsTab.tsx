@@ -33,6 +33,7 @@ import {
   submitMyEventSeries,
   cancelMyHostedEvent,
   type EventReviewStatus,
+  type EventProposalInput,
   type MyHostedEvent,
   type MyEventSeries,
   type EventSeriesInput,
@@ -767,6 +768,12 @@ function EventProposalForm({
     format: existing?.format ?? '',
     image_url: existing?.image_url ?? '',
     image_alt: existing?.image_alt ?? '',
+    link_url: existing?.link_url ?? '',
+    link_label: existing?.link_label ?? '',
+    registration: (existing?.proposed_registration ?? '') as '' | 'listing' | 'hilom',
+    price: existing?.proposed_price_centavos != null ? (existing.proposed_price_centavos / 100).toFixed(2) : '',
+    capacity: existing?.proposed_capacity != null ? String(existing.proposed_capacity) : '',
+    closes_on: existing?.proposed_registration_closes_on ?? '',
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -775,7 +782,7 @@ function EventProposalForm({
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
 
-  const payload = () => ({
+  const payload = (): EventProposalInput => ({
     title: draft.title,
     subtitle: draft.subtitle,
     excerpt: draft.excerpt,
@@ -788,6 +795,17 @@ function EventProposalForm({
     venue_details: draft.venue_details,
     format: draft.format,
     image: draft.image_url ? { id: null, url: draft.image_url, alt: draft.image_alt } : null,
+    link_url: draft.link_url.trim(),
+    link_label: draft.link_label.trim(),
+    // The ask only exists before approval; after it, ticketing is the admin's.
+    ...(isApprovedEdit
+      ? {}
+      : {
+          proposed_registration: draft.registration || null,
+          proposed_price_centavos: draft.price.trim() ? Math.round(Number(draft.price) * 100) : null,
+          proposed_capacity: draft.capacity.trim() ? Number(draft.capacity) : null,
+          proposed_registration_closes_on: draft.closes_on || null,
+        }),
   });
 
   /**
@@ -962,7 +980,61 @@ function EventProposalForm({
             </label>
           </Section>
 
-          <Section step={4} title="Poster" hint="A landscape image works best on the listing card.">
+          {!isApprovedEdit && (
+            <Section
+              step={4}
+              title="Registration & payment"
+              hint="Tell us how people should sign up. Hilom checks it and sets the final price and places."
+            >
+              <label className="field">
+                <span>How do people register?</span>
+                <select
+                  value={draft.registration}
+                  onChange={(e) => set('registration', e.target.value as '' | 'listing' | 'hilom')}
+                >
+                  <option value="">Not decided — Hilom will ask me</option>
+                  <option value="listing">Listing only — people register on my own link</option>
+                  <option value="hilom">Register and pay through Hilom</option>
+                </select>
+              </label>
+              {draft.registration === 'listing' && (
+                <div className="two-col">
+                  <label className="field">
+                    <span>Registration link</span>
+                    <input value={draft.link_url} onChange={(e) => set('link_url', e.target.value)} placeholder="https://…" />
+                  </label>
+                  <label className="field">
+                    <span>Button label</span>
+                    <input value={draft.link_label} onChange={(e) => set('link_label', e.target.value)} placeholder="Register now" />
+                  </label>
+                </div>
+              )}
+              {draft.registration === 'hilom' && (
+                <>
+                  <div className="two-col">
+                    <label className="field">
+                      <span>Price per person (₱)</span>
+                      <input type="number" min="1" step="0.01" value={draft.price} onChange={(e) => set('price', e.target.value)} />
+                    </label>
+                    <label className="field">
+                      <span>Places</span>
+                      <input type="number" min="1" step="1" value={draft.capacity} onChange={(e) => set('capacity', e.target.value)} />
+                    </label>
+                  </div>
+                  <label className="field">
+                    <span>Registration deadline (optional)</span>
+                    <input type="date" value={draft.closes_on} onChange={(e) => set('closes_on', e.target.value)} />
+                  </label>
+                  <small className="muted">
+                    This is your request. Hilom confirms the price, places and commission when it approves the
+                    event, so you do not need to set anything up again.
+                  </small>
+                </>
+              )}
+            </Section>
+          )}
+
+          <Section step={isApprovedEdit ? 4 : 5} title="Poster" hint="A landscape image works best on the listing card.">
             <div className="two-col">
               <label className="field">
                 <span>Poster image URL</span>
@@ -995,7 +1067,7 @@ function EventProposalForm({
         status={
           isApprovedEdit
             ? 'Cosmetic changes go live on save'
-            : 'Ticket price and capacity are set by Hilom on approval'
+            : 'Price and places are your request — Hilom confirms them on approval'
         }
       >
         <button type="button" className="fs-btn fs-btn--quiet" onClick={onCancel}>
