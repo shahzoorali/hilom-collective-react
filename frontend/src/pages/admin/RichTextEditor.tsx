@@ -111,7 +111,7 @@ export default function RichTextEditor({
           e.preventDefault();
           document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
         }}
-        style={{ minHeight: 140, padding: '0.75rem', outline: 'none', background: '#fff' }}
+        style={{ minHeight: 140, padding: '0.75rem', outline: 'none', background: '#fff', color: 'var(--ink)' }}
       />
     </div>
   );

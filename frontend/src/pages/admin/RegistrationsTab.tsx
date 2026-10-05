@@ -83,6 +83,9 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
   const [money_, setMoney] = useState<RosterMoney | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
+  // Lapsed and cancelled places are noise on a roster that is mostly read for
+  // who holds a seat, so "Everything" folds them away until asked.
+  const [showReleased, setShowReleased] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -127,7 +130,8 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
       // Seat numbers are reissued once a place is released, so a lapsed #2 and
       // the live #2 can coexist. Holders first, released places after, each
       // group keeping the incoming (seat) order.
-      return [...all.filter((r) => !isReleased(r)), ...all.filter(isReleased)];
+      const holders = all.filter((r) => !isReleased(r));
+      return showReleased ? [...holders, ...all.filter(isReleased)] : holders;
     }
     if (filter === 'confirmed') return all.filter((r) => r.status === 'confirmed');
     if (filter === 'cancelled') return all.filter((r) => r.status === 'cancelled');
@@ -143,7 +147,9 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
         r.overdueCount > 0 ||
         (r.cancellation_requested_at !== null && r.cancellation_decided_at === null),
     );
-  }, [registrations, filter]);
+  }, [registrations, filter, showReleased]);
+
+  const releasedCount = (registrations ?? []).filter(isReleased).length;
 
   function flash(message: string) {
     setNotice(message);
@@ -216,6 +222,17 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
               : 'No registrations here yet.'}
           </p>
         </div>
+      )}
+
+      {filter === 'all' && releasedCount > 0 && (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ padding: '6px 12px', marginBottom: 10 }}
+          onClick={() => setShowReleased((v) => !v)}
+        >
+          {showReleased ? 'Hide' : 'Show'} {releasedCount} lapsed or cancelled
+        </button>
       )}
 
       <div style={{ display: 'grid', gap: 10 }}>
