@@ -954,6 +954,14 @@ export interface AdminCharge {
   flagged_at: string | null;
   void_reason: string | null;
   paymongo_payment_id: string | null;
+  /** Automatic payment reminders that actually left the system, oldest first. */
+  reminders?: AdminChargeReminder[];
+}
+
+export interface AdminChargeReminder {
+  tier: 'due_in_7d' | 'due_today' | 'overdue_3d' | 'overdue_7d';
+  sent_at: string;
+  sent_to: string | null;
 }
 
 export interface AdminRegistration {

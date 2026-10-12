@@ -33,6 +33,7 @@ import {
   type AdminEvent,
   type AdminRegistration,
   type AdminCharge,
+  type AdminChargeReminder,
   type RosterMoney,
   type AuditEntry,
   type RefundAssessment,
@@ -743,6 +744,7 @@ function ChargeAdminRow({
               : `Due ${manilaDate(c.due_at)}`}
           {c.void_reason && ` · ${c.void_reason}`}
         </span>
+        <ReminderLine charge={c} />
       </td>
       <td className="small" style={{ padding: '8px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {money(c.amount_centavos, c.currency)}
@@ -767,6 +769,45 @@ function ChargeAdminRow({
         )}
       </td>
     </tr>
+  );
+}
+
+const REMINDER_LABEL: Record<AdminChargeReminder['tier'], string> = {
+  due_in_7d: '7 days before',
+  due_today: 'due date',
+  overdue_3d: '3 days overdue',
+  overdue_7d: '7 days overdue',
+};
+
+/**
+ * The automatic reminders the sweep has sent for this charge. A row only
+ * exists once the email actually left — a failed send deletes its claim.
+ */
+function ReminderLine({ charge: c }: { charge: AdminCharge }) {
+  const sent = c.reminders ?? [];
+  if (sent.length === 0) {
+    if (c.status !== 'scheduled' && c.status !== 'awaiting_payment') return null;
+    return (
+      <>
+        <br />
+        <span className="small muted">No reminders sent yet</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <br />
+      <span className="small muted">
+        Reminded:{' '}
+        {sent.map((r, i) => (
+          <span key={r.tier} title={r.sent_to ? `Sent to ${r.sent_to}` : undefined}>
+            {i > 0 && ' · '}
+            {manilaDate(r.sent_at)} ({REMINDER_LABEL[r.tier]})
+          </span>
+        ))}
+        {sent[sent.length - 1].sent_to && ` → ${sent[sent.length - 1].sent_to}`}
+      </span>
+    </>
   );
 }
 

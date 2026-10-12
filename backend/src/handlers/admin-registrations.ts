@@ -68,6 +68,7 @@ import {
   buildRoster,
   sendJoinDetailsToRegistrants,
   chargesFor,
+  attachReminders,
   decorate,
   REGISTRATION_COLUMNS,
   CHARGE_COLUMNS,
@@ -293,6 +294,7 @@ async function queue(query: Record<string, string | undefined>): Promise<APIGate
 
   const rows = data ?? [];
   const byRegistration = await chargesFor(supabase, rows.map((r) => r.id));
+  await attachReminders(supabase, byRegistration);
   let decorated = rows.map((r) => decorate(r, byRegistration.get(r.id) ?? [], now));
 
   // Unanswered cancellation requests only — a narrower queue than `flagged`,
@@ -334,6 +336,7 @@ async function registrationDetail(registrationId: string): Promise<APIGatewayPro
   if (!data) return notFound('Registration not found');
 
   const byRegistration = await chargesFor(supabase, [registrationId]);
+  await attachReminders(supabase, byRegistration);
 
   // The trail for this registration, so a money question is answerable without
   // leaving the row it is about.

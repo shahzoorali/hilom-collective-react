@@ -111,6 +111,54 @@ export async function chargesFor(
   return byRegistration;
 }
 
+export interface ChargeReminder {
+  tier: 'due_in_7d' | 'due_today' | 'overdue_3d' | 'overdue_7d';
+  sent_at: string;
+  sent_to: string | null;
+}
+
+/**
+ * The automatic payment reminders already sent for each charge, keyed by
+ * charge id, oldest first. A row exists only once the email left the system:
+ * the sweep deletes its claim when the send fails (registration-sweep.ts).
+ *
+ * Admin-only on purpose — the facilitator roster shares `chargesFor` and has
+ * no need to see where a registrant's reminders were addressed.
+ */
+export async function remindersFor(
+  supabase: SupabaseClient,
+  chargeIds: string[],
+): Promise<Map<string, ChargeReminder[]>> {
+  const byCharge = new Map<string, ChargeReminder[]>();
+  // Chunked: up to 500 registrations × several charges would overflow the
+  // PostgREST query string in one `in` filter.
+  for (let i = 0; i < chargeIds.length; i += 150) {
+    const { data, error } = await supabase
+      .from('registration_charge_reminders')
+      .select('charge_id, tier, sent_at, sent_to')
+      .in('charge_id', chargeIds.slice(i, i + 150))
+      .order('sent_at', { ascending: true })
+      .returns<(ChargeReminder & { charge_id: string })[]>();
+    if (error) throw error;
+    for (const { charge_id, ...reminder } of data ?? []) {
+      byCharge.set(charge_id, [...(byCharge.get(charge_id) ?? []), reminder]);
+    }
+  }
+  return byCharge;
+}
+
+/** Hangs each charge's sent reminders on it as `reminders`, in place. */
+export async function attachReminders(
+  supabase: SupabaseClient,
+  byRegistration: Map<string, ChargeRow[]>,
+): Promise<void> {
+  const charges = [...byRegistration.values()].flat();
+  const byCharge = await remindersFor(supabase, charges.map((c) => c.id));
+  for (const c of charges) {
+    (c as ChargeRow & { reminders: ChargeReminder[] }).reminders = byCharge.get(c.id) ?? [];
+  }
+}
+
 /** The derived figures every roster view shows, computed from the ledger. */
 export function decorate(
   registration: RegistrationRow,
