@@ -968,8 +968,10 @@ function HostedEvent({
           </p>
         )}
       </div>
-      {!past && event.ticketing_enabled && (
-        <span className="small linklike fac-hosted__cta">Register →</span>
+      {!past && (event.ticketing_enabled || event.link_url) && (
+        <span className="small linklike fac-hosted__cta">
+          {event.ticketing_enabled ? 'Register' : event.link_label || 'Register'} →
+        </span>
       )}
     </>
   );
@@ -984,10 +986,27 @@ function HostedEvent({
     );
   }
 
+  // There is no /events/:id page — only /events/:id/register for on-site
+  // ticketing. An event that takes sign-ups elsewhere links out to that form;
+  // anything else (past, or no way to register) goes to the events listing.
+  if (!past && !event.ticketing_enabled && event.link_url) {
+    return (
+      <a
+        className={className}
+        href={event.link_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ marginBottom: '0.6rem' }}
+      >
+        {body}
+      </a>
+    );
+  }
+
   return (
     <Link
       className={className}
-      to={`/events/${event.id}${!past && event.ticketing_enabled ? '/register' : ''}`}
+      to={!past && event.ticketing_enabled ? `/events/${event.id}/register` : '/events'}
       style={{ marginBottom: '0.6rem' }}
     >
       {body}

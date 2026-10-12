@@ -257,6 +257,9 @@ export interface HostedEventCard {
   starts_at: string;
   ends_at: string | null;
   ticketing_enabled: boolean;
+  /** External sign-up (e.g. a Google Form) for events without on-site ticketing. */
+  link_url?: string | null;
+  link_label?: string | null;
 }
 
 export const getFacilitator = (slug: string) =>

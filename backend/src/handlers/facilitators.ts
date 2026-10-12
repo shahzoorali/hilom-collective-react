@@ -153,7 +153,7 @@ async function detail(slug: string): Promise<APIGatewayProxyResultV2> {
   // reason as meeting_url below.
   const { data: hosting, error: hostingError } = await supabase
     .from('events')
-    .select('id, title, excerpt, image_url, image_alt, location, starts_at, ends_at, ticketing_enabled')
+    .select('id, title, excerpt, image_url, image_alt, location, starts_at, ends_at, ticketing_enabled, link_url, link_label')
     .eq('facilitator_id', (facilitator as { id: string }).id)
     .eq('status', 'published')
     .order('starts_at', { ascending: true });
