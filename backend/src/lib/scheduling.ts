@@ -96,6 +96,9 @@ interface SchedulingContext {
  * hold that has already lapsed, which is what lets an abandoned checkout free
  * its slot immediately rather than at the next sweep.
  */
+/** How long a hosted event with no `ends_at` is assumed to occupy the host. */
+const EVENT_DEFAULT_MINUTES = 120;
+
 async function loadContext(
   supabase: SupabaseClient,
   facilitatorId: string,
@@ -104,7 +107,7 @@ async function loadContext(
   now: Date,
   excludeBookingId?: string,
 ): Promise<SchedulingContext> {
-  const [availabilityRes, blackoutRes, busyRes, classRes] = await Promise.all([
+  const [availabilityRes, blackoutRes, busyRes, classRes, eventRes] =await Promise.all([
     supabase
       .from('facilitator_availability')
       .select('weekday, start_minute, end_minute')
@@ -143,12 +146,29 @@ async function loadContext(
       .eq('status', 'scheduled')
       .lt('starts_at', to.toISOString())
       .gt('ends_at', from.toISOString()),
+    // Hosted events (0054–0064). A facilitator running a Saturday retreat must
+    // not be bookable for a Saturday 1:1. Folded into `busy` for the same
+    // reason as classes. Only published, uncancelled dates count — a draft
+    // under review is not yet a commitment.
+    //
+    // `ends_at` is optional on events, so the range filter uses `delivered_at`
+    // (= coalesce(ends_at, starts_at)); a single-time event with no end is
+    // treated as occupying EVENT_DEFAULT_MINUTES.
+    supabase
+      .from('events')
+      .select('starts_at, ends_at')
+      .eq('facilitator_id', facilitatorId)
+      .eq('status', 'published')
+      .is('cancelled_at', null)
+      .lt('starts_at', to.toISOString())
+      .gt('delivered_at', new Date(from.getTime() - EVENT_DEFAULT_MINUTES * 60_000).toISOString()),
   ]);
 
   if (availabilityRes.error) throw availabilityRes.error;
   if (blackoutRes.error) throw blackoutRes.error;
   if (busyRes.error) throw busyRes.error;
   if (classRes.error) throw classRes.error;
+  if (eventRes.error) throw eventRes.error;
 
   const busy = (busyRes.data ?? [])
     .filter((row) => {
@@ -164,6 +184,14 @@ async function loadContext(
 
   for (const row of classRes.data ?? []) {
     busy.push({ startsAt: row.starts_at as string, endsAt: row.ends_at as string });
+  }
+
+  for (const row of eventRes.data ?? []) {
+    const startsAt = row.starts_at as string;
+    const endsAt =
+      (row.ends_at as string | null) ??
+      new Date(new Date(startsAt).getTime() + EVENT_DEFAULT_MINUTES * 60_000).toISOString();
+    busy.push({ startsAt, endsAt });
   }
 
   return {
