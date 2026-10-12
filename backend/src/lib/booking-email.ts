@@ -1219,7 +1219,7 @@ export async function sendEventEditSubmitted(input: {
   changedFields: string[];
 }): Promise<void> {
   const { facilitatorName, eventTitle, changedFields } = input;
-  const reviewUrl = 'https://admin.hilomcollective.com/events';
+  const reviewUrl = 'https://www.hilomcollective.com/admin/events';
 
   const body =
     p(`<strong>${escapeHtml(shortName(facilitatorName))}</strong> wants to change <strong>${escapeHtml(eventTitle)}</strong>.`) +
@@ -1305,7 +1305,7 @@ export async function sendEventProposalSubmitted(input: {
   timezone: string;
 }): Promise<void> {
   const { facilitatorName, seriesTitle, dateCount, firstDate, proposedPriceCentavos, timezone } = input;
-  const reviewUrl = 'https://admin.hilomcollective.com/events';
+  const reviewUrl = 'https://www.hilomcollective.com/admin/events?status=submitted';
 
   const priceLine =
     proposedPriceCentavos === null
