@@ -252,6 +252,11 @@ export class HilomCoreStack extends cdk.Stack {
 
     this.mediaDistribution = new cloudfront.Distribution(this, 'MediaDistribution', {
       comment: 'Hilom CMS media',
+      // Attached in the console when the distribution was put on a CloudFront
+      // pricing plan. A plan requires a web ACL, so omitting this makes every
+      // update fail trying to remove it.
+      webAclId:
+        'arn:aws:wafv2:us-east-1:651706741660:global/webacl/CreatedByCloudFront-0d65c36a/b1f63445-2f4e-44a5-896e-f2407f5e5401',
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(this.mediaBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,

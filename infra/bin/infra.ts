@@ -7,6 +7,11 @@ import { HilomAssistantStack } from '../lib/hilom-assistant-stack';
 
 const app = new cdk.App();
 
+// Cost-allocation tag on every taggable resource in every stack, so Cost
+// Explorer can split Hilom's bill from the rest of the account. The tag key
+// must also be activated once under Billing → Cost allocation tags.
+cdk.Tags.of(app).add('project', 'hilom');
+
 // Region is pinned, never inherited from the CLI. The default profile on this
 // machine is us-east-1, so an unpinned stack would silently deploy to the wrong
 // region. Everything except the Amplify/CloudFront ACM certificate lives in
