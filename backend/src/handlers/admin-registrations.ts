@@ -1293,7 +1293,11 @@ async function seriesReview(
     .order('starts_at', { ascending: true })
     .returns<SeriesDateRow[]>();
   if (datesError) throw datesError;
-  if (!dates || dates.length === 0) return badRequest('This series has no dates.');
+  // Only approval needs dates to price. A dateless proposal must still be
+  // rejectable, or it sits in the review queue forever.
+  if (decision === 'approve' && (!dates || dates.length === 0)) {
+    return badRequest('This series has no dates — request changes so the facilitator can add them.');
+  }
 
   const patch: Record<string, unknown> = {
     review_status: decision === 'approve' ? 'approved' : 'rejected',
