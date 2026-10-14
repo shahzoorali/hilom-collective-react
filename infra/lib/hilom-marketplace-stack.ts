@@ -536,7 +536,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       // Multi-date event proposals (0054) — see the note at the top of
       // admin-registrations.ts for why the review lives here.
       ['/admin/event-series', [GET]],
-      ['/admin/event-series/{seriesId}', [GET]],
+      ['/admin/event-series/{seriesId}', [GET, DELETE]],
       ['/admin/event-series/{seriesId}/review', [PUT]],
     ]);
 

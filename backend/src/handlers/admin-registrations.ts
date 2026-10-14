@@ -99,6 +99,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (seriesId && method === 'PUT' && path.endsWith('/review')) {
       return await seriesReview(event, seriesId, parseBody(event), actor);
     }
+    if (seriesId && method === 'DELETE') {
+      return await seriesDelete(seriesId, actor);
+    }
     if (seriesId && method === 'GET') {
       return await seriesDetail(seriesId);
     }
@@ -1421,4 +1424,68 @@ async function seriesReview(
   });
 
   return ok({ series: updatedSeries, dateCount: dates.length });
+}
+
+/**
+ *   DELETE /admin/event-series/{id}
+ *
+ * Permanently removes a series and its dates — for a duplicate or abandoned
+ * proposal that "Request changes" would only bounce back to the facilitator.
+ *
+ * Refused once anyone has registered for any date: registrations and their
+ * charges are the record of money people paid (0016 restricts deleting their
+ * event for the same reason). Such a series is cancelled date by date instead.
+ * No email is sent; the facilitator simply no longer sees it.
+ */
+async function seriesDelete(seriesId: string, actor: AuditActor): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+
+  const { data: series, error: readError } = await supabase
+    .from('event_series')
+    .select('id, title, review_status, facilitator_id')
+    .eq('id', seriesId)
+    .maybeSingle<{ id: string; title: string; review_status: string; facilitator_id: string }>();
+  if (readError) throw readError;
+  if (!series) return notFound('Series not found');
+
+  const { data: dates, error: datesError } = await supabase
+    .from('events')
+    .select('id')
+    .eq('series_id', seriesId)
+    .returns<{ id: string }[]>();
+  if (datesError) throw datesError;
+  const dateIds = (dates ?? []).map((d) => d.id);
+
+  if (dateIds.length > 0) {
+    const { count, error: countError } = await supabase
+      .from('event_registrations')
+      .select('id', { count: 'exact', head: true })
+      .in('event_id', dateIds);
+    if (countError) throw countError;
+    if ((count ?? 0) > 0) {
+      return badRequest(
+        `People have registered for this series (${count}). Cancel its dates instead — deleting would erase their payment records.`,
+      );
+    }
+    // Plans block deleting their event (restrict); with no registrations
+    // they hold no money, so they go first.
+    const { error: plansError } = await supabase.from('event_payment_plans').delete().in('event_id', dateIds);
+    if (plansError) throw plansError;
+    const { error: eventsError } = await supabase.from('events').delete().in('id', dateIds);
+    if (eventsError) throw eventsError;
+  }
+
+  const { error: deleteError } = await supabase.from('event_series').delete().eq('id', seriesId);
+  if (deleteError) throw deleteError;
+
+  await recordAudit(actor, {
+    action: 'event_series.deleted',
+    targetTable: 'event_series',
+    targetId: seriesId,
+    before: { title: series.title, review_status: series.review_status, facilitator_id: series.facilitator_id, dates: dateIds.length },
+    after: null,
+    note: `Deleted "${series.title}" with ${dateIds.length} date(s)`,
+  });
+
+  return ok({ deleted: true, dateCount: dateIds.length });
 }

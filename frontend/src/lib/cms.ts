@@ -731,6 +731,10 @@ export const adminReviewEventSeries = (
     }),
   );
 
+/** Permanent. Refused once anyone has registered for one of its dates. */
+export const adminDeleteEventSeries = (adminKey: string, seriesId: string) =>
+  apiFetch<{ deleted: true; dateCount: number }>(`/admin/event-series/${seriesId}`, adminInit(adminKey, 'DELETE'));
+
 export const adminGetEventPlans = (adminKey: string, eventId: string) =>
   apiFetch<{ plans: AdminPlan[] }>(
     `/admin/events/${eventId}/plans`,

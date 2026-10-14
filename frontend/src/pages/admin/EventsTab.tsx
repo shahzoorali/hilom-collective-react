@@ -25,6 +25,7 @@ import {
   adminUpdateEvent,
   adminListEventSeries,
   adminReviewEventSeries,
+  adminDeleteEventSeries,
   adminCancelEvent,
   adminReviewEventEdit,
   type AdminEvent,
@@ -1533,6 +1534,26 @@ function SeriesReviewDrawer({
     }
   }
 
+  async function remove() {
+    const ok = window.confirm(
+      `Permanently delete "${series.title}" and all its dates?
+
+` +
+        'This cannot be undone, and the facilitator is not emailed. Use "Request changes" instead if they should hear why.',
+    );
+    if (!ok) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const res = await adminDeleteEventSeries(adminKey, series.id);
+      onDecided(`Deleted "${series.title}"${res.dateCount ? ` and its ${res.dateCount} date${res.dateCount === 1 ? '' : 's'}` : ''}.`);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="panel" style={{ marginTop: '0.75rem', background: 'var(--surface-2, #f7f5ee)' }}>
       <h4 style={{ marginTop: 0 }}>Review "{series.title}"</h4>
@@ -1575,6 +1596,15 @@ function SeriesReviewDrawer({
         </button>
         <button type="button" className="btn btn-accent small" onClick={() => void approve()} disabled={busy}>
           Approve{publish ? ' & publish' : ''}
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost small"
+          style={{ marginLeft: 'auto', color: 'var(--danger-fg)' }}
+          onClick={() => void remove()}
+          disabled={busy}
+        >
+          Delete series
         </button>
       </div>
     </div>
