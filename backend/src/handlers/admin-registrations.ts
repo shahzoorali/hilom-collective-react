@@ -263,6 +263,12 @@ async function cancelEventAsAdmin(
 async function roster(eventId: string): Promise<APIGatewayProxyResultV2> {
   const built = await buildRoster(await getSupabase(), eventId);
   if (!built) return notFound('Event not found');
+  // buildRoster is shared with the facilitator's roster, which must not see
+  // where reminders were addressed, so the admin view adds them here.
+  const byRegistration = new Map(
+    built.registrations.map((r) => [String(r.id), (r.charges ?? []) as ChargeRow[]]),
+  );
+  await attachReminders(await getSupabase(), byRegistration);
   return ok(built);
 }
 
