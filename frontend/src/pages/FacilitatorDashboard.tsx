@@ -65,6 +65,7 @@ import {
   getMyFacilitatorStatus,
   type MyFacilitatorStatus,
 } from '../lib/booking';
+import { ContextHelp } from './facilitator/HelpTab';
 
 const ServicesTab = lazy(() => import('./facilitator/ServicesTab'));
 const AvailabilityTab = lazy(() => import('./facilitator/AvailabilityTab'));
@@ -74,6 +75,7 @@ const ClientsTab = lazy(() => import('./facilitator/ClientsTab'));
 const MessagesTab = lazy(() => import('./facilitator/MessagesTab'));
 const EventsTab = lazy(() => import('./facilitator/EventsTab'));
 const ClassesTab = lazy(() => import('./facilitator/ClassesTab'));
+const HelpTab = lazy(() => import('./facilitator/HelpTab'));
 
 /**
  * Is this confirmed session inside the facilitator's vacation window?
@@ -121,6 +123,10 @@ const NAV_GROUPS = [
   {
     label: 'Money',
     items: [{ label: 'Earnings', path: 'earnings', icon: '💰' }],
+  },
+  {
+    label: 'Support',
+    items: [{ label: 'Help', path: 'help', icon: '❓' }],
   },
 ] as const;
 
@@ -369,6 +375,7 @@ export default function FacilitatorDashboard() {
             to restore it.
           </div>
         )}
+        <ContextHelp tab={active} />
         <Suspense fallback={<div className="spinner" aria-label="Loading" />}>
           <Routes>
             <Route index element={<Navigate to="overview" replace />} />
@@ -384,6 +391,7 @@ export default function FacilitatorDashboard() {
             <Route path="earnings" element={<EarningsTab />} />
             <Route path="profile" element={<ProfileTab profile={profile} onSaved={setProfile} />} />
             <Route path="connections" element={<ConnectionsTab />} />
+            <Route path="help" element={<HelpTab />} />
             <Route path="*" element={<Navigate to="overview" replace />} />
           </Routes>
         </Suspense>

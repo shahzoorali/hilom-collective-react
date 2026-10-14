@@ -793,9 +793,25 @@ export async function sendReviewRequest(ctx: BookingEmailContext): Promise<void>
   await send(ctx.clientEmail, `How was your session with ${ctx.facilitatorName}?`, text, html);
 }
 
-/** Sent when an admin approves a facilitator application. */
+const HELP_BASE = 'https://www.hilomcollective.com/help';
+
+/**
+ * The first guides a newly approved facilitator should read, in setup order.
+ * Slugs are Help Centre articles (admin → Help Centre); renaming one there
+ * breaks its link here, so keep them in step.
+ */
+const FACILITATOR_GETTING_STARTED = [
+  { title: 'Setting up your profile', slug: 'setting-up-your-profile' },
+  { title: 'Creating your services', slug: 'creating-your-services' },
+  { title: 'Setting your availability', slug: 'setting-your-availability' },
+  { title: 'Earnings and payouts', slug: 'earnings-and-payouts' },
+];
+
+/** Sent when an admin approves a facilitator application. Doubles as the welcome email. */
 export async function sendFacilitatorApproved(to: string, displayName: string): Promise<void> {
   const dashboard = 'https://www.hilomcollective.com/facilitator';
+  const guide = `${HELP_BASE}/for-facilitators`;
+  const articleUrl = (slug: string) => `${HELP_BASE}/for-facilitators/${slug}`;
 
   const html = renderEmail({
     preheader: 'Set up your services and availability to go live on Hilom.',
@@ -807,6 +823,12 @@ export async function sendFacilitatorApproved(to: string, displayName: string): 
           "We'll publish your profile to the directory once it's ready.",
       ) +
       button('Set up your profile', dashboard) +
+      p('<strong>Getting started</strong> — a few short guides worth reading first:') +
+      p(FACILITATOR_GETTING_STARTED.map((a) => `• ${link(a.title, articleUrl(a.slug))}`).join('<br>')) +
+      p(
+        `The full ${link('facilitator guide', guide)} covers bookings, events, classes and more. ` +
+          "It's also under Help in your dashboard.",
+      ) +
       note('Once your profile is published, clients can find and book you directly.'),
   });
 
@@ -816,10 +838,15 @@ export async function sendFacilitatorApproved(to: string, displayName: string): 
     'Set up your services and availability before you go live:',
     dashboard,
     '',
+    'Getting started — a few short guides worth reading first:',
+    ...FACILITATOR_GETTING_STARTED.map((a) => `- ${a.title}: ${articleUrl(a.slug)}`),
+    '',
+    `The full facilitator guide: ${guide}`,
+    '',
     'Once your profile is published, clients can find and book you.',
   ]);
 
-  await send(to, 'Your Hilom facilitator application is approved', text, html);
+  await send(to, 'Welcome to Hilom — your facilitator application is approved', text, html);
 }
 
 /**
@@ -900,7 +927,11 @@ export async function sendFacilitatorPublished(to: string, displayName: string, 
       p('Your profile has been published and is now visible in the Hilom Collective directory.') +
       p('Clients can find you and book a session directly from your profile.') +
       button('View your profile', profileUrl) +
-      note(`Manage your services and availability any time from ${link('your dashboard', dashboard)}.`),
+      note(
+        `Manage your services and availability any time from ${link('your dashboard', dashboard)}. ` +
+          `Questions? See ${link('Managing your bookings', `${HELP_BASE}/for-facilitators/managing-your-bookings`)} ` +
+          `or the full ${link('facilitator guide', `${HELP_BASE}/for-facilitators`)}.`,
+      ),
   });
 
   const text = renderText(`You're live, ${displayName}.`, [
@@ -909,6 +940,7 @@ export async function sendFacilitatorPublished(to: string, displayName: string, 
     '',
     `View your profile: ${profileUrl}`,
     `Your dashboard: ${dashboard}`,
+    `Facilitator guide: ${HELP_BASE}/for-facilitators`,
   ]);
 
   await send(to, 'Your Hilom profile is now live', text, html);
