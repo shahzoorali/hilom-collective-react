@@ -962,6 +962,9 @@ export interface AdminChargeReminder {
   tier: 'due_in_7d' | 'due_today' | 'overdue_3d' | 'overdue_7d';
   sent_at: string;
   sent_to: string | null;
+  /** What SES reported after sending. Null for reminders sent before tracking began. */
+  delivery_status?: 'sent' | 'delivered' | 'bounced' | 'complained' | 'rejected' | 'delayed' | null;
+  delivery_detail?: string | null;
 }
 
 export interface AdminRegistration {

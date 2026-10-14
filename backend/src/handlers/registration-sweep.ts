@@ -230,7 +230,7 @@ async function sendChargeReminders(now: Date): Promise<number> {
       }
 
       try {
-        await sendChargeReminder({
+        const messageId = await sendChargeReminder({
           tier,
           to: registration.buyer_email,
           registrantName: registration.registrant_name,
@@ -242,6 +242,14 @@ async function sendChargeReminders(now: Date): Promise<number> {
           registrationId: charge.registration_id,
         });
         sent += 1;
+        // Best-effort: the email has gone, so a failure here must not release
+        // the claim (that would send it twice). It only costs the delivery status.
+        const { error: idError } = await supabase
+          .from('registration_charge_reminders')
+          .update({ ses_message_id: messageId ?? null, delivery_status: 'sent', delivery_updated_at: new Date().toISOString() })
+          .eq('charge_id', charge.id)
+          .eq('tier', tier);
+        if (idError) console.error('[registrationSweep] could not record message id', { chargeId: charge.id, tier, idError });
       } catch (err) {
         console.error('[registrationSweep] reminder send failed, releasing for retry', {
           chargeId: charge.id,

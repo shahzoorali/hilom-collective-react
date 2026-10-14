@@ -779,6 +779,15 @@ const REMINDER_LABEL: Record<AdminChargeReminder['tier'], string> = {
   overdue_7d: '7 days overdue',
 };
 
+const DELIVERY_LABEL: Record<string, string> = {
+  delivered: 'delivered',
+  bounced: 'bounced',
+  complained: 'marked as spam',
+  rejected: 'rejected',
+  delayed: 'delayed',
+};
+const DELIVERY_PROBLEM = ['bounced', 'complained', 'rejected'];
+
 /**
  * The automatic reminders the sweep has sent for this charge. A row only
  * exists once the email actually left — a failed send deletes its claim.
@@ -800,9 +809,17 @@ function ReminderLine({ charge: c }: { charge: AdminCharge }) {
       <span className="small muted">
         Reminded:{' '}
         {sent.map((r, i) => (
-          <span key={r.tier} title={r.sent_to ? `Sent to ${r.sent_to}` : undefined}>
+          <span key={r.tier} title={[r.sent_to && `Sent to ${r.sent_to}`, r.delivery_detail].filter(Boolean).join(' — ') || undefined}>
             {i > 0 && ' · '}
             {manilaDate(r.sent_at)} ({REMINDER_LABEL[r.tier]})
+            {r.delivery_status && r.delivery_status !== 'sent' && (
+              <>
+                {' — '}
+                <span style={DELIVERY_PROBLEM.includes(r.delivery_status) ? { color: 'var(--danger-fg)', fontWeight: 600 } : undefined}>
+                  {DELIVERY_LABEL[r.delivery_status]}
+                </span>
+              </>
+            )}
           </span>
         ))}
         {sent[sent.length - 1].sent_to && ` → ${sent[sent.length - 1].sent_to}`}

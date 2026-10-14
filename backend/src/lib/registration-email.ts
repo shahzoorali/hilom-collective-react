@@ -275,6 +275,48 @@ export function registrationInvite(input: {
   };
 }
 
+/**
+ * SES configuration set whose event destination reports delivery, bounce and
+ * complaint outcomes back to us (infra/lib/hilom-ses-events-stack.ts).
+ */
+const CONFIGURATION_SET = 'hilom-transactional';
+
+/** Sends and returns SES's message id. Throws on failure — see `send` for the swallowing wrapper. */
+async function sendOrThrow(
+  to: string,
+  subject: string,
+  text: string,
+  html: string,
+  attachments?: RawEmailAttachment[],
+): Promise<string | undefined> {
+  // Content.Simple has no attachment support, so an email that carries one
+  // is composed as raw MIME instead. Everything else stays on the simple
+  // path — it is less to get wrong.
+  const content =
+    attachments && attachments.length > 0
+      ? {
+          Raw: {
+            Data: buildRawEmail({ from: SENDER, to, subject, text, html, attachments }),
+          },
+        }
+      : {
+          Simple: {
+            Subject: { Data: subject },
+            Body: { Text: { Data: text }, Html: { Data: html } },
+          },
+        };
+
+  const res = await sesClient.send(
+    new SendEmailCommand({
+      FromEmailAddress: SENDER,
+      Destination: { ToAddresses: [to] },
+      Content: content,
+      ConfigurationSetName: CONFIGURATION_SET,
+    }),
+  );
+  return res.MessageId;
+}
+
 async function send(
   to: string,
   subject: string,
@@ -283,30 +325,7 @@ async function send(
   attachments?: RawEmailAttachment[],
 ): Promise<void> {
   try {
-    // Content.Simple has no attachment support, so an email that carries one
-    // is composed as raw MIME instead. Everything else stays on the simple
-    // path — it is less to get wrong.
-    const content =
-      attachments && attachments.length > 0
-        ? {
-            Raw: {
-              Data: buildRawEmail({ from: SENDER, to, subject, text, html, attachments }),
-            },
-          }
-        : {
-            Simple: {
-              Subject: { Data: subject },
-              Body: { Text: { Data: text }, Html: { Data: html } },
-            },
-          };
-
-    await sesClient.send(
-      new SendEmailCommand({
-        FromEmailAddress: SENDER,
-        Destination: { ToAddresses: [to] },
-        Content: content,
-      }),
-    );
+    await sendOrThrow(to, subject, text, html, attachments);
   } catch (err) {
     console.warn('[registration-email] send failed — the payment itself is unaffected', {
       to,
@@ -693,7 +712,7 @@ export async function sendChargeReminder(input: {
   currency: string;
   dueAt: string;
   registrationId: string;
-}): Promise<void> {
+}): Promise<string | undefined> {
   const { tier, to, registrantName, eventTitle, label, amountCentavos, currency, dueAt, registrationId } = input;
   const copy = TIER_COPY[tier];
   const heading = copy.subject(`${peso(amountCentavos, currency)} for ${eventTitle}`);
@@ -709,7 +728,9 @@ export async function sendChargeReminder(input: {
     ]) +
     button('Pay now', registrationUrl(registrationId));
 
-  await send(
+  // Throws, unlike the other templates: the sweep releases its claim on a
+  // failed send so the next run retries, and records the message id on success.
+  return sendOrThrow(
     to,
     copy.subject(`${peso(amountCentavos, currency)} for ${eventTitle}`),
     renderText(heading, [

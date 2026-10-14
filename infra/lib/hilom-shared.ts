@@ -72,6 +72,14 @@ export const DEFAULT_PARTICIPANT_AGREEMENT_EVENT_IDS = '780002bf-573e-47c0-a77c-
  */
 export const SES_REGION = 'ap-south-1';
 
+/**
+ * Delivery tracking (HilomSesEventsStack, deployed in SES_REGION). Fixed names
+ * rather than stack outputs because CloudFormation cannot reference across
+ * regions; the Singapore subscriber builds the topic ARN from these.
+ */
+export const SES_EVENTS_CONFIGURATION_SET = 'hilom-transactional';
+export const SES_EVENTS_TOPIC_NAME = 'hilom-ses-events';
+
 /** Props every Hilom stack accepts, so `bin/infra.ts` can thread one object. */
 export interface HilomCommonProps extends cdk.StackProps {
   /** Allowed browser origin for CORS. */
@@ -292,5 +300,7 @@ export const sesSendPolicy = (stack: cdk.Stack): iam.PolicyStatement =>
       // The domain identity has a default configuration set attached, so SES
       // checks permission on that resource too, not just the identity.
       `arn:aws:ses:${SES_REGION}:${stack.account}:configuration-set/default-config-set`,
+      // Registration emails name this one explicitly to get delivery events.
+      `arn:aws:ses:${SES_REGION}:${stack.account}:configuration-set/${SES_EVENTS_CONFIGURATION_SET}`,
     ],
   });

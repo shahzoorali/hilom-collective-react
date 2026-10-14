@@ -4,6 +4,8 @@ import { HilomCoreStack } from '../lib/hilom-core-stack';
 import { HilomCmsStack } from '../lib/hilom-cms-stack';
 import { HilomMarketplaceStack } from '../lib/hilom-marketplace-stack';
 import { HilomAssistantStack } from '../lib/hilom-assistant-stack';
+import { HilomSesEventsStack } from '../lib/hilom-ses-events-stack';
+import { SES_REGION } from '../lib/hilom-shared';
 
 const app = new cdk.App();
 
@@ -101,6 +103,15 @@ const assistant = new HilomAssistantStack(app, 'HilomAssistantStack', {
   ...common,
 });
 
+// The SES delivery-event topic must exist before the marketplace stack
+// subscribes to it. Deployed in SES_REGION (Mumbai), not Singapore — SES only
+// publishes events to a topic in its own region.
+const sesEvents = new HilomSesEventsStack(app, 'HilomSesEventsStack', {
+  env: { account, region: SES_REGION },
+  description: 'Hilom Collective — SES delivery events (configuration set + SNS topic)',
+});
+
+marketplace.addDependency(sesEvents);
 cms.addDependency(core);
 marketplace.addDependency(core);
 assistant.addDependency(core);

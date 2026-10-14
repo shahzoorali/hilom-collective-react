@@ -115,6 +115,9 @@ export interface ChargeReminder {
   tier: 'due_in_7d' | 'due_today' | 'overdue_3d' | 'overdue_7d';
   sent_at: string;
   sent_to: string | null;
+  /** Latest SES outcome (0069). Null for reminders sent before tracking began. */
+  delivery_status: 'sent' | 'delivered' | 'bounced' | 'complained' | 'rejected' | 'delayed' | null;
+  delivery_detail: string | null;
 }
 
 /**
@@ -135,7 +138,7 @@ export async function remindersFor(
   for (let i = 0; i < chargeIds.length; i += 150) {
     const { data, error } = await supabase
       .from('registration_charge_reminders')
-      .select('charge_id, tier, sent_at, sent_to')
+      .select('charge_id, tier, sent_at, sent_to, delivery_status, delivery_detail')
       .in('charge_id', chargeIds.slice(i, i + 150))
       .order('sent_at', { ascending: true })
       .returns<(ChargeReminder & { charge_id: string })[]>();

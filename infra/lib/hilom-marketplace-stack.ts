@@ -36,8 +36,11 @@ import {
   lambdaFactory,
   routeAttacher,
   sesSendPolicy,
+  SES_REGION,
+  SES_EVENTS_TOPIC_NAME,
   type HilomCommonProps,
 } from './hilom-shared';
+import * as sns from 'aws-cdk-lib/aws-sns';
 
 export interface HilomMarketplaceStackProps extends HilomCommonProps {
   /** The core stack's HTTP API. Routes are attached to it, not to a new one. */
@@ -165,6 +168,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // status on a missed payment — see the header comment in
     // registration-sweep.ts for why that is the product rule, not a gap.
     const registrationSweep = makeFn('RegistrationSweepFn', 'handlers/registration-sweep.ts', 'handler');
+    // Records SES delivery outcomes on reminders. Subscribed across regions to
+    // the topic HilomSesEventsStack owns in SES_REGION.
+    const sesEvents = makeFn('SesEventsFn', 'handlers/ses-events.ts', 'handler');
     // The cross-source people directory. Read-only, and no SES grant: it never
     // contacts anybody, it only says who there is to contact.
     const adminPeople = makeFn('AdminPeopleFn', 'handlers/admin-people.ts', 'handler');
@@ -185,10 +191,22 @@ export class HilomMarketplaceStack extends cdk.Stack {
       facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations,
       adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
-      classes, adminOverview, adminClasses,
+      classes, adminOverview, adminClasses, sesEvents,
     ]) {
       supabaseSecret.grantRead(fn);
     }
+
+    const sesEventsTopicArn = `arn:aws:sns:${SES_REGION}:${this.account}:${SES_EVENTS_TOPIC_NAME}`;
+    new sns.CfnSubscription(this, 'SesEventsSubscription', {
+      topicArn: sesEventsTopicArn,
+      region: SES_REGION,
+      protocol: 'lambda',
+      endpoint: sesEvents.functionArn,
+    });
+    sesEvents.addPermission('SesEventsInvoke', {
+      principal: new iam.ServicePrincipal('sns.amazonaws.com'),
+      sourceArn: sesEventsTopicArn,
+    });
 
     // facilitatorIntegrations writes tokens, so it needs encrypt as well as
     // decrypt. The other three only ever read a token back to create, move or
