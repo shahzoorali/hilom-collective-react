@@ -13,6 +13,10 @@
  *   describe_infra / queue_depths → CloudFormation describe / SQS attributes (IAM).
  *   moodle_call   → a separate Moodle token whose service holds only get_* functions.
  *   paymongo_lookup → GET requests only; no code path here issues anything else.
+ *   draft_expense → reads accounts, events, closed months and recent expenses
+ *         through the same read-only role and returns a draft; it writes
+ *         nothing. The admin saves the draft themselves from the chat card
+ *         (expense-draft.ts, AssistantTab).
  *
  * Results are size-capped so one wide query cannot blow the context window,
  * and passed through redactDeep before the model sees them.
@@ -35,6 +39,7 @@ import { SQSClient, ListQueuesCommand, GetQueueAttributesCommand } from '@aws-sd
 import type { Tool, ToolInputSchema } from '@aws-sdk/client-bedrock-runtime';
 import { getSecret, getPayMongoSecret } from '../secrets.js';
 import { redactDeep } from './redact.js';
+import { validateExpenseDraft, type DraftInput } from './expense-draft.js';
 
 const MAX_RESULT_CHARS = 40_000;
 const MAX_ROWS = 200;
@@ -370,6 +375,51 @@ async function paymongoLookup({ table, id }: { table: string; id: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Expense drafting (read-only: validates, never writes)
+// ---------------------------------------------------------------------------
+
+async function draftExpense(input: DraftInput) {
+  const manilaToday = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+  const vendor = (input.vendor ?? '').trim();
+  const amount = Number(String(input.amount_php ?? '').replace(/[₱,\s]|php/gi, ''));
+  const [accounts, events, periods, recent] = await Promise.all([
+    readOnlyQuery('select id, name, is_active from finance_accounts order by created_at'),
+    input.event?.trim()
+      ? readOnlyQuery(
+          `select id, title, starts_at from events
+            where id::text = $1 or title ilike '%' || $1 || '%'
+            order by starts_at desc nulls last limit 20`,
+          [input.event.trim()],
+        )
+      : Promise.resolve({ rows: [] as unknown[] }),
+    readOnlyQuery(`select to_char(period, 'YYYY-MM') as month from finance_periods where status = 'closed'`),
+    vendor || Number.isFinite(amount)
+      ? readOnlyQuery(
+          `select id, incurred_on::text, vendor, amount_centavos, status from expenses
+            where (vendor ilike '%' || $1 || '%' or amount_centavos = $2)
+              and incurred_on > current_date - 120
+            order by incurred_on desc limit 50`,
+          [vendor || '(no vendor given)',Number.isFinite(amount) ? Math.round(amount * 100) : -1],
+        )
+      : Promise.resolve({ rows: [] as unknown[] }),
+  ]);
+  const result = validateExpenseDraft(input, {
+    today: manilaToday,
+    accounts: accounts.rows as { id: string; name: string; is_active: boolean }[],
+    events: events.rows as { id: string; title: string; starts_at: string | null }[],
+    closedMonths: new Set((periods.rows as { month: string }[]).map((r) => r.month)),
+    recentExpenses: recent.rows as { id: string; incurred_on: string; vendor: string; amount_centavos: number; status: string }[],
+  });
+  return {
+    ...result,
+    note:
+      result.status === 'ready'
+        ? 'Draft is complete. It is now shown to the admin as a card with Save / Edit / Cancel. NOTHING IS SAVED until the admin clicks Save — tell them to review the card, attach the receipt and press Save. Mention every warning.'
+        : 'Draft incomplete. Ask the admin the questions (one or two at a time), then call draft_expense again with everything gathered so far.',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -530,6 +580,30 @@ export const TOOLS: { spec: Tool; impl: Impl; label: (i: any) => string }[] = [ 
         name: 'paymongo_lookup',
         description: "Fetch the live PayMongo records (payment, payment intent, checkout session, refund) for a row that stores PayMongo ids — e.g. table 'orders', 'event_registrations', 'registration_charges', 'bookings', 'class_registrations' — by that row's id (uuid). GET only.",
         inputSchema: obj({ table: { type: 'string' }, id: { type: 'string' } }, ['table', 'id']),
+      },
+    },
+  },
+  {
+    impl: draftExpense,
+    label: (i) => `Draft expense: ${i.vendor ?? '?'} ${i.amount_php ?? ''}`.trim(),
+    spec: {
+      toolSpec: {
+        name: 'draft_expense',
+        description:
+          "Prepare an expense for the admin to record. Pass everything the admin has said so far; it checks each field against live data (categories, money accounts, events, closed months, likely duplicates) and returns status 'ready' with a complete draft, or 'needs_info' with the questions still to ask. It SAVES NOTHING: a ready draft appears to the admin as a confirmation card they must review and Save themselves. Call it again after each answer, always with all fields gathered so far.",
+        inputSchema: obj({
+          incurred_on: { type: 'string', description: 'Date paid, YYYY-MM-DD (Manila). Resolve relative dates like "yesterday" yourself.' },
+          vendor: { type: 'string', description: 'Who was paid' },
+          description: { type: 'string', description: 'What it was for' },
+          category: { type: 'string', description: 'One of: Marketing / Advertising, Website / Hosting / Software, Professional Fees, Admin / Operations, Venue / Event Cost, Taxes / Licenses, Other' },
+          amount_php: { type: 'number', description: 'Amount paid in pesos (not centavos)' },
+          vat_php: { type: 'number', description: 'VAT included in the amount, in pesos, if any' },
+          payment_method: { type: 'string', description: 'Bank Transfer / GCash / Cash / Card …' },
+          account: { type: 'string', description: 'Name of the company money account it was paid from' },
+          paid_by_person: { type: 'string', description: 'If a person paid personally (company owes them back), their name. Do not combine with account.' },
+          event: { type: 'string', description: 'Event title (or part of it) the cost belongs to, if any' },
+          notes: { type: 'string' },
+        }),
       },
     },
   },

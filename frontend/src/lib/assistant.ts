@@ -28,6 +28,26 @@ export interface AssistantRun {
   actor_label?: string;
   created_at: string;
   finished_at: string | null;
+  /** An expense the assistant drafted (0073); saved only by the admin from the card. */
+  expense_draft?: { draft: ExpenseDraft; warnings: string[] } | null;
+  expense_draft_status?: 'pending' | 'saved' | 'cancelled' | null;
+  expense_id?: string | null;
+}
+
+export interface ExpenseDraft {
+  incurred_on: string;
+  vendor: string;
+  description: string;
+  category: string;
+  amount_centavos: number;
+  vat_centavos: number;
+  payment_method: string | null;
+  account_id: string | null;
+  account_name: string | null;
+  paid_by: string;
+  event_id: string | null;
+  event_title: string | null;
+  notes: string | null;
 }
 
 export interface AssistantConversation {
@@ -74,3 +94,7 @@ export const getAssistantConversation = (adminKey: string, id: string) =>
 /** Permanent: the conversation and every run in it, including their audit steps. */
 export const deleteAssistantConversation = (adminKey: string, id: string) =>
   apiFetch<{ deleted: string }>(`/admin/assistant/conversations/${id}`, init(adminKey, undefined, 'DELETE'));
+
+/** Records the admin's Save / Cancel on an expense draft card. The expense itself is saved via Finance. */
+export const setExpenseDraftOutcome = (adminKey: string, runId: string, status: 'saved' | 'cancelled', expenseId?: string) =>
+  apiFetch<{ ok: true }>(`/admin/assistant/runs/${runId}/expense-draft`, init(adminKey, { status, expenseId }, 'PUT'));

@@ -166,12 +166,14 @@ export class HilomAssistantStack extends cdk.Stack {
 
     const httpApi = apigw.HttpApi.fromHttpApiAttributes(this, 'HilomHttpApi', { httpApiId: props.httpApiId });
     const attach = routeAttacher(this, httpApi);
-    const { GET, POST, DELETE } = apigw.HttpMethod;
+    const { GET, POST, PUT, DELETE } = apigw.HttpMethod;
     attach(api, 'AdminAssistantInt', [
       ['/admin/assistant/ask', [POST]],
       ['/admin/assistant/conversations', [GET]],
       ['/admin/assistant/conversations/{conversationId}', [GET, DELETE]],
       ['/admin/assistant/runs/{runId}', [GET]],
+      // The admin's Save / Cancel on an expense draft card (0073).
+      ['/admin/assistant/runs/{runId}/expense-draft', [PUT]],
     ]);
   }
 }

@@ -22,6 +22,7 @@ import {
   type AssistantStep,
 } from '../../lib/assistant';
 import { Icon } from './ui/Icon';
+import { ExpenseDraftCard } from './ExpenseDraftCard';
 import { adminConfirm, adminToast } from './ui/feedback';
 
 const POLL_MS = 1500;
@@ -33,6 +34,7 @@ const STARTERS = [
   'How does a facilitator get approved and paid out?',
   'Which help articles exist for facilitators?',
   'A buyer says they paid but cannot access their course. How do I investigate?',
+  'Help me record an expense.',
 ];
 
 function Markdown({ source }: { source: string }) {
@@ -69,6 +71,7 @@ const TOOL_ICON: Record<string, string> = {
   queue_depths: 'inbox',
   moodle_call: 'cap',
   paymongo_lookup: 'card',
+  draft_expense: 'clipboard',
 };
 
 function Steps({ steps, live }: { steps: AssistantStep[]; live: boolean }) {
@@ -104,7 +107,7 @@ function Steps({ steps, live }: { steps: AssistantStep[]; live: boolean }) {
   );
 }
 
-function RunView({ run }: { run: AssistantRun }) {
+function RunView({ run, adminKey, onChange }: { run: AssistantRun; adminKey: string; onChange: (r: AssistantRun) => void }) {
   const live = run.status === 'queued' || run.status === 'running';
   const [copied, setCopied] = useState(false);
   return (
@@ -121,6 +124,7 @@ function RunView({ run }: { run: AssistantRun }) {
           {run.status === 'done' && run.answer && (
             <>
               <Markdown source={run.answer} />
+              {run.expense_draft && <ExpenseDraftCard adminKey={adminKey} run={run} onChange={onChange} />}
               <div className="assistant-a__meta">
                 <button
                   type="button"
@@ -302,7 +306,7 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
               <p className="muted">
                 Orders, payments, enrollments, facilitators, events, how a feature works, what the logs say, how to do
                 something in the admin. The assistant reads the live database, the code, logs, Moodle, PayMongo and the
-                Help Centre — and can't change anything.
+                Help Centre — and can't change anything. It can draft an expense for you to review and save.
               </p>
               <div className="assistant-starters">
                 {STARTERS.map((s) => (
@@ -313,7 +317,9 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
               </div>
             </div>
           ) : (
-            runs.map((r) => <RunView key={r.id} run={r} />)
+            runs.map((r) => (
+              <RunView key={r.id} run={r} adminKey={adminKey} onChange={(fresh) => setRuns((rs) => rs.map((x) => (x.id === fresh.id ? fresh : x)))} />
+            ))
           )}
           <div ref={bottom} />
         </div>
@@ -345,8 +351,8 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
           </button>
         </form>
         <p className="muted small assistant-foot">
-          Read-only. Every question and every query it runs is logged with your name. Verify before acting on anything
-          involving money.
+          Read-only: it can draft an expense, but only your Save records it. Every question and query is logged with
+          your name. Verify before acting on anything involving money.
         </p>
       </section>
     </div>

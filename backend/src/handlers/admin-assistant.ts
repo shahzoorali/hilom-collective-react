@@ -7,6 +7,10 @@
  *   GET  /admin/assistant/conversations            the 50 most recent conversations
  *   GET  /admin/assistant/conversations/{id}       a conversation's runs, oldest first
  *   DELETE /admin/assistant/conversations/{id}     permanently deletes it and its runs
+ *   PUT  /admin/assistant/runs/{runId}/expense-draft { status: 'saved', expenseId } | { status: 'cancelled' }
+ *        — the admin's decision on an expense draft card. The expense itself is
+ *        saved by the browser through /admin/finance/expenses (the admin's own
+ *        credentials and audit identity); this only records the outcome.
  *
  * Asking is asynchronous: an answer that reads the schema, runs three queries
  * and searches the logs routinely takes longer than API Gateway's 30-second
@@ -97,7 +101,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       if (!UUID.test(conv[1]!)) return badRequest('bad id');
       const { data, error } = await supabase
         .from('assistant_runs')
-        .select('id, question, status, steps, answer, error, actor_label, created_at, finished_at')
+        .select('id, question, status, steps, answer, error, actor_label, created_at, finished_at, expense_draft, expense_draft_status, expense_id')
         .eq('conversation_id', conv[1]!)
         .order('created_at', { ascending: true });
       if (error) throw error;
@@ -120,12 +124,37 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       if (!UUID.test(run[1]!)) return badRequest('bad id');
       const { data, error } = await supabase
         .from('assistant_runs')
-        .select('id, conversation_id, question, status, steps, answer, error, input_tokens, output_tokens, created_at, finished_at')
+        .select('id, conversation_id, question, status, steps, answer, error, input_tokens, output_tokens, created_at, finished_at, expense_draft, expense_draft_status, expense_id')
         .eq('id', run[1]!)
         .maybeSingle();
       if (error) throw error;
       if (!data) return notFound();
       return ok({ run: data });
+    }
+
+    const draftRun = path.match(/\/admin\/assistant\/runs\/([^/]+)\/expense-draft$/);
+    if (method === 'PUT' && draftRun) {
+      if (!UUID.test(draftRun[1]!)) return badRequest('bad id');
+      const body = JSON.parse(event.body ?? '{}') as { status?: string; expenseId?: string };
+      if (body.status !== 'saved' && body.status !== 'cancelled') return badRequest("status must be 'saved' or 'cancelled'");
+      let expenseId: string | null = null;
+      if (body.status === 'saved') {
+        if (!body.expenseId || !UUID.test(body.expenseId)) return badRequest('expenseId is required when saved');
+        const { data: exp } = await supabase.from('expenses').select('id').eq('id', body.expenseId).maybeSingle();
+        if (!exp) return notFound('That expense does not exist');
+        expenseId = body.expenseId;
+      }
+      const { data, error } = await supabase
+        .from('assistant_runs')
+        .update({ expense_draft_status: body.status, expense_id: expenseId })
+        .eq('id', draftRun[1]!)
+        .eq('expense_draft_status', 'pending')
+        .select('id')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return badRequest('This draft was already saved or cancelled');
+      console.log('assistantExpenseDraft', JSON.stringify({ runId: draftRun[1], status: body.status, expenseId, by: (await adminActorFromEvent(event)).label }));
+      return ok({ ok: true });
     }
 
     return badRequest(`Unsupported ${method} ${path}`);

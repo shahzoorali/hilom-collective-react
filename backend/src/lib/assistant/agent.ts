@@ -62,6 +62,13 @@ For ANY question about money — sales, revenue, profit, P&L, fees, expenses, re
 - The on-screen P&L, facilitator balances and account balances are computed by the app; when you reproduce them, use the guide's definitions and point to the screen (e.g. https://www.hilomcollective.com/admin/finance/pnl?month=2026-10).
 - You cannot record anything. For data entry, give the exact screen and button from the guide (e.g. Finance → Offline transactions → "+ Payment to facilitator").
 
+### Recording an expense with the admin (draft_expense)
+When the admin wants to record an expense, interview them and draft it — you still save nothing:
+1. Gather: date paid, vendor, what it was for, category, amount in pesos (and VAT if any), how it was paid, and WHO paid — a company account, or a person who paid personally (the company then owes them back). Optionally the event it belongs to.
+2. Call draft_expense with everything known so far as soon as you have something; it checks against live data and returns the questions still open. Ask those (one or two at a time, in plain words), then call it again with ALL fields gathered so far. Never invent a value the admin didn't give — ask. Resolve relative dates ("yesterday") to YYYY-MM-DD in Manila time.
+3. When it returns status 'ready', a confirmation card appears under your answer. Summarise the draft in one or two lines, mention every warning (duplicates, future date, no receipt), and tell the admin to review the card, attach the receipt and press Save. NEVER say the expense is recorded, saved or added — only the admin's Save does that. If a system note says the card was saved or cancelled, you may say so.
+4. For anything other than an expense (payments to facilitators, offline sales, transfers), give the screen and button instead — there is no draft for those.
+
 ## Keep the internals to yourself
 Admins need to know what happened and what to do, not how the platform is built. Read the code and infra freely to work out answers, but keep what you share at the level of the admin screens and the business.
 - Never cite code: no file paths, line numbers, function, handler or Lambda names, commit hashes, or code snippets. Say "the system" or name the admin screen instead.
@@ -108,6 +115,9 @@ export async function runAgent(opts: {
   const system: SystemContentBlock[] = [{ text: await buildSystemPrompt() }];
   const messages: Message[] = [...opts.history, { role: 'user', content: [{ text: opts.question }] }];
   const steps: Step[] = [];
+  // The latest complete expense draft this run produced (draft_expense). It is
+  // stored on the run for the admin's confirmation card; nothing is saved here.
+  let expenseDraft: unknown = null;
   let inputTokens = 0;
   let outputTokens = 0;
 
@@ -138,12 +148,28 @@ export async function runAgent(opts: {
         const started = Date.now();
         const text = await runTool(tu.name!, tu.input);
         const ok = !text.startsWith('{"error"');
+        if (tu.name === 'draft_expense' && ok) {
+          try {
+            const parsed = JSON.parse(text) as { status?: string; draft?: unknown; warnings?: string[] };
+            if (parsed.status === 'ready') expenseDraft = { draft: parsed.draft, warnings: parsed.warnings ?? [] };
+          } catch {
+            /* truncated or malformed result: no card */
+          }
+        }
         steps.push({ tool: tu.name!, label: toolLabel(tu.name!, tu.input), ok, ms: Date.now() - started, preview: text.slice(0, 400) });
         return { toolResult: { toolUseId: tu.toolUseId!, content: [{ text }], status: ok ? 'success' : 'error' } } as ContentBlock;
       }),
     );
     messages.push({ role: 'user', content: results });
-    await supabase.from('assistant_runs').update({ steps, input_tokens: inputTokens, output_tokens: outputTokens }).eq('id', runId);
+    await supabase
+      .from('assistant_runs')
+      .update({
+        steps,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        ...(expenseDraft ? { expense_draft: expenseDraft, expense_draft_status: 'pending' } : {}),
+      })
+      .eq('id', runId);
   }
 
   return {

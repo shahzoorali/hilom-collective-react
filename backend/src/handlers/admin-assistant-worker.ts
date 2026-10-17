@@ -31,11 +31,34 @@ export async function handler(event: { runId: string }): Promise<void> {
       .single();
     if (error) throw error;
 
+    // The model cannot see the confirmation card. If its previous answer left
+    // an expense draft, tell it what the admin did with it, so it never claims
+    // a draft was saved (or still pending) when it wasn't. Model input only;
+    // the stored question is untouched.
+    const { data: prev } = await supabase
+      .from('assistant_runs')
+      .select('expense_draft_status, expense_id')
+      .eq('conversation_id', run.conversation_id)
+      .neq('id', run.id)
+      .not('expense_draft', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle<{ expense_draft_status: string | null; expense_id: string | null }>();
+    const draftNote = prev
+      ? `\n\n[System note, not written by the admin: the expense draft card from your earlier answer is ${
+          prev.expense_draft_status === 'saved'
+            ? 'SAVED by the admin (it is now a recorded expense)'
+            : prev.expense_draft_status === 'cancelled'
+              ? 'CANCELLED by the admin (nothing was recorded)'
+              : 'still NOT saved (the admin has not pressed Save)'
+        }.]`
+      : '';
+
     const result = await runAgent({
       supabase,
       runId: run.id,
       history: (conv.messages ?? []) as Message[],
-      question: run.question,
+      question: run.question + draftNote,
     });
 
     await supabase

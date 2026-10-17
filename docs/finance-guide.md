@@ -43,6 +43,14 @@ Payout **batches** (build, approve, mark paid) stay on **Admin → Payouts**.
 - **Record an expense:** Expenses → + New expense → date paid, vendor, category,
   amount (and VAT if any) → *Paid from account* (or *Paid personally by* a name)
   → attach the receipt → Save. Commitments not yet paid: status *Draft*.
+- **Record an expense by chatting with the assistant:** Admin → Assistant →
+  "I paid Kapitolyo ₱6,000 for the venue yesterday by GCash" (or "Help me record
+  an expense"). It asks for anything missing (date, vendor, category, amount,
+  which account or who paid personally, event), checks for duplicates and closed
+  months, then shows a **draft card** under its answer. Review or **Edit** the
+  fields, attach the receipt, and press **Save expense** — that is what records
+  it, under your name (the note says it was drafted with the assistant).
+  **Cancel** discards it. The assistant itself can never save.
 - **Someone paid for the company personally:** enter the expense with *Paid
   personally by* = their name. It appears under Reimbursements as owed. When
   repaid: **Mark paid back** with the transfer reference.
@@ -111,6 +119,7 @@ Payout **batches** (build, approve, mark paid) stay on **Admin → Payouts**.
 | Revenue-split deals | `revenue_split_rules` (`scope` event/event_series/facilitator, `scope_id`, `kind`, `bps`, `flat_facilitator_centavos`; live when `voided_at is null`). Default rates: `facilitators.platform_fee_bps`, `events.platform_fee_bps` (null = no split) |
 | Adjustments | `finance_adjustments` (`period`, `line` revenue/payment_costs/opex/other, signed `amount_centavos`, `reason`, `voided_at`) |
 | Closed months | `finance_periods` (`status`, `snapshot` = P&L frozen at close) |
+| Expense drafts from the assistant | `assistant_runs.expense_draft` (the proposed fields), `expense_draft_status` pending/saved/cancelled, `expense_id` once saved |
 | Payment acknowledgment receipts | `payment_acknowledgments` (`receipt_no`, `facilitator_id`, `issue_date`, `total_centavos`, `status` issued/signed/void, `data->'lines'`, `transaction_ids`, `payout_ids`) |
 | Reconciliation items an admin acknowledged | `finance_exception_acks` (`key`, `note`, `acked_by`) |
 
