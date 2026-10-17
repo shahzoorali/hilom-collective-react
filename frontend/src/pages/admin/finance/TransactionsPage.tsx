@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { finance, TRANSACTION_LABEL, type FinanceTransaction, type TransactionKind } from '../../../lib/finance';
 import { DataTable } from '../ui/DataTable';
 import { adminConfirm, adminToast } from '../ui/feedback';
@@ -43,6 +44,7 @@ export default function TransactionsPage({ adminKey }: { adminKey: string }) {
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<TransactionKind | null>(null);
   const [showVoid, setShowVoid] = useState(false);
+  const navigate = useNavigate();
 
   const load = useCallback(() => {
     setError(null);
@@ -157,7 +159,10 @@ export default function TransactionsPage({ adminKey }: { adminKey: string }) {
             header: '',
             render: (t) => (
               <span style={{ display: 'inline-flex', gap: 4 }}>
-                {t.receipt_key && <button type="button" className="btn btn-ghost small" onClick={() => openReceipt(t)}>Receipt</button>}
+                {t.receipt_key && <button type="button" className="btn btn-ghost small" onClick={() => openReceipt(t)}>Proof</button>}
+                {t.kind === 'facilitator_payment' && t.status === 'posted' && t.facilitator_id && (
+                  <button type="button" className="btn btn-ghost small" onClick={() => navigate(`/admin/finance/receipts?facilitator=${t.facilitator_id}&pay=${t.id}`)}>Ack receipt</button>
+                )}
                 {t.status === 'posted' && <button type="button" className="btn btn-ghost small" onClick={() => voidOne(t)}>Void</button>}
               </span>
             ),

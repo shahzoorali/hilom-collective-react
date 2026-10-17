@@ -60,6 +60,7 @@ export default function PayablesPage({ adminKey }: { adminKey: string }) {
           { key: 'paidoff', header: 'Paid offline', align: 'right', sortValue: (r) => r.paid_offline_centavos, csv: (r) => r.paid_offline_centavos / 100, render: (r) => <span className="fin-num">{r.paid_offline_centavos ? `(${php(r.paid_offline_centavos)})` : '—'}</span> },
           { key: 'net', header: 'Balance owed', align: 'right', sortValue: (r) => r.net_owed_centavos, csv: (r) => r.net_owed_centavos / 100, render: (r) => <b className={`fin-num ${r.net_owed_centavos < 0 ? 'stat__delta--up' : ''}`} title={r.net_owed_centavos < 0 ? 'Paid ahead — credit' : undefined}>{r.net_owed_centavos < 0 ? `credit ${php(-r.net_owed_centavos)}` : php(r.net_owed_centavos)}</b> },
           { key: 'paid', header: 'Batches paid', defaultHidden: true, align: 'right', sortValue: (r) => r.paid_total_centavos, csv: (r) => r.paid_total_centavos / 100, render: (r) => <span className="fin-num">{php(r.paid_total_centavos)}</span> },
+          { key: 'receipt', header: '', render: (r) => <button type="button" className="btn btn-ghost small" onClick={(e) => { e.stopPropagation(); navigate(`/admin/finance/receipts?facilitator=${r.facilitator_id}`); }}>Receipt</button> },
           { key: 'last', header: 'Last paid', sortValue: (r) => r.last_paid_at ?? '', render: (r) => (r.last_paid_at ? new Date(r.last_paid_at).toLocaleDateString('en-PH') : '—') },
         ]}
         defaultSort={{ key: 'net', dir: 'desc' }}

@@ -9,3 +9,15 @@ declare module '*.pdf' {
   const data: Uint8Array;
   export default data;
 }
+
+/** Same `binary` loader: the receipt PDF's logo, signature and watermark. */
+declare module '*.png' {
+  const data: Uint8Array;
+  export default data;
+}
+
+/** Same `binary` loader: Montserrat, embedded in generated PDFs. */
+declare module '*.ttf' {
+  const data: Uint8Array;
+  export default data;
+}

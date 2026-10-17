@@ -113,6 +113,7 @@ const NAV_GROUPS = [
       { label: 'Expenses', path: 'finance/expenses', icon: 'clipboard' },
       { label: 'Offline transactions', path: 'finance/transactions', icon: 'arrow' },
       { label: 'Accounts', path: 'finance/accounts', icon: 'bank' },
+      { label: 'Payment receipts', path: 'finance/receipts', icon: 'file' },
     ],
   },
   {

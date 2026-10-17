@@ -329,6 +329,52 @@ export interface Movement {
   approximate?: boolean;
 }
 
+export interface AckCandidate {
+  kind: 'transaction' | 'payout';
+  id: string;
+  date: string;
+  amount_centavos: number;
+  description: string;
+  receipt_no: string | null;
+}
+
+export interface Acknowledgment {
+  id: string;
+  receipt_no: string;
+  facilitator_id: string | null;
+  issue_date: string;
+  total_centavos: number;
+  data: {
+    recipient_heading: string;
+    recipient_name: string;
+    recipient_title: string;
+    subtitle: string;
+    layout: 'dated' | 'described';
+    lines: { label: string; amount_centavos: number }[];
+  };
+  transaction_ids: string[];
+  payout_ids: string[];
+  signed_key: string | null;
+  signed_at: string | null;
+  status: 'issued' | 'signed' | 'void';
+  void_reason: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface AckRequest {
+  facilitator_id: string;
+  payment_ids: string[];
+  issue_date: string;
+  recipient_heading: string;
+  recipient_name: string;
+  recipient_title: string;
+  subtitle: string;
+  layout: 'dated' | 'described';
+  include_signature: boolean;
+  labels?: Record<string, string>;
+}
+
 const base = '/admin/finance';
 
 export const finance = {
@@ -409,6 +455,24 @@ export const finance = {
     apiFetch<{ account: FinanceAccount }>(id ? `${base}/accounts/${id}` : `${base}/accounts`, init(k, id ? 'PUT' : 'POST', body)),
   saveStatement: (k: string, id: string, month: string, centavos: number, note?: string) =>
     apiFetch<{ ok: true }>(`${base}/accounts/${id}/statement`, init(k, 'POST', { month, statement_balance_centavos: centavos, note })),
+
+  acknowledgments: (k: string, facilitatorId?: string) =>
+    apiFetch<{
+      acknowledgments: Acknowledgment[];
+      facilitators: { id: string; display_name: string; legal_name: string | null }[];
+      candidates: AckCandidate[];
+      defaults: { recipient_heading: string; recipient_name: string; recipient_title: string; subtitle: string } | null;
+    }>(`${base}/acknowledgments${facilitatorId ? `?facilitator=${facilitatorId}` : ''}`, init(k)),
+  previewAcknowledgment: (k: string, body: AckRequest) =>
+    apiFetch<{ pdf_base64: string }>(`${base}/acknowledgments/preview`, init(k, 'POST', body)),
+  issueAcknowledgment: (k: string, body: AckRequest) =>
+    apiFetch<{ acknowledgment: Acknowledgment }>(`${base}/acknowledgments`, init(k, 'POST', body)),
+  acknowledgmentPdf: (k: string, id: string, signed = false) =>
+    apiFetch<{ url: string }>(`${base}/acknowledgments/${id}/pdf${signed ? '?signed=1' : ''}`, init(k)),
+  attachSignedAcknowledgment: (k: string, id: string, key: string, name: string) =>
+    apiFetch<{ ok: true }>(`${base}/acknowledgments/${id}`, init(k, 'PUT', { signed_key: key, signed_name: name })),
+  voidAcknowledgment: (k: string, id: string, reason: string) =>
+    apiFetch<{ ok: true }>(`${base}/acknowledgments/${id}`, init(k, 'PUT', { void: true, reason })),
 
   periods: (k: string) => apiFetch<{ periods: { period: string; status: string; closed_by: string | null; closed_at: string | null }[] }>(`${base}/periods`, init(k)),
   closePeriod: (k: string, month: string) => apiFetch<{ ok: true }>(`${base}/periods/${month}/close`, init(k, 'POST', {})),

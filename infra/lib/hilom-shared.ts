@@ -200,7 +200,10 @@ export function lambdaFactory(
         // `import pdf from './x.pdf'` -> a Uint8Array of the file's bytes,
         // embedded in the bundle. Only registration-fulfillment does this, for
         // the participant-agreement attachment; see backend/src/lib/mime.ts.
-        loader: { '.pdf': 'binary' },
+        // `.png` and `.ttf` the same way: the payment acknowledgment receipt
+        // (lib/acknowledgment-receipt.ts) embeds the logo, signature and
+        // Montserrat, so the PDF renders identically with no network fetch.
+        loader: { '.pdf': 'binary', '.png': 'binary', '.ttf': 'binary' },
       },
     });
   };

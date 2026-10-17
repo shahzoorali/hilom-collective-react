@@ -19,6 +19,8 @@
  *   GET  periods ; POST periods/{month}/close ; POST periods/{month}/reopen
  *   GET|POST transactions ; PUT transactions/{id} (void) ; GET transactions/{id}/receipt   offline money (0071)
  *   GET|POST accounts ?account=id ; PUT accounts/{id} ; POST accounts/{id}/statement
+ *   GET acknowledgments ?facilitator ; POST acknowledgments[/preview] ; GET acknowledgments/{id}/pdf ?signed=1 ;
+ *   PUT acknowledgments/{id} (attach signed copy, or void)   payment acknowledgment receipts (0072)
  *
  * Everything derived is computed in lib/finance-domain.ts from rows loaded
  * here. The data set is small (hundreds of rows a month), so the handler
@@ -71,6 +73,9 @@ import {
   type FinanceTransaction,
   type StatementBalance,
 } from '../lib/finance-accounts.js';
+import { renderAcknowledgmentReceipt, RECEIPT_DEFAULTS, type ReceiptData } from '../lib/acknowledgment-receipt.js';
+import { receiptAssets } from '../lib/receipt-assets.js';
+import { receiptNumber, shortDate } from '../lib/receipt-words.js';
 
 const s3 = new S3Client({});
 const RECEIPTS_BUCKET = process.env.FINANCE_RECEIPTS_BUCKET ?? '';
@@ -322,6 +327,13 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
         if (method === 'POST' && !seg[1]) return await saveAccount(supabase, null, parseBody(event), actor);
         if (method === 'PUT' && seg[1] && !seg[2]) return await saveAccount(supabase, seg[1], parseBody(event), actor);
         if (method === 'POST' && seg[1] && seg[2] === 'statement') return await saveStatement(supabase, seg[1], parseBody(event), actor);
+        break;
+      case 'acknowledgments':
+        if (method === 'GET' && !seg[1]) return await listAcknowledgments(supabase, q);
+        if (method === 'POST' && seg[1] === 'preview') return await previewAcknowledgment(supabase, parseBody(event));
+        if (method === 'POST' && !seg[1]) return await issueAcknowledgment(supabase, parseBody(event), actor);
+        if (method === 'GET' && seg[1] && seg[2] === 'pdf') return await acknowledgmentPdf(supabase, seg[1], q.signed === '1');
+        if (method === 'PUT' && seg[1] && !seg[2]) return await updateAcknowledgment(supabase, seg[1], parseBody(event), actor);
         break;
       case 'periods':
         if (method === 'GET' && !seg[1]) return await listPeriods(supabase);
@@ -1283,5 +1295,222 @@ async function saveStatement(supabase: SupabaseClient, accountId: string, b: Rec
   });
   if (error) throw error;
   await recordAudit(actor, { action: 'finance.account.statement', targetTable: 'finance_account_balances', targetId: accountId, amountCentavos: balance, currency: 'PHP', note: month });
+  return ok({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Payment acknowledgment receipts (0072)
+// ---------------------------------------------------------------------------
+
+interface AckCandidate {
+  kind: 'transaction' | 'payout';
+  id: string;
+  date: string; // YYYY-MM-DD
+  amount_centavos: number;
+  description: string;
+  receipt_no: string | null; // already on a live receipt
+}
+
+async function ackCandidates(supabase: SupabaseClient, facilitatorId: string): Promise<AckCandidate[]> {
+  const [tx, payouts, acks] = await Promise.all([
+    supabase.from('finance_transactions').select('id, occurred_on, amount_centavos, item').eq('kind', 'facilitator_payment').eq('status', 'posted').eq('facilitator_id', facilitatorId),
+    supabase.from('facilitator_payouts').select('id, paid_at, net_centavos, period_start, period_end').eq('status', 'paid').eq('facilitator_id', facilitatorId),
+    supabase.from('payment_acknowledgments').select('receipt_no, transaction_ids, payout_ids').eq('facilitator_id', facilitatorId).neq('status', 'void'),
+  ]);
+  for (const r of [tx, payouts, acks]) if (r.error) throw r.error;
+  const onReceipt = new Map<string, string>();
+  for (const a of (acks.data ?? []) as { receipt_no: string; transaction_ids: string[]; payout_ids: string[] }[]) {
+    for (const id of [...a.transaction_ids, ...a.payout_ids]) onReceipt.set(id, a.receipt_no);
+  }
+  const out: AckCandidate[] = [
+    ...((tx.data ?? []) as { id: string; occurred_on: string; amount_centavos: number; item: string | null }[]).map((t) => ({
+      kind: 'transaction' as const,
+      id: t.id,
+      date: t.occurred_on,
+      amount_centavos: t.amount_centavos,
+      description: t.item ?? 'Payment',
+      receipt_no: onReceipt.get(t.id) ?? null,
+    })),
+    ...((payouts.data ?? []) as { id: string; paid_at: string | null; net_centavos: number; period_start: string; period_end: string }[])
+      .filter((p) => p.paid_at && p.net_centavos > 0)
+      .map((p) => ({
+        kind: 'payout' as const,
+        id: p.id,
+        date: manilaDate(p.paid_at!),
+        amount_centavos: p.net_centavos,
+        description: `Payout for ${manilaDate(p.period_start)} to ${manilaDate(p.period_end)}`,
+        receipt_no: onReceipt.get(p.id) ?? null,
+      })),
+  ];
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function listAcknowledgments(supabase: SupabaseClient, q: Record<string, string | undefined>) {
+  let query = supabase.from('payment_acknowledgments').select('*').order('created_at', { ascending: false });
+  if (q.facilitator) query = query.eq('facilitator_id', q.facilitator);
+  const [{ data, error }, facs] = await Promise.all([
+    query,
+    supabase.from('facilitators').select('id, display_name, legal_name, short_name, status').order('display_name'),
+  ]);
+  if (error) throw error;
+  if (facs.error) throw facs.error;
+  const facilitators = (facs.data ?? []) as { id: string; display_name: string; legal_name: string | null; short_name: string | null }[];
+  let defaults = null;
+  let candidates: AckCandidate[] = [];
+  if (q.facilitator) {
+    const f = facilitators.find((x) => x.id === q.facilitator);
+    if (!f) return notFound('Facilitator not found');
+    candidates = await ackCandidates(supabase, f.id);
+    // Remember what was typed last time for this person; fall back to profile.
+    const last = ((data ?? []) as { data: ReceiptData }[])[0]?.data;
+    const legal = f.legal_name?.trim();
+    defaults = {
+      recipient_heading: last?.recipient_heading ?? (legal && legal !== f.display_name ? `${legal} (${f.display_name})` : f.display_name),
+      recipient_name: last?.recipient_name ?? (legal || f.display_name),
+      recipient_title: last?.recipient_title ?? RECEIPT_DEFAULTS.recipient_title,
+      subtitle: last?.subtitle ?? '',
+    };
+  }
+  return ok({ acknowledgments: data ?? [], facilitators, candidates, defaults, signatory: RECEIPT_DEFAULTS.signatory });
+}
+
+/** Turns the admin's selection into the exact content rendered. */
+async function buildAckData(
+  supabase: SupabaseClient,
+  b: Record<string, unknown>,
+  receiptNo: string,
+): Promise<{ data: ReceiptData; facilitatorId: string; transactionIds: string[]; payoutIds: string[] } | string> {
+  const facilitatorId = optionalId(b.facilitator_id);
+  if (!facilitatorId) return 'Choose a facilitator';
+  const ids = new Set(Array.isArray(b.payment_ids) ? b.payment_ids.filter((x): x is string => typeof x === 'string') : []);
+  const picked = (await ackCandidates(supabase, facilitatorId)).filter((c) => ids.has(c.id));
+  if (!picked.length) return 'Choose at least one payment to acknowledge';
+  if (picked.length > 12) return 'A receipt can list at most 12 payments';
+  const issueDate = typeof b.issue_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.issue_date) ? b.issue_date : manilaDate(new Date());
+  const heading = optionalText(b.recipient_heading, 120);
+  const name = optionalText(b.recipient_name, 120);
+  if (!heading || !name) return 'Recipient name is required';
+  const layout = b.layout === 'described' ? 'described' : picked.length > 1 || b.layout === 'dated' ? 'dated' : 'described';
+  const labels = (b.labels && typeof b.labels === 'object' ? b.labels : {}) as Record<string, unknown>;
+  return {
+    facilitatorId,
+    transactionIds: picked.filter((c) => c.kind === 'transaction').map((c) => c.id),
+    payoutIds: picked.filter((c) => c.kind === 'payout').map((c) => c.id),
+    data: {
+      receipt_no: receiptNo,
+      issue_date: issueDate,
+      recipient_heading: heading,
+      recipient_name: name,
+      recipient_title: optionalText(b.recipient_title, 60) ?? RECEIPT_DEFAULTS.recipient_title,
+      subtitle: optionalText(b.subtitle, 160) ?? '',
+      layout,
+      lines: picked.map((c) => ({
+        label: optionalText(labels[c.id], 80) ?? (layout === 'dated' ? shortDate(c.date) : c.description),
+        amount_centavos: c.amount_centavos,
+      })),
+      signatory: RECEIPT_DEFAULTS.signatory,
+      include_signature: b.include_signature !== false,
+      contact: RECEIPT_DEFAULTS.contact,
+    },
+  };
+}
+
+async function previewAcknowledgment(supabase: SupabaseClient, b: Record<string, unknown>) {
+  const built = await buildAckData(supabase, b, 'PREVIEW');
+  if (typeof built === 'string') return badRequest(built);
+  const pdf = await renderAcknowledgmentReceipt(built.data, receiptAssets);
+  return ok({ pdf_base64: Buffer.from(pdf).toString('base64') });
+}
+
+async function issueAcknowledgment(supabase: SupabaseClient, b: Record<string, unknown>, actor: AuditActor) {
+  if (!RECEIPTS_BUCKET) return serverError('adminFinance.ack', new Error('FINANCE_RECEIPTS_BUCKET is not configured'));
+  const year = Number(manilaDate(new Date()).slice(0, 4));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { data: last, error: seqError } = await supabase
+      .from('payment_acknowledgments')
+      .select('seq')
+      .eq('year', year)
+      .order('seq', { ascending: false })
+      .limit(1)
+      .maybeSingle<{ seq: number }>();
+    if (seqError) throw seqError;
+    const seq = (last?.seq ?? 0) + 1;
+    const receiptNo = receiptNumber(year, seq);
+    const built = await buildAckData(supabase, b, receiptNo);
+    if (typeof built === 'string') return badRequest(built);
+    const pdf = await renderAcknowledgmentReceipt(built.data, receiptAssets);
+    const key = `${RECEIPT_PREFIX}acknowledgments/${receiptNo}.pdf`;
+    await s3.send(new PutObjectCommand({ Bucket: RECEIPTS_BUCKET, Key: key, Body: pdf, ContentType: 'application/pdf' }));
+    const total = built.data.lines.reduce((s, l) => s + l.amount_centavos, 0);
+    const { data, error } = await supabase
+      .from('payment_acknowledgments')
+      .insert({
+        receipt_no: receiptNo,
+        year,
+        seq,
+        facilitator_id: built.facilitatorId,
+        issue_date: built.data.issue_date,
+        total_centavos: total,
+        data: built.data,
+        transaction_ids: built.transactionIds,
+        payout_ids: built.payoutIds,
+        pdf_key: key,
+        created_by: actor.label,
+      })
+      .select('*')
+      .single<{ id: string }>();
+    if (error?.code === '23505') continue; // someone took this number — retry
+    if (error) throw error;
+    await recordAudit(actor, {
+      action: 'finance.acknowledgment.issue',
+      targetTable: 'payment_acknowledgments',
+      targetId: data.id,
+      amountCentavos: total,
+      currency: 'PHP',
+      after: { receipt_no: receiptNo, facilitator_id: built.facilitatorId, lines: built.data.lines },
+    });
+    return ok({ acknowledgment: data });
+  }
+  return conflict('Could not allocate a receipt number — try again');
+}
+
+async function acknowledgmentPdf(supabase: SupabaseClient, id: string, signed: boolean) {
+  const { data, error } = await supabase.from('payment_acknowledgments').select('receipt_no, pdf_key, signed_key, signed_name').eq('id', id).maybeSingle<{ receipt_no: string; pdf_key: string; signed_key: string | null; signed_name: string | null }>();
+  if (error) throw error;
+  if (!data) return notFound('Receipt not found');
+  const key = signed ? data.signed_key : data.pdf_key;
+  if (!key) return notFound('No signed copy uploaded yet');
+  const filename = signed ? data.signed_name ?? `${data.receipt_no}-signed.pdf` : `${data.receipt_no}.pdf`;
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: RECEIPTS_BUCKET, Key: key, ResponseContentDisposition: `inline; filename="${filename.replace(/"/g, '')}"` }),
+    { expiresIn: 300 },
+  );
+  return ok({ url });
+}
+
+async function updateAcknowledgment(supabase: SupabaseClient, id: string, b: Record<string, unknown>, actor: AuditActor) {
+  const { data: before, error: readError } = await supabase.from('payment_acknowledgments').select('id, receipt_no, status, total_centavos').eq('id', id).maybeSingle<{ id: string; receipt_no: string; status: string; total_centavos: number }>();
+  if (readError) throw readError;
+  if (!before) return notFound('Receipt not found');
+  if (before.status === 'void') return conflict('This receipt is void');
+
+  if (b.void === true) {
+    const reason = optionalText(b.reason, 500);
+    if (!reason || reason.length < 5) return badRequest('A reason is required to void a receipt');
+    const { error } = await supabase.from('payment_acknowledgments').update({ status: 'void', void_reason: reason, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    await recordAudit(actor, { action: 'finance.acknowledgment.void', targetTable: 'payment_acknowledgments', targetId: id, amountCentavos: before.total_centavos, currency: 'PHP', note: `${before.receipt_no}: ${reason}` });
+    return ok({ ok: true });
+  }
+
+  const key = b.signed_key;
+  if (typeof key !== 'string' || !key.startsWith(RECEIPT_PREFIX)) return badRequest('Upload the signed copy first');
+  const { error } = await supabase
+    .from('payment_acknowledgments')
+    .update({ signed_key: key, signed_name: optionalText(b.signed_name, 200), signed_at: new Date().toISOString(), status: 'signed', updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
+  await recordAudit(actor, { action: 'finance.acknowledgment.signed', targetTable: 'payment_acknowledgments', targetId: id, amountCentavos: before.total_centavos, currency: 'PHP', note: before.receipt_no });
   return ok({ ok: true });
 }
