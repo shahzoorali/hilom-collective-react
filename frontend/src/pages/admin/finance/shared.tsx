@@ -130,6 +130,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   class_registrations: 'Class seat',
   bookings: '1:1 booking',
   booking_packages: 'Session package',
+  finance_transactions: 'Offline sale',
 };
 
 /** Where in the admin a source row is worked. */
@@ -144,4 +145,6 @@ export const SOURCE_PATH: Record<string, string> = {
   expenses: '/admin/finance/expenses',
   reimbursements: '/admin/finance/expenses',
   facilitators: '/admin/finance/payables',
+  accounts: '/admin/finance/accounts',
+  finance_transactions: '/admin/finance/transactions',
 };

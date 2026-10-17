@@ -6,6 +6,7 @@ import { adminConfirm, adminToast } from '../ui/feedback';
 import { ErrorNote, Kpi, php } from './shared';
 
 type Events = { id: string; title: string; starts_at: string | null }[];
+type Accounts = { id: string; name: string; is_active: boolean }[];
 
 const blank = (): Partial<Expense> => ({
   incurred_on: new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10),
@@ -31,6 +32,7 @@ export default function ExpensesPage({ adminKey }: { adminKey: string }) {
   const [rows, setRows] = useState<Expense[] | null>(null);
   const [events, setEvents] = useState<Events>([]);
   const [reimb, setReimb] = useState<Reimbursement[]>([]);
+  const [accounts, setAccounts] = useState<Accounts>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Partial<Expense> | null>(null);
   const month = params.get('month') ?? '';
@@ -46,6 +48,7 @@ export default function ExpensesPage({ adminKey }: { adminKey: string }) {
       })
       .catch((e: Error) => setError(e.message));
     finance.reimbursements(adminKey).then((r) => setReimb(r.reimbursements)).catch(() => {});
+    finance.accounts(adminKey).then((r) => setAccounts(r.accounts)).catch(() => {});
   }, [adminKey]);
   useEffect(load, [load]);
 
@@ -67,7 +70,8 @@ export default function ExpensesPage({ adminKey }: { adminKey: string }) {
     const reference = window.prompt(`Mark ${php(r.total_centavos)} to ${r.payee} as paid back.\nTransfer reference:`);
     if (!reference) return;
     try {
-      await finance.updateReimbursement(adminKey, r.id, { status: 'paid', reference });
+      const payout = accounts.find((a) => (a as { default_for_payouts?: boolean }).default_for_payouts) ?? accounts[0];
+      await finance.updateReimbursement(adminKey, r.id, { status: 'paid', reference, account_id: payout?.id ?? null });
       adminToast.success(`Reimbursement to ${r.payee} recorded`);
       load();
     } catch (err) {
@@ -97,7 +101,7 @@ export default function ExpensesPage({ adminKey }: { adminKey: string }) {
         <Kpi label="Owed back to people" value={php(owed.reduce((s, r) => s + r.total_centavos, 0))} hint={owed.map((r) => r.payee).join(', ') || 'Nobody'} tone={owed.length ? 'attention' : undefined} />
       </div>
 
-      {editing && <ExpenseForm adminKey={adminKey} initial={editing} events={events} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {editing && <ExpenseForm adminKey={adminKey} initial={editing} events={events} accounts={accounts} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
 
       <DataTable<Expense>
         id="finance-expenses"
@@ -161,12 +165,14 @@ function ExpenseForm({
   adminKey,
   initial,
   events,
+  accounts,
   onCancel,
   onSaved,
 }: {
   adminKey: string;
   initial: Partial<Expense>;
   events: Events;
+  accounts: Accounts;
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -193,6 +199,7 @@ function ExpenseForm({
         amount_centavos: Math.round(Number(amount) * 100),
         vat_centavos: Math.round(Number(vat || 0) * 100),
         paid_by: personal.trim() || 'company',
+        account_id: personal.trim() ? null : f.account_id ?? null,
       });
       adminToast.success(f.id ? 'Expense updated' : 'Expense recorded');
       onSaved();
@@ -236,6 +243,15 @@ function ExpenseForm({
           Paid personally by
           <input value={personal} onChange={(e) => setPersonal(e.target.value)} placeholder="Leave blank if the company paid" />
         </label>
+        {!personal.trim() && (
+          <label>
+            Paid from account
+            <select value={f.account_id ?? ''} onChange={(e) => set('account_id', e.target.value || null)}>
+              <option value="">{accounts.length ? '— not tracked —' : 'No accounts set up'}</option>
+              {accounts.filter((a) => a.is_active).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </label>
+        )}
         <label>
           For event
           <select value={f.event_id ?? ''} onChange={(e) => set('event_id', e.target.value || null)}>

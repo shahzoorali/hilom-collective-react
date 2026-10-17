@@ -497,7 +497,9 @@ export interface FinanceException {
     | 'expense_future'
     | 'expense_no_receipt'
     | 'closed_period_changed'
-    | 'reimbursement_owed';
+    | 'reimbursement_owed'
+    | 'account_gap'
+    | 'facilitator_credit';
   severity: ExceptionSeverity;
   title: string;
   detail: string;
@@ -527,7 +529,7 @@ export interface ExceptionInput {
   duplicateWindowMinutes?: number;
 }
 
-const peso = (c: number) => `₱${(c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const peso = (c: number) => `₱${(c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function detectExceptions(input: ExceptionInput): FinanceException[] {
   const out: FinanceException[] = [];

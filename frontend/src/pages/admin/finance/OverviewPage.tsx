@@ -62,7 +62,7 @@ export default function OverviewPage({ adminKey }: { adminKey: string }) {
         <Kpi
           label="Owed to facilitators"
           value={data ? php(data.kpis.facilitator_owed_centavos) : null}
-          hint="Unpaid shares, batched or not"
+          hint="Net of offline payments"
           onClick={() => navigate('/admin/finance/payables')}
         />
         <Kpi
@@ -71,6 +71,12 @@ export default function OverviewPage({ adminKey }: { adminKey: string }) {
           hint={data ? `${data.kpis.refunds_owed_count} decided, not sent` : undefined}
           tone={data && data.kpis.refunds_owed_count > 0 ? 'attention' : undefined}
           onClick={() => navigate('/admin/finance/payables')}
+        />
+        <Kpi
+          label="Cash across accounts"
+          value={data ? (data.kpis.accounts_count ? php(data.kpis.cash_on_hand_centavos) : 'Set up') : null}
+          hint={data?.kpis.accounts_count ? `${data.kpis.accounts_count} account(s), book balance` : 'Add bank / GCash / cash accounts'}
+          onClick={() => navigate('/admin/finance/accounts')}
         />
         <Kpi
           label="In PayMongo, not paid out"

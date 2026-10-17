@@ -111,6 +111,8 @@ const NAV_GROUPS = [
       { label: 'Profit & loss', path: 'finance/pnl', icon: 'scroll' },
       { label: 'Reconciliation', path: 'finance/reconciliation', icon: 'check' },
       { label: 'Expenses', path: 'finance/expenses', icon: 'clipboard' },
+      { label: 'Offline transactions', path: 'finance/transactions', icon: 'arrow' },
+      { label: 'Accounts', path: 'finance/accounts', icon: 'bank' },
     ],
   },
   {

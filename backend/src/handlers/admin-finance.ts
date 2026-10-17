@@ -17,6 +17,8 @@
  *   GET|POST adjustments ; PUT adjustments/{id}   (void)
  *   GET|POST split-rules ; DELETE split-rules/{id} ; GET split-rules/{id}/preview ; POST split-rules/{id}/apply
  *   GET  periods ; POST periods/{month}/close ; POST periods/{month}/reopen
+ *   GET|POST transactions ; PUT transactions/{id} (void) ; GET transactions/{id}/receipt   offline money (0071)
+ *   GET|POST accounts ?account=id ; PUT accounts/{id} ; POST accounts/{id}/statement
  *
  * Everything derived is computed in lib/finance-domain.ts from rows loaded
  * here. The data set is small (hundreds of rows a month), so the handler
@@ -55,7 +57,20 @@ import {
   type SplitRule,
 } from '../lib/finance-domain.js';
 import { captureAndStorePayment, allReferencedPaymentIds } from '../lib/paymongo-ledger.js';
-import { loadEventSplitContext, splitForEventCharge, SPLIT_RULE_COLUMNS } from '../lib/finance-splits.js';
+import { loadEventSplitContext, splitForEventCharge, ruleForEvent, SPLIT_RULE_COLUMNS } from '../lib/finance-splits.js';
+import {
+  accountExceptions,
+  accountMovements,
+  balanceAt,
+  facilitatorBalances,
+  monthEndDay,
+  offlineSaleLine,
+  offlineSplit,
+  validateTransactionInput,
+  type Account,
+  type FinanceTransaction,
+  type StatementBalance,
+} from '../lib/finance-accounts.js';
 
 const s3 = new S3Client({});
 const RECEIPTS_BUCKET = process.env.FINANCE_RECEIPTS_BUCKET ?? '';
@@ -101,10 +116,14 @@ interface Dataset {
   payouts: (PaidPayoutRow & { gross_centavos: number; platform_fee_centavos: number; clawback_centavos: number; period_start: string; period_end: string; reference: string | null })[];
   periods: { period: string; status: string; snapshot: { accrual?: Pnl; cash?: Pnl } | null; closed_by: string | null; closed_at: string | null }[];
   facilitators: { id: string; display_name: string; platform_fee_bps: number }[];
+  transactions: (FinanceTransaction & { payment_method: string | null; receipt_key: string | null; receipt_name: string | null; notes: string | null; void_reason: string | null; created_by: string | null })[];
+  accounts: (Account & { notes: string | null })[];
+  statements: (StatementBalance & { note: string | null; entered_by: string | null; entered_at: string })[];
+  reimbursements: { id: string; payee: string; status: string; paid_at: string | null; account_id: string | null; reference: string | null }[];
 }
 
 async function loadDataset(supabase: SupabaseClient): Promise<Dataset> {
-  const [rawLines, refunds, ledger, expenses, adjustments, payouts, periods, facilitators] = await Promise.all([
+  const [rawLines, refunds, ledger, expenses, adjustments, payouts, periods, facilitators, transactions, accounts, statements, reimbursements] = await Promise.all([
     selectAll<Omit<RevenueLine, 'fee_centavos' | 'is_test'>>((a, b) =>
       supabase.from('v_revenue_lines').select('*').order('occurred_at', { ascending: false }).range(a, b),
     ),
@@ -124,12 +143,20 @@ async function loadDataset(supabase: SupabaseClient): Promise<Dataset> {
     selectAll<Dataset['payouts'][number]>((a, b) =>
       supabase
         .from('facilitator_payouts')
-        .select('id, facilitator_id, status, paid_at, gross_centavos, platform_fee_centavos, processing_fee_centavos, clawback_centavos, net_centavos, period_start, period_end, reference')
+        .select('id, facilitator_id, status, paid_at, gross_centavos, platform_fee_centavos, processing_fee_centavos, clawback_centavos, net_centavos, period_start, period_end, reference, account_id')
         .range(a, b),
     ),
     selectAll<Dataset['periods'][number]>((a, b) => supabase.from('finance_periods').select('*').range(a, b)),
     selectAll<Dataset['facilitators'][number]>((a, b) =>
       supabase.from('facilitators').select('id, display_name, platform_fee_bps').range(a, b),
+    ),
+    selectAll<Dataset['transactions'][number]>((a, b) =>
+      supabase.from('finance_transactions').select('*').order('occurred_on', { ascending: false }).range(a, b),
+    ),
+    selectAll<Dataset['accounts'][number]>((a, b) => supabase.from('finance_accounts').select('*').order('created_at').range(a, b)),
+    selectAll<Dataset['statements'][number]>((a, b) => supabase.from('finance_account_balances').select('*').range(a, b)),
+    selectAll<Dataset['reimbursements'][number]>((a, b) =>
+      supabase.from('reimbursements').select('id, payee, status, paid_at, account_id, reference').range(a, b),
     ),
   ]);
 
@@ -138,11 +165,31 @@ async function loadDataset(supabase: SupabaseClient): Promise<Dataset> {
     const led = l.paymongo_payment_id ? byPayment.get(l.paymongo_payment_id) : undefined;
     return { ...l, fee_centavos: led?.fee_centavos ?? null, is_test: led?.is_test ?? false };
   });
-  return { lines, refunds, ledger, expenses, adjustments, payouts, periods, facilitators };
+  // Offline sales join the register as ordinary lines (0071).
+  for (const t of transactions) if (t.kind === 'offline_sale' && t.status === 'posted') lines.push(offlineSaleLine(t));
+  return { lines, refunds, ledger, expenses, adjustments, payouts, periods, facilitators, transactions, accounts, statements, reimbursements };
 }
 
 function payoutStatusMap(d: Dataset): Map<string, string> {
   return new Map(d.payouts.map((p) => [p.id, p.status]));
+}
+
+function balancesFor(d: Dataset) {
+  return facilitatorBalances(d.lines, d.refunds, payoutStatusMap(d), d.transactions);
+}
+
+function movementsFor(d: Dataset) {
+  return accountMovements({
+    accounts: d.accounts,
+    transactions: d.transactions,
+    expenses: d.expenses as unknown as (ExpenseRow & { account_id: string | null })[],
+    reimbursements: d.reimbursements.map((r) => ({
+      ...r,
+      total_centavos: d.expenses.filter((e) => e.reimbursement_id === r.id && e.status !== 'void').reduce((s, e) => s + e.amount_centavos, 0),
+    })),
+    payouts: d.payouts as unknown as (PaidPayoutRow & { account_id: string | null })[],
+    ledger: d.ledger,
+  });
 }
 
 function closedMonths(d: Dataset): Set<string> {
@@ -191,6 +238,8 @@ async function exceptionsFor(supabase: SupabaseClient, d: Dataset, includeAcked:
     reimbursementsOwed: await reimbursementsOwed(supabase, d),
     today: manilaDate(new Date()),
   });
+  const names = new Map(d.facilitators.map((f) => [f.id, f.display_name]));
+  all.push(...accountExceptions(d.accounts, movementsFor(d), d.statements, balancesFor(d), (id) => names.get(id) ?? 'A facilitator'));
   const { data: acks, error } = await supabase.from('finance_exception_acks').select('key, note, acked_by, acked_at');
   if (error) throw error;
   const ackByKey = new Map(((acks ?? []) as { key: string; note: string | null; acked_by: string | null; acked_at: string }[]).map((a) => [a.key, a]));
@@ -243,7 +292,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
         if (method === 'POST' && !seg[1]) return await saveExpense(supabase, null, parseBody(event), actor);
         if (method === 'POST' && seg[1] === 'receipt-url') return await receiptUploadUrl(parseBody(event));
         if (method === 'PUT' && seg[1]) return await saveExpense(supabase, seg[1], parseBody(event), actor);
-        if (method === 'GET' && seg[1] && seg[2] === 'receipt') return await receiptUrl(supabase, seg[1]);
+        if (method === 'GET' && seg[1] && seg[2] === 'receipt') return await receiptUrlFor(supabase, 'expenses', seg[1]);
         break;
       case 'reimbursements':
         if (method === 'GET' && !seg[1]) return await listReimbursements(supabase);
@@ -261,6 +310,18 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
         if (method === 'DELETE' && seg[1]) return await voidRule(supabase, seg[1], actor);
         if (method === 'GET' && seg[1] && seg[2] === 'preview') return await applyRule(supabase, seg[1], actor, true);
         if (method === 'POST' && seg[1] && seg[2] === 'apply') return await applyRule(supabase, seg[1], actor, false);
+        break;
+      case 'transactions':
+        if (method === 'GET' && !seg[1]) return await listTransactions(supabase);
+        if (method === 'POST' && !seg[1]) return await createTransaction(supabase, parseBody(event), actor);
+        if (method === 'PUT' && seg[1] && !seg[2]) return await voidTransaction(supabase, seg[1], parseBody(event), actor);
+        if (method === 'GET' && seg[1] && seg[2] === 'receipt') return await receiptUrlFor(supabase, 'finance_transactions', seg[1]);
+        break;
+      case 'accounts':
+        if (method === 'GET' && !seg[1]) return await listAccounts(supabase, q);
+        if (method === 'POST' && !seg[1]) return await saveAccount(supabase, null, parseBody(event), actor);
+        if (method === 'PUT' && seg[1] && !seg[2]) return await saveAccount(supabase, seg[1], parseBody(event), actor);
+        if (method === 'POST' && seg[1] && seg[2] === 'statement') return await saveStatement(supabase, seg[1], parseBody(event), actor);
         break;
       case 'periods':
         if (method === 'GET' && !seg[1]) return await listPeriods(supabase);
@@ -297,8 +358,10 @@ async function overview(supabase: SupabaseClient) {
     return { month: m, gross_sales: p.gross_sales, net_revenue: p.net_revenue, net_profit: p.net_profit, opex: p.opex_total };
   });
   const current = months[months.length - 1]!;
-  const payables = facilitatorPayables(d.lines, d.refunds, payoutStatusMap(d));
+  const payables = balancesFor(d);
   const exceptions = await exceptionsFor(supabase, d, false);
+  const movements = movementsFor(d);
+  const today = manilaDate(new Date());
   const refundsOwed = d.refunds.filter((r) => !r.refunded_at);
   const ledgerUnpaidOut = d.ledger.filter((r) => !r.is_test && r.net_centavos !== null && !r.payout_id);
 
@@ -310,7 +373,9 @@ async function overview(supabase: SupabaseClient) {
     previous: pnlFor(d, previousMonth(current), 'accrual'),
     trend,
     kpis: {
-      facilitator_owed_centavos: payables.reduce((s, p) => s + p.unbatched_centavos + p.batched_unpaid_centavos, 0),
+      facilitator_owed_centavos: payables.reduce((s, p) => s + Math.max(0, p.net_owed_centavos), 0),
+      cash_on_hand_centavos: d.accounts.filter((a) => a.is_active).reduce((s, a) => s + balanceAt(a, movements, today), 0),
+      accounts_count: d.accounts.filter((a) => a.is_active).length,
       clawback_due_centavos: payables.reduce((s, p) => s + p.clawback_due_centavos, 0),
       refunds_owed_centavos: refundsOwed.reduce((s, r) => s + r.refund_centavos, 0),
       refunds_owed_count: refundsOwed.length,
@@ -435,7 +500,7 @@ async function pnl(supabase: SupabaseClient, q: Record<string, string | undefine
 async function payables(supabase: SupabaseClient) {
   const d = await loadDataset(supabase);
   const names = new Map(d.facilitators.map((f) => [f.id, f]));
-  const rows = facilitatorPayables(d.lines, d.refunds, payoutStatusMap(d)).map((p) => ({
+  const rows = balancesFor(d).map((p) => ({
     ...p,
     name: names.get(p.facilitator_id)?.display_name ?? 'Unknown facilitator',
     platform_fee_bps: names.get(p.facilitator_id)?.platform_fee_bps ?? null,
@@ -449,7 +514,10 @@ async function payables(supabase: SupabaseClient) {
       .pop() ?? null,
   }));
   return ok({
-    facilitators: rows.sort((a, b) => b.unbatched_centavos + b.batched_unpaid_centavos - (a.unbatched_centavos + a.batched_unpaid_centavos)),
+    facilitators: rows.sort((a, b) => b.net_owed_centavos - a.net_owed_centavos),
+    offline_payments: d.transactions
+      .filter((t) => t.kind === 'facilitator_payment' && t.status === 'posted')
+      .map((t) => ({ ...t, facilitator_name: t.facilitator_id ? names.get(t.facilitator_id)?.display_name ?? null : null })),
     refunds: d.refunds
       .map((r) => ({ ...r, facilitator_name: r.facilitator_id ? names.get(r.facilitator_id)?.display_name ?? null : null }))
       .sort((a, b) => (a.refunded_at ? 1 : 0) - (b.refunded_at ? 1 : 0) || Date.parse(b.decided_at) - Date.parse(a.decided_at)),
@@ -629,6 +697,9 @@ async function saveExpense(supabase: SupabaseClient, id: string | null, b: Recor
     receipt_name: merged.receipt_name ? String(merged.receipt_name).slice(0, 200) : null,
     status,
     notes: merged.notes ? String(merged.notes).slice(0, 2000) : null,
+    // Which account paid it. Null for a personally paid expense: that money
+    // leaves an account when the reimbursement is paid, not now.
+    account_id: typeof merged.account_id === 'string' && merged.account_id ? merged.account_id : null,
     updated_at: new Date().toISOString(),
   };
 
@@ -691,10 +762,10 @@ async function receiptUploadUrl(b: Record<string, unknown>) {
   return ok({ uploadUrl, key, name });
 }
 
-async function receiptUrl(supabase: SupabaseClient, id: string) {
-  const { data, error } = await supabase.from('expenses').select('receipt_key, receipt_name').eq('id', id).maybeSingle<{ receipt_key: string | null; receipt_name: string | null }>();
+async function receiptUrlFor(supabase: SupabaseClient, table: 'expenses' | 'finance_transactions', id: string) {
+  const { data, error } = await supabase.from(table).select('receipt_key, receipt_name').eq('id', id).maybeSingle<{ receipt_key: string | null; receipt_name: string | null }>();
   if (error) throw error;
-  if (!data?.receipt_key) return notFound('No receipt on this expense');
+  if (!data?.receipt_key) return notFound('No receipt on this record');
   const url = await getSignedUrl(
     s3,
     new GetObjectCommand({
@@ -750,6 +821,7 @@ async function updateReimbursement(supabase: SupabaseClient, id: string, b: Reco
       reference: reference ?? before.reference,
       paid_at: status === 'paid' ? new Date().toISOString() : null,
       note: typeof b.note === 'string' ? b.note.slice(0, 1000) : before.note,
+      account_id: typeof b.account_id === 'string' && b.account_id ? b.account_id : (before.account_id ?? null),
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
@@ -995,5 +1067,221 @@ async function reopenPeriod(supabase: SupabaseClient, month: string, b: Record<s
   if (error) throw error;
   if (!data) return notFound(`${month} is not closed`);
   await recordAudit(actor, { action: 'finance.period.reopen', targetTable: 'finance_periods', note: `${month}: ${reason}` });
+  return ok({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Offline transactions (0071)
+// ---------------------------------------------------------------------------
+
+async function listTransactions(supabase: SupabaseClient) {
+  const [tx, accounts, facilitators, events] = await Promise.all([
+    supabase.from('finance_transactions').select('*').order('occurred_on', { ascending: false }).order('created_at', { ascending: false }),
+    supabase.from('finance_accounts').select('id, name, kind, is_active').order('created_at'),
+    supabase.from('facilitators').select('id, display_name, platform_fee_bps').order('display_name'),
+    supabase.from('events').select('id, title, starts_at, facilitator_id').order('starts_at', { ascending: false }).limit(300),
+  ]);
+  for (const r of [tx, accounts, facilitators, events]) if (r.error) throw r.error;
+  return ok({ transactions: tx.data ?? [], accounts: accounts.data ?? [], facilitators: facilitators.data ?? [], events: events.data ?? [] });
+}
+
+const optionalId = (v: unknown) => (typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v) ? v : null);
+const optionalText = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+
+async function createTransaction(supabase: SupabaseClient, b: Record<string, unknown>, actor: AuditActor) {
+  const invalid = validateTransactionInput(b);
+  if (invalid) return badRequest(invalid);
+  const occurredOn = String(b.occurred_on);
+  const lock = assertPeriodOpen(occurredOn.slice(0, 7), await closedSet(supabase));
+  if (lock) return conflict(lock);
+
+  const kind = String(b.kind);
+  const amount = Number(b.amount_centavos);
+  const facilitatorId = optionalId(b.facilitator_id);
+  const eventId = optionalId(b.event_id);
+  const receiptKey = b.receipt_key ?? null;
+  if (receiptKey !== null && (typeof receiptKey !== 'string' || !receiptKey.startsWith(RECEIPT_PREFIX))) {
+    return badRequest('receipt_key is not a finance receipt');
+  }
+
+  let hilom: number | null = null;
+  let facilitatorShare: number | null = null;
+  let resolvedFacilitator = facilitatorId;
+  if (kind === 'offline_sale') {
+    let useEventSplit = false;
+    let eventSplit = null;
+    if (eventId) {
+      const ctx = await loadEventSplitContext(supabase, eventId);
+      if (!ctx) return badRequest('That event does not exist');
+      resolvedFacilitator = resolvedFacilitator ?? ctx.facilitator_id;
+      // The event's own deal governs, exactly as for a PayMongo charge on it.
+      useEventSplit = !!ctx.facilitator_id && ((await ruleForEvent(supabase, ctx)) !== null || ctx.platform_fee_bps !== null);
+      if (useEventSplit) eventSplit = await splitForEventCharge(supabase, ctx, amount);
+    }
+    let facilitatorBps: number | null = null;
+    if (resolvedFacilitator && !useEventSplit) {
+      const { data: f, error: fError } = await supabase.from('facilitators').select('platform_fee_bps').eq('id', resolvedFacilitator).maybeSingle<{ platform_fee_bps: number }>();
+      if (fError) throw fError;
+      if (!f) return badRequest('That facilitator does not exist');
+      facilitatorBps = f.platform_fee_bps;
+    }
+    const explicit = b.hilom_share_centavos === undefined || b.hilom_share_centavos === null || b.hilom_share_centavos === '' ? null : Number(b.hilom_share_centavos);
+    if (explicit !== null && (!Number.isInteger(explicit) || explicit < 0 || explicit > amount)) {
+      return badRequest('hilom_share_centavos must be between 0 and the amount');
+    }
+    const split = offlineSplit(amount, { explicitHilomCentavos: explicit, useEventSplit, eventSplit, facilitatorBps });
+    hilom = split.hilom;
+    facilitatorShare = split.facilitator;
+    if (!resolvedFacilitator) facilitatorShare = 0;
+    if (!resolvedFacilitator) hilom = amount;
+  }
+
+  const row = {
+    occurred_on: occurredOn,
+    kind,
+    amount_centavos: amount,
+    account_id: optionalId(b.account_id),
+    counter_account_id: kind === 'transfer' ? optionalId(b.counter_account_id) : null,
+    counterparty: optionalText(b.counterparty, 200),
+    counterparty_email: optionalText(b.counterparty_email, 200)?.toLowerCase() ?? null,
+    item: kind === 'offline_sale' ? optionalText(b.item, 300) : optionalText(b.item, 300),
+    category: kind === 'offline_sale' ? optionalText(b.category, 100) ?? 'Other' : null,
+    facilitator_id: kind === 'offline_sale' || kind === 'facilitator_payment' ? resolvedFacilitator : null,
+    event_id: eventId,
+    hilom_share_centavos: hilom,
+    facilitator_share_centavos: facilitatorShare,
+    payment_method: optionalText(b.payment_method, 100),
+    reference: optionalText(b.reference, 200),
+    receipt_key: receiptKey,
+    receipt_name: optionalText(b.receipt_name, 200),
+    notes: optionalText(b.notes, 2000),
+    created_by: actor.label,
+  };
+  const { data, error } = await supabase.from('finance_transactions').insert(row).select('*').single<{ id: string }>();
+  if (error) throw error;
+  await recordAudit(actor, {
+    action: `finance.transaction.${kind}`,
+    targetTable: 'finance_transactions',
+    targetId: data.id,
+    amountCentavos: amount,
+    currency: 'PHP',
+    after: data,
+  });
+  return ok({ transaction: data });
+}
+
+/**
+ * Transactions are immutable once posted — a ledger that can be edited is a
+ * ledger nobody can reconcile against. Correct one by voiding it (with a
+ * reason, kept) and posting the right one.
+ */
+async function voidTransaction(supabase: SupabaseClient, id: string, b: Record<string, unknown>, actor: AuditActor) {
+  if (b.void !== true) return badRequest('Transactions are immutable; send {"void": true, "reason": "…"} to void one');
+  const reason = optionalText(b.reason, 1000);
+  if (!reason || reason.length < 5) return badRequest('A reason is required to void a transaction');
+  const { data: before, error: readError } = await supabase.from('finance_transactions').select('*').eq('id', id).maybeSingle<{ occurred_on: string; amount_centavos: number; status: string }>();
+  if (readError) throw readError;
+  if (!before) return notFound('Transaction not found');
+  if (before.status === 'void') return conflict('Already void');
+  const lock = assertPeriodOpen(before.occurred_on.slice(0, 7), await closedSet(supabase));
+  if (lock) return conflict(lock);
+  const { error } = await supabase
+    .from('finance_transactions')
+    .update({ status: 'void', void_reason: reason, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'posted');
+  if (error) throw error;
+  await recordAudit(actor, { action: 'finance.transaction.void', targetTable: 'finance_transactions', targetId: id, amountCentavos: before.amount_centavos, currency: 'PHP', before, note: reason });
+  return ok({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Accounts (0071)
+// ---------------------------------------------------------------------------
+
+async function listAccounts(supabase: SupabaseClient, q: Record<string, string | undefined>) {
+  const d = await loadDataset(supabase);
+  const movements = movementsFor(d);
+  const today = manilaDate(new Date());
+  const months = lastMonths(6);
+  const accountId = q.account ?? null;
+  return ok({
+    accounts: d.accounts.map((a) => ({
+      ...a,
+      balance_centavos: balanceAt(a, movements, today),
+      months: months.map((m) => {
+        const end = monthEndDay(m);
+        const st = d.statements.find((s) => s.account_id === a.id && s.period.slice(0, 7) === m);
+        const book = balanceAt(a, movements, end > today ? today : end);
+        return { month: m, book_centavos: book, statement_centavos: st?.statement_balance_centavos ?? null, gap_centavos: st ? st.statement_balance_centavos - book : null };
+      }),
+    })),
+    movements: accountId ? movements.filter((m) => m.account_id === accountId).reverse().slice(0, 500) : [],
+    unassigned: {
+      expenses: d.expenses.filter((e) => e.status === 'approved' && e.paid_by.toLowerCase() === 'company' && !(e as unknown as { account_id: string | null }).account_id).length,
+      transactions: d.transactions.filter((t) => t.status === 'posted' && !t.account_id).length,
+    },
+  });
+}
+
+async function saveAccount(supabase: SupabaseClient, id: string | null, b: Record<string, unknown>, actor: AuditActor) {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (b.name !== undefined) {
+    const name = optionalText(b.name, 100);
+    if (!name) return badRequest('name is required');
+    patch.name = name;
+  }
+  if (b.kind !== undefined) {
+    if (!['bank', 'ewallet', 'cash', 'paymongo'].includes(String(b.kind))) return badRequest('kind must be bank, ewallet, cash or paymongo');
+    patch.kind = b.kind;
+  }
+  if (b.opening_balance_centavos !== undefined) {
+    const n = Number(b.opening_balance_centavos);
+    if (!Number.isInteger(n)) return badRequest('opening_balance_centavos must be a whole number');
+    patch.opening_balance_centavos = n;
+  }
+  if (b.opening_date !== undefined) {
+    if (typeof b.opening_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.opening_date)) return badRequest('opening_date must be YYYY-MM-DD');
+    patch.opening_date = b.opening_date;
+  }
+  if (b.notes !== undefined) patch.notes = optionalText(b.notes, 1000);
+  if (b.is_active !== undefined) patch.is_active = b.is_active === true;
+  if (!id && (!patch.name || !patch.kind)) return badRequest('name and kind are required');
+
+  // One account each receives PayMongo payouts and pays facilitator batches:
+  // claiming the flag moves it.
+  for (const flag of ['receives_paymongo', 'default_for_payouts'] as const) {
+    if (b[flag] === undefined) continue;
+    if (b[flag] === true) {
+      const { error } = await supabase.from('finance_accounts').update({ [flag]: false }).eq(flag, true);
+      if (error) throw error;
+    }
+    patch[flag] = b[flag] === true;
+  }
+
+  const query = id
+    ? supabase.from('finance_accounts').update(patch).eq('id', id)
+    : supabase.from('finance_accounts').insert({ ...patch, created_by: actor.label });
+  const { data, error } = await query.select('*').single<{ id: string }>();
+  if (error) throw error;
+  await recordAudit(actor, { action: id ? 'finance.account.update' : 'finance.account.create', targetTable: 'finance_accounts', targetId: data.id, after: data });
+  return ok({ account: data });
+}
+
+async function saveStatement(supabase: SupabaseClient, accountId: string, b: Record<string, unknown>, actor: AuditActor) {
+  const month = String(b.month ?? '');
+  if (!/^\d{4}-\d{2}$/.test(month)) return badRequest('month must be YYYY-MM');
+  const balance = Number(b.statement_balance_centavos);
+  if (!Number.isInteger(balance)) return badRequest('statement_balance_centavos must be a whole number');
+  const { error } = await supabase.from('finance_account_balances').upsert({
+    account_id: accountId,
+    period: `${month}-01`,
+    statement_balance_centavos: balance,
+    note: optionalText(b.note, 1000),
+    entered_by: actor.label,
+    entered_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+  await recordAudit(actor, { action: 'finance.account.statement', targetTable: 'finance_account_balances', targetId: accountId, amountCentavos: balance, currency: 'PHP', note: month });
   return ok({ ok: true });
 }

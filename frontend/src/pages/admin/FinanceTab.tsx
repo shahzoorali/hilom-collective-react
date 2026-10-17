@@ -15,6 +15,8 @@ import PayablesPage from './finance/PayablesPage';
 import ReconciliationPage from './finance/ReconciliationPage';
 import ExpensesPage from './finance/ExpensesPage';
 import SplitRulesPage from './finance/SplitRulesPage';
+import TransactionsPage from './finance/TransactionsPage';
+import AccountsPage from './finance/AccountsPage';
 import './finance/finance.css';
 
 export const FINANCE_PAGES = [
@@ -24,6 +26,8 @@ export const FINANCE_PAGES = [
   { path: 'payables', label: 'Payables & refunds' },
   { path: 'reconciliation', label: 'Reconciliation' },
   { path: 'expenses', label: 'Expenses' },
+  { path: 'transactions', label: 'Offline transactions' },
+  { path: 'accounts', label: 'Accounts' },
   { path: 'splits', label: 'Revenue splits' },
 ] as const;
 
@@ -46,6 +50,8 @@ export default function FinanceTab({ adminKey }: { adminKey: string }) {
         <Route path="reconciliation" element={<ReconciliationPage adminKey={adminKey} />} />
         <Route path="expenses" element={<ExpensesPage adminKey={adminKey} />} />
         <Route path="splits" element={<SplitRulesPage adminKey={adminKey} />} />
+        <Route path="transactions" element={<TransactionsPage adminKey={adminKey} />} />
+        <Route path="accounts" element={<AccountsPage adminKey={adminKey} />} />
         <Route path="*" element={<Navigate to="overview" replace />} />
       </Routes>
     </div>

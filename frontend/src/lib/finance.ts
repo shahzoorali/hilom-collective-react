@@ -70,6 +70,8 @@ export interface FinanceOverview {
     refunds_owed_centavos: number;
     refunds_owed_count: number;
     paymongo_pending_payout_centavos: number;
+    cash_on_hand_centavos: number;
+    accounts_count: number;
     ledger_coverage: { payments: number; with_fee: number };
   };
   exceptions: { total: number; high: number; top: FinanceException[] };
@@ -133,9 +135,13 @@ export interface Payables {
     unbatched_count: number;
     batched_unpaid_centavos: number;
     clawback_due_centavos: number;
+    offline_owed_centavos: number;
+    paid_offline_centavos: number;
+    net_owed_centavos: number;
     paid_total_centavos: number;
     last_paid_at: string | null;
   }[];
+  offline_payments: (FinanceTransaction & { facilitator_name: string | null })[];
   refunds: {
     source: string;
     source_id: string;
@@ -192,6 +198,7 @@ export interface Expense {
   receipt_key: string | null;
   receipt_name: string | null;
   reimbursement_id: string | null;
+  account_id: string | null;
   status: 'draft' | 'approved' | 'void';
   notes: string | null;
   created_by: string | null;
@@ -249,6 +256,79 @@ export interface ApplyResult {
   facilitator_delta_centavos: number;
 }
 
+export type TransactionKind =
+  | 'offline_sale'
+  | 'facilitator_payment'
+  | 'owner_contribution'
+  | 'owner_withdrawal'
+  | 'loan_in'
+  | 'loan_repayment'
+  | 'transfer'
+  | 'other_in'
+  | 'other_out';
+
+export const TRANSACTION_LABEL: Record<TransactionKind, string> = {
+  offline_sale: 'Offline sale',
+  facilitator_payment: 'Payment to facilitator',
+  owner_contribution: 'Owner put money in',
+  owner_withdrawal: 'Owner took money out',
+  loan_in: 'Loan received',
+  loan_repayment: 'Loan repayment',
+  transfer: 'Transfer between accounts',
+  other_in: 'Other money in',
+  other_out: 'Other money out',
+};
+
+export interface FinanceTransaction {
+  id: string;
+  occurred_on: string;
+  kind: TransactionKind;
+  amount_centavos: number;
+  account_id: string | null;
+  counter_account_id: string | null;
+  counterparty: string | null;
+  counterparty_email: string | null;
+  item: string | null;
+  category: string | null;
+  facilitator_id: string | null;
+  event_id: string | null;
+  hilom_share_centavos: number | null;
+  facilitator_share_centavos: number | null;
+  payment_method: string | null;
+  reference: string | null;
+  receipt_key: string | null;
+  receipt_name: string | null;
+  notes: string | null;
+  status: 'posted' | 'void';
+  void_reason: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface FinanceAccount {
+  id: string;
+  name: string;
+  kind: 'bank' | 'ewallet' | 'cash' | 'paymongo';
+  opening_balance_centavos: number;
+  opening_date: string;
+  receives_paymongo: boolean;
+  default_for_payouts: boolean;
+  is_active: boolean;
+  notes: string | null;
+  balance_centavos?: number;
+  months?: { month: string; book_centavos: number; statement_centavos: number | null; gap_centavos: number | null }[];
+}
+
+export interface Movement {
+  account_id: string;
+  date: string;
+  amount_centavos: number;
+  label: string;
+  source: string;
+  source_id: string | null;
+  approximate?: boolean;
+}
+
 const base = '/admin/finance';
 
 export const finance = {
@@ -294,7 +374,7 @@ export const finance = {
   receiptUrl: (k: string, id: string) => apiFetch<{ url: string }>(`${base}/expenses/${id}/receipt`, init(k)),
 
   reimbursements: (k: string) => apiFetch<{ reimbursements: Reimbursement[] }>(`${base}/reimbursements`, init(k)),
-  updateReimbursement: (k: string, id: string, body: { status: string; reference?: string; note?: string }) =>
+  updateReimbursement: (k: string, id: string, body: { status: string; reference?: string; note?: string; account_id?: string | null }) =>
     apiFetch<{ reimbursement: Reimbursement }>(`${base}/reimbursements/${id}`, init(k, 'PUT', body)),
 
   createAdjustment: (k: string, body: { month: string; line: string; amount_centavos: number; reason: string; link?: string }) =>
@@ -306,6 +386,29 @@ export const finance = {
   voidSplitRule: (k: string, id: string) => apiFetch<{ ok: true }>(`${base}/split-rules/${id}`, init(k, 'DELETE')),
   previewSplitRule: (k: string, id: string) => apiFetch<ApplyResult>(`${base}/split-rules/${id}/preview`, init(k)),
   applySplitRule: (k: string, id: string) => apiFetch<ApplyResult>(`${base}/split-rules/${id}/apply`, init(k, 'POST', {})),
+
+  transactions: (k: string) =>
+    apiFetch<{
+      transactions: FinanceTransaction[];
+      accounts: { id: string; name: string; kind: string; is_active: boolean }[];
+      facilitators: { id: string; display_name: string; platform_fee_bps: number }[];
+      events: { id: string; title: string; starts_at: string | null; facilitator_id: string | null }[];
+    }>(`${base}/transactions`, init(k)),
+  createTransaction: (k: string, body: Partial<FinanceTransaction>) =>
+    apiFetch<{ transaction: FinanceTransaction }>(`${base}/transactions`, init(k, 'POST', body)),
+  voidTransaction: (k: string, id: string, reason: string) =>
+    apiFetch<{ ok: true }>(`${base}/transactions/${id}`, init(k, 'PUT', { void: true, reason })),
+  transactionReceiptUrl: (k: string, id: string) => apiFetch<{ url: string }>(`${base}/transactions/${id}/receipt`, init(k)),
+
+  accounts: (k: string, accountId?: string) =>
+    apiFetch<{ accounts: FinanceAccount[]; movements: Movement[]; unassigned: { expenses: number; transactions: number } }>(
+      `${base}/accounts${accountId ? `?account=${accountId}` : ''}`,
+      init(k),
+    ),
+  saveAccount: (k: string, id: string | null, body: Partial<FinanceAccount>) =>
+    apiFetch<{ account: FinanceAccount }>(id ? `${base}/accounts/${id}` : `${base}/accounts`, init(k, id ? 'PUT' : 'POST', body)),
+  saveStatement: (k: string, id: string, month: string, centavos: number, note?: string) =>
+    apiFetch<{ ok: true }>(`${base}/accounts/${id}/statement`, init(k, 'POST', { month, statement_balance_centavos: centavos, note })),
 
   periods: (k: string) => apiFetch<{ periods: { period: string; status: string; closed_by: string | null; closed_at: string | null }[] }>(`${base}/periods`, init(k)),
   closePeriod: (k: string, month: string) => apiFetch<{ ok: true }>(`${base}/periods/${month}/close`, init(k, 'POST', {})),

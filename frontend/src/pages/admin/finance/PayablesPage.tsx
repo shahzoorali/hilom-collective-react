@@ -30,13 +30,15 @@ export default function PayablesPage({ adminKey }: { adminKey: string }) {
           <p className="small muted">Money held for someone else. Pay facilitators from the Payouts screen; mark refunds sent from the sale's own screen.</p>
         </div>
         <div className="page-head__actions">
+          <button type="button" className="btn btn-ghost small" onClick={() => navigate('/admin/finance/transactions')}>Record an offline payment</button>
           <button type="button" className="btn small" onClick={() => navigate('/admin/payouts')}>Go to Payouts →</button>
         </div>
       </div>
       {error && <ErrorNote error={error} onRetry={load} />}
 
       <div className="stat-grid">
-        <Kpi label="Not yet batched" value={data ? php(sum((x) => x.unbatched_centavos)) : null} hint="Facilitator shares on paid sales" />
+        <Kpi label="Owed to facilitators" value={data ? php(sum((x) => Math.max(0, x.net_owed_centavos))) : null} hint="After offline payments" />
+        <Kpi label="Not yet batched" value={data ? php(sum((x) => x.unbatched_centavos)) : null} hint="Platform shares on paid sales" />
         <Kpi label="Batched, unpaid" value={data ? php(sum((x) => x.batched_unpaid_centavos)) : null} hint="Draft or approved payouts" />
         <Kpi label="Clawback due" value={data ? php(sum((x) => x.clawback_due_centavos)) : null} tone={sum((x) => x.clawback_due_centavos) > 0 ? 'attention' : undefined} hint="Refunded after payout" />
         <Kpi label="Refunds owed" value={data ? php(owed.reduce((s, r) => s + r.refund_centavos, 0)) : null} tone={owed.length ? 'alert' : undefined} hint={`${owed.length} not sent`} />
@@ -54,13 +56,34 @@ export default function PayablesPage({ adminKey }: { adminKey: string }) {
           { key: 'unbatched', header: 'Not batched', align: 'right', sortValue: (r) => r.unbatched_centavos, csv: (r) => r.unbatched_centavos / 100, render: (r) => <span className="fin-num">{php(r.unbatched_centavos)} <span className="small muted">· {r.unbatched_count}</span></span> },
           { key: 'batched', header: 'Batched, unpaid', align: 'right', sortValue: (r) => r.batched_unpaid_centavos, csv: (r) => r.batched_unpaid_centavos / 100, render: (r) => <span className="fin-num">{php(r.batched_unpaid_centavos)}</span> },
           { key: 'claw', header: 'Clawback due', align: 'right', sortValue: (r) => r.clawback_due_centavos, csv: (r) => r.clawback_due_centavos / 100, render: (r) => <span className="fin-num">{r.clawback_due_centavos ? php(r.clawback_due_centavos) : '—'}</span> },
-          { key: 'paid', header: 'Paid to date', align: 'right', sortValue: (r) => r.paid_total_centavos, csv: (r) => r.paid_total_centavos / 100, render: (r) => <span className="fin-num">{php(r.paid_total_centavos)}</span> },
+          { key: 'offline', header: 'Offline sales share', align: 'right', defaultHidden: false, sortValue: (r) => r.offline_owed_centavos, csv: (r) => r.offline_owed_centavos / 100, render: (r) => <span className="fin-num">{r.offline_owed_centavos ? php(r.offline_owed_centavos) : '—'}</span> },
+          { key: 'paidoff', header: 'Paid offline', align: 'right', sortValue: (r) => r.paid_offline_centavos, csv: (r) => r.paid_offline_centavos / 100, render: (r) => <span className="fin-num">{r.paid_offline_centavos ? `(${php(r.paid_offline_centavos)})` : '—'}</span> },
+          { key: 'net', header: 'Balance owed', align: 'right', sortValue: (r) => r.net_owed_centavos, csv: (r) => r.net_owed_centavos / 100, render: (r) => <b className={`fin-num ${r.net_owed_centavos < 0 ? 'stat__delta--up' : ''}`} title={r.net_owed_centavos < 0 ? 'Paid ahead — credit' : undefined}>{r.net_owed_centavos < 0 ? `credit ${php(-r.net_owed_centavos)}` : php(r.net_owed_centavos)}</b> },
+          { key: 'paid', header: 'Batches paid', defaultHidden: true, align: 'right', sortValue: (r) => r.paid_total_centavos, csv: (r) => r.paid_total_centavos / 100, render: (r) => <span className="fin-num">{php(r.paid_total_centavos)}</span> },
           { key: 'last', header: 'Last paid', sortValue: (r) => r.last_paid_at ?? '', render: (r) => (r.last_paid_at ? new Date(r.last_paid_at).toLocaleDateString('en-PH') : '—') },
         ]}
-        defaultSort={{ key: 'unbatched', dir: 'desc' }}
+        defaultSort={{ key: 'net', dir: 'desc' }}
         csvName="hilom-facilitator-payables"
         empty={{ title: 'Nothing owed to facilitators' }}
       />
+
+      {data && data.offline_payments.length > 0 && (
+        <>
+          <h3 style={{ fontSize: '1rem', marginTop: '1.5rem' }}>Paid outside payout batches</h3>
+          <div className="dash-card">
+            {data.offline_payments.map((t) => (
+              <div className="fin-exc" key={t.id}>
+                <span className="pill">{t.occurred_on}</span>
+                <div className="fin-exc__body">
+                  <div className="fin-exc__title">{t.facilitator_name}</div>
+                  <div className="small muted">{[t.item, t.reference && `ref ${t.reference}`].filter(Boolean).join(' · ')}</div>
+                </div>
+                <span className="fin-num">{php(t.amount_centavos)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <h3 style={{ fontSize: '1rem', marginTop: '1.5rem' }}>Refunds</h3>
       <DataTable
