@@ -13,6 +13,7 @@ import FacilitatorsTab from './admin/FacilitatorsTab';
 import AgreementsTab from './admin/AgreementsTab';
 import FacilitatorEditor from './admin/FacilitatorEditor';
 import PayoutsTab from './admin/PayoutsTab';
+import FinanceTab from './admin/FinanceTab';
 import ReviewsTab from './admin/ReviewsTab';
 import BookingsTab from './admin/BookingsTab';
 import PagesTab from './admin/PagesTab';
@@ -98,6 +99,18 @@ const NAV_GROUPS = [
       { label: 'Classes', path: 'classes', icon: 'yoga' },
       { label: 'Promo Codes', path: 'promo-codes', icon: 'tag' },
       { label: 'Payouts', path: 'payouts', icon: 'bank' },
+    ],
+  },
+  {
+    // Derived books: sales register, P&L, payables, reconciliation, expenses.
+    // Paths are two segments deep so each item can be the active one.
+    label: 'Finance',
+    items: [
+      { label: 'Finance overview', path: 'finance/overview', icon: 'activity' },
+      { label: 'Sales register', path: 'finance/sales', icon: 'card' },
+      { label: 'Profit & loss', path: 'finance/pnl', icon: 'scroll' },
+      { label: 'Reconciliation', path: 'finance/reconciliation', icon: 'check' },
+      { label: 'Expenses', path: 'finance/expenses', icon: 'clipboard' },
     ],
   },
   {
@@ -303,11 +316,14 @@ export default function Admin() {
   }
 
   const activeTab = location.pathname.split('/')[2] ?? 'dashboard';
+  // Finance items are two segments deep (finance/pnl), everything else one.
+  const activePath = activeTab === 'finance' ? location.pathname.split('/').slice(2, 4).join('/') : activeTab;
   const editingPage = /^\/admin\/pages\/[^/]+/.test(location.pathname);
   const editingPost = /^\/admin\/posts\/[^/]+/.test(location.pathname);
   const flushChrome = editingPage || editingPost;
   const activeLabel =
-    NAV_GROUPS.map((g) => g.items.find((t) => t.path === activeTab)).find(Boolean)?.label ?? 'Admin';
+    NAV_GROUPS.map((g) => g.items.find((t) => t.path === activePath)).find(Boolean)?.label ??
+    (activeTab === 'finance' ? 'Finance' : 'Admin');
 
   const paletteNav = NAV_GROUPS.flatMap((g) =>
     g.items.map((t) => ({ label: t.label, path: t.path, icon: t.icon, group: g.label })),
@@ -362,7 +378,7 @@ export default function Admin() {
             <div className="admin-sidebar-group" key={group.label}>
               <div className="admin-sidebar-group-label">{group.label}</div>
               {group.items.map((t) => {
-                const isActive = activeTab === t.path;
+                const isActive = activePath === t.path;
                 return (
                   <button
                     key={t.path}
@@ -487,6 +503,7 @@ export default function Admin() {
           <Route path="accounts" element={<CognitoUsersTab adminKey={adminKey} />} />
           <Route path="reviews" element={<ReviewsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />
+          <Route path="finance/*" element={<FinanceTab adminKey={adminKey} />} />
           <Route path="audit-log" element={<AuditLogTab adminKey={adminKey} />} />
           <Route path="*" element={<Navigate to="dashboard" replace />} />
         </Routes>

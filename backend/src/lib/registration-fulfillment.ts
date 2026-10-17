@@ -16,7 +16,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from './supabase.js';
 import { depositClearedLate, isOutstanding, type ChargeStatus } from './event-ticketing.js';
-import { splitFee } from './booking-domain.js';
+import { loadEventSplitContext, splitForEventCharge } from './finance-splits.js';
 import {
   sendRegistrationConfirmed,
   sendPaymentReceipt,
@@ -236,7 +236,9 @@ export async function applyChargePayment(
  * the live webhook all arrive here through the same door, and none of them may
  * restate a split that is already on the row and possibly already paid out.
  *
- * An event with no `platform_fee_bps` has no revenue share — the money is
+ * The split comes from a revenue_split_rules row when one governs the event
+ * (event, then series, then facilitator — 0070), otherwise from the event's
+ * `platform_fee_bps`. With neither there is no revenue share — the money is
  * Hilom's — so the columns stay null and the batch builder never sees the row.
  * That is the difference between "earned nothing" and "was never a revenue
  * share", and it is why these columns are nullable rather than defaulted.
@@ -248,17 +250,12 @@ export async function applyChargePayment(
  */
 async function recordHostSplit(supabase: SupabaseClient, charge: ChargeRow): Promise<void> {
   try {
-    const { data: event, error } = await supabase
-      .from('events')
-      .select('facilitator_id, platform_fee_bps')
-      .eq('id', charge.event_id)
-      .maybeSingle<{ facilitator_id: string | null; platform_fee_bps: number | null }>();
-    if (error) throw error;
+    const event = await loadEventSplitContext(supabase, charge.event_id);
+    if (!event) return;
 
-    // No host, or no negotiated rate: Hilom's own programme.
-    if (!event?.facilitator_id || event.platform_fee_bps === null) return;
-
-    const split = splitFee(charge.amount_centavos, event.platform_fee_bps);
+    const split = await splitForEventCharge(supabase, event, charge.amount_centavos);
+    // No host, no rule and no negotiated rate: Hilom's own programme.
+    if (!split) return;
 
     const { error: writeError } = await supabase
       .from('registration_charges')

@@ -26,6 +26,7 @@ import { confirmPackage } from '../lib/packages.js';
 import { confirmClassSeat } from '../lib/class-fulfillment.js';
 import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import { enqueueRetry } from '../lib/retry-queue.js';
+import { captureAndStorePayment } from '../lib/paymongo-ledger.js';
 import { ok, badRequest, serverError } from '../lib/http.js';
 
 const FULFILLABLE_EVENT_TYPES = new Set(['payment.paid', 'checkout_session.payment.paid']);
@@ -125,10 +126,26 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     return ok({ received: true, handled: false, type: eventType });
   }
 
-  const { paymentId, amountCentavos, currency, metadata, billingName, billingEmail } = normalize(
-    eventType,
-    paymentData,
-  );
+  const normalized = normalize(eventType, paymentData);
+  const response = await dispatch(eventType, normalized);
+
+  // Finance: record what PayMongo charged for this payment (payment_ledger,
+  // 0070). After dispatch so it can never delay or break fulfilment, and
+  // swallowed because the nightly finance job retries anything missed.
+  if (normalized.paymentId?.startsWith('pay_')) {
+    try {
+      const supabase = await getSupabase();
+      await captureAndStorePayment(supabase, normalized.paymentId);
+    } catch (err) {
+      console.warn('[paymongo-webhook] payment_ledger capture failed', { paymentId: normalized.paymentId, err });
+    }
+  }
+
+  return response;
+}
+
+async function dispatch(eventType: string, normalized: NormalizedPayment): Promise<APIGatewayProxyResultV2> {
+  const { paymentId, amountCentavos, currency, metadata, billingName, billingEmail } = normalized;
 
   // Four things are sold through this endpoint now: courses, facilitator
   // sessions, places at ticketed events, and seats in group classes. `kind` is

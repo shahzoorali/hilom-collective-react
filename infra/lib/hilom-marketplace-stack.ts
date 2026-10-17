@@ -185,13 +185,18 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // lib/class-cancellation.ts the facilitator portal calls, so it needs the
     // same SES grant below.
     const adminClasses = makeFn('AdminClassesFn', 'handlers/admin-classes.ts', 'handler');
+    // Admin → Finance (0070): sales register, P&L, payables, reconciliation,
+    // expenses and split rules. The nightly sweep keeps payment_ledger in step
+    // with PayMongo (fees and payouts) for anything the webhook capture missed.
+    const adminFinance = makeFn('AdminFinanceFn', 'handlers/admin-finance.ts', 'handler');
+    const financeSweep = makeFn('FinanceSweepFn', 'handlers/finance-sweep.ts', 'handler');
 
     // ---- grants ----
     for (const fn of [
       facilitatorsPublic, bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations,
       adminFacilitators, bookingSweep,
       eventRegistrations, eventsTicketing, adminRegistrations, registrationSweep, adminPeople,
-      classes, adminOverview, adminClasses, sesEvents,
+      classes, adminOverview, adminClasses, sesEvents, adminFinance, financeSweep,
     ]) {
       supabaseSecret.grantRead(fn);
     }
@@ -242,6 +247,13 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // Read-only, and only so the review screen can mint a signed URL.
     facilitatorDocsBucket.grantRead(adminFacilitators);
     adminFacilitators.addEnvironment('FACILITATOR_DOCS_BUCKET', facilitatorDocsBucket.bucketName);
+    // Expense receipts live in the same private, CDN-less bucket under
+    // finance-receipts/ — invoices carry bank details and names, so they get
+    // the same treatment as credential documents: presigned PUT, five-minute
+    // signed GET, nothing public.
+    facilitatorDocsBucket.grantPut(adminFinance, 'finance-receipts/*');
+    facilitatorDocsBucket.grantRead(adminFinance, 'finance-receipts/*');
+    adminFinance.addEnvironment('FINANCE_RECEIPTS_BUCKET', facilitatorDocsBucket.bucketName);
 
     // Both accept an admin-group token *or* the legacy shared key, so both need
     // to be able to read the key to compare against.
@@ -251,6 +263,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     adminKeySecret.grantRead(adminCognito);
     adminKeySecret.grantRead(adminOverview);
     adminKeySecret.grantRead(adminClasses);
+    adminKeySecret.grantRead(adminFinance);
 
     // Reads the pool's region and id from the shared Cognito secret, then lists
     // and gets users. No write actions — see the header comment in
@@ -272,7 +285,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // together for the reason the paymongoSecretId prop documents: the grant
     // alone controls nothing at runtime, so a function with the grant but no
     // env var silently reads the *test* secret while holding a live grant.
-    for (const fn of [bookings, eventRegistrations, classes]) {
+    for (const fn of [bookings, eventRegistrations, classes, adminFinance, financeSweep]) {
       paymongoSecret.grantRead(fn);
       fn.addEnvironment('PAYMONGO_SECRET_ID', paymongoSecretId);
     }
@@ -281,7 +294,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // the pool id and SPA client id to build the verifier.
     for (const fn of [
       bookings, facilitatorPortal, facilitatorUploads, facilitatorIntegrations, adminFacilitators,
-      eventRegistrations, classes, adminClasses,
+      eventRegistrations, classes, adminClasses, adminFinance,
     ]) {
       fn.addEnvironment('COGNITO_USER_POOL_ID', cognitoUserPoolId);
       fn.addEnvironment('COGNITO_SPA_CLIENT_ID', cognitoSpaClientId);
@@ -356,6 +369,13 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // Same cadence and the same reasoning: five minutes bounds how long an
     // abandoned deposit checkout can keep a place past its hold, and a reminder
     // window is a day wide, so a missed cycle here is harmless either way.
+    // 02:00 Manila. PayMongo settles payouts daily, so once a night is enough
+    // for the ledger to pick up payout ids and late fees.
+    new events.Rule(this, 'FinanceSweepRule', {
+      schedule: events.Schedule.cron({ minute: '0', hour: '18' }),
+      targets: [new eventsTargets.LambdaFunction(financeSweep)],
+    });
+
     new events.Rule(this, 'RegistrationSweepRule', {
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
       targets: [new eventsTargets.LambdaFunction(registrationSweep)],
@@ -552,6 +572,9 @@ export class HilomMarketplaceStack extends cdk.Stack {
     ]);
 
     attach(adminOverview, 'AdminOverviewInt', [['/admin/overview', [GET]]]);
+
+    // Sub-routes are matched inside the handler; see the header of admin-finance.ts.
+    attach(adminFinance, 'AdminFinanceInt', [['/admin/finance/{proxy+}', [GET, POST, PUT, DELETE]]]);
 
     attach(adminClasses, 'AdminClassesInt', [
       ['/admin/classes', [GET]],
