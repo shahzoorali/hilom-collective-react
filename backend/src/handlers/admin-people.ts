@@ -26,6 +26,7 @@ import { ok, notFound, badRequest, unauthorized, serverError, isAuthorizedAdmin 
 import { actorFromEvent, recordAudit } from '../lib/audit.js';
 import { isOutstanding, paidCentavos, outstandingCentavos, nextDueCharge } from '../lib/event-ticketing.js';
 import { csvResponse } from '../lib/csv.js';
+import { buildActivity } from '../lib/person-activity.js';
 
 /** Mirrors the columns of public.people_directory. */
 interface PersonRow extends Record<string, unknown> {
@@ -229,7 +230,9 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
       .select(
         'id, event_id, status, seat_no, buyer_email, registrant_name, registrant_email, ' +
           'plan_name, plan_kind, total_centavos, currency, created_at, flagged_at, ' +
-          'refund_centavos, refunded_at, refund_reference, events(title, starts_at)',
+          'refund_centavos, refunded_at, refund_reference, events(title, starts_at), ' +
+          'confirmed_at, join_details_sent_at, reminder_sent_at, flag_reason, cancellation_requested_at, ' +
+          'cancellation_reason, cancellation_decided_at, cancellation_decision, cancelled_at, total_centavos',
       )
       // Both roles: they may have paid for a place someone else is sitting in,
       // or be sitting in one somebody else paid for. The row on the directory
@@ -241,7 +244,7 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
       .select(
         'id, facilitator_id, status, starts_at, ends_at, price_centavos, currency, created_at, ' +
           'paymongo_payment_id, refund_centavos, refunded_at, refund_reference, ' +
-          'facilitators(display_name)',
+          'cancelled_at, cancellation_reason, reminder_sent_at, facilitators(display_name)',
       )
       .ilike('client_email', email)
       .order('starts_at', { ascending: false }),
@@ -255,7 +258,7 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
       .from('class_registrations')
       .select(
         'id, session_id, status, seat_no, price_centavos, currency, created_at, ' +
-          'refund_centavos, refunded_at, refund_reference, ' +
+          'refund_centavos, refunded_at, refund_reference, updated_at, cancelled_at, cancellation_reason, ' +
           'facilitators(display_name), facilitator_class_sessions(starts_at, ends_at, facilitator_classes(title))',
       )
       .ilike('client_email', email)
@@ -301,8 +304,51 @@ async function personDetail(rawEmail: string): Promise<APIGatewayProxyResultV2> 
   const bookingRows = (bookings.data ?? []) as unknown as BookingSummary[];
   const classRegistrationRows = (classRegistrations.data ?? []) as unknown as ClassRegistrationSummary[];
 
+  const chargeIds = [...charges.values()].flat().map((c) => c.id);
+  const paymentIds = [...charges.values()]
+    .flat()
+    .map((c) => c.paymongo_payment_id as string | null)
+    .filter((id): id is string => !!id);
+  const [reminderRes, ledgerRes] = await Promise.all([
+    chargeIds.length
+      ? supabase
+          .from('registration_charge_reminders')
+          .select('charge_id, tier, sent_at, sent_to, delivery_status')
+          .in('charge_id', chargeIds)
+      : Promise.resolve({ data: [], error: null }),
+    paymentIds.length
+      ? supabase
+          .from('payment_ledger')
+          .select('paymongo_payment_id, method, fee_centavos, net_centavos')
+          .in('paymongo_payment_id', paymentIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (reminderRes.error) throw reminderRes.error;
+  if (ledgerRes.error) throw ledgerRes.error;
+
+  const remindersByCharge = new Map<string, Record<string, any>[]>();
+  for (const m of (reminderRes.data ?? []) as Record<string, any>[]) {
+    remindersByCharge.set(m.charge_id, [...(remindersByCharge.get(m.charge_id) ?? []), m]);
+  }
+  const ledgerByPayment = new Map<string, Record<string, any>>(
+    ((ledgerRes.data ?? []) as Record<string, any>[]).map((l) => [l.paymongo_payment_id, l]),
+  );
+
+  const activity = buildActivity({
+    email,
+    orders: (orders.data ?? []) as unknown as Record<string, any>[],
+    registrations: registrationRows as unknown as Record<string, any>[],
+    charges: charges as unknown as Map<string, Record<string, any>[]>,
+    reminders: remindersByCharge,
+    ledger: ledgerByPayment,
+    bookings: bookingRows as unknown as Record<string, any>[],
+    classRegistrations: classRegistrationRows as unknown as Record<string, any>[],
+    enquiries: matchedEnquiries as unknown as Record<string, any>[],
+  });
+
   return ok({
     person,
+    activity,
     orders: orders.data ?? [],
     registrations: withCharges,
     bookings: bookingRows,
@@ -352,7 +398,8 @@ async function chargesFor(
     .from('registration_charges')
     .select(
       'id, registration_id, seq, label, is_deposit, amount_centavos, currency, due_at, status, ' +
-        'paid_at, paid_method, paid_reference, receipt_no, flagged_at, void_reason',
+        'paid_at, paid_method, paid_reference, receipt_no, flagged_at, void_reason, voided_at, updated_at, ' +
+        'paymongo_payment_id',
     )
     .in('registration_id', registrationIds)
     .order('seq', { ascending: true })

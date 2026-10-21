@@ -887,10 +887,9 @@ export async function sendCancellationRequestedAdminAlert(input: {
  *
  * Sent once per registration, from the same place the buyer's own
  * confirmation goes out — the two are the only signal admin gets that a sale
- * happened; there is no polling of the dashboard. Not sent for later
- * instalments on the same registration: "someone bought a place" is the event
- * worth a ping, and repeating it for every instalment would just teach admin
- * to ignore it.
+ * happened; there is no polling of the dashboard. Later instalments on the same
+ * registration send `sendInstalmentPaidAdminAlert` instead, worded as a
+ * payment rather than a sale.
  */
 export async function sendRegistrationPaidAdminAlert(input: {
   to: string;
@@ -930,6 +929,125 @@ export async function sendRegistrationPaidAdminAlert(input: {
       '',
       `${SITE}/admin/registrations`,
       `(registration ${registrationId})`,
+    ]),
+    renderEmail({ heading, body }),
+  );
+}
+
+/**
+ * Tells admin an instalment on an already-confirmed place was paid.
+ *
+ * The deposit alert above is "someone bought a place"; this is "money arrived
+ * for a place we already knew about". Admin has no other signal for it short of
+ * opening the finance screens, so each instalment gets its own ping, with the
+ * balance still owing so it doubles as a progress line.
+ */
+export async function sendInstalmentPaidAdminAlert(input: {
+  to: string;
+  registrationId: string;
+  registrantName: string;
+  buyerEmail: string;
+  eventTitle: string;
+  planName: string;
+  chargeLabel: string;
+  amountCentavos: number;
+  balanceCentavos: number;
+  currency: string;
+  receiptNo: string;
+}): Promise<void> {
+  const {
+    to,
+    registrationId,
+    registrantName,
+    buyerEmail,
+    eventTitle,
+    planName,
+    chargeLabel,
+    amountCentavos,
+    balanceCentavos,
+    currency,
+    receiptNo,
+  } = input;
+  const heading = `Instalment paid: ${eventTitle}`;
+  const balance = balanceCentavos > 0 ? peso(balanceCentavos, currency) : 'Fully paid';
+
+  const rows = [
+    { label: 'Registrant', value: escapeHtml(registrantName) },
+    { label: 'Email', value: escapeHtml(buyerEmail) },
+    { label: 'Plan', value: escapeHtml(planName) },
+    { label: 'Payment', value: escapeHtml(chargeLabel) },
+    { label: 'Paid', value: escapeHtml(peso(amountCentavos, currency)) },
+    { label: 'Balance', value: escapeHtml(balance) },
+    { label: 'Receipt', value: escapeHtml(receiptNo) },
+  ];
+
+  const body =
+    p(`${escapeHtml(registrantName)} just paid ${escapeHtml(chargeLabel)} for ${escapeHtml(eventTitle)}.`) +
+    details(rows) +
+    button('Review in admin', `${SITE}/admin/registrations`);
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `${registrantName} (${buyerEmail}) just paid ${chargeLabel} for ${eventTitle}.`,
+      `Plan: ${planName}`,
+      `Paid: ${peso(amountCentavos, currency)} (receipt ${receiptNo})`,
+      `Balance: ${balance}`,
+      '',
+      `${SITE}/admin/registrations`,
+      `(registration ${registrationId})`,
+    ]),
+    renderEmail({ heading, body }),
+  );
+}
+
+/**
+ * Tells the event's host that a registrant paid an instalment.
+ *
+ * Same rule as the new-registration alert: no money. It says that a payment
+ * arrived and whether the place is now fully paid, and leaves amounts to the
+ * payouts screen.
+ */
+export async function sendInstalmentHostAlert(input: {
+  to: string;
+  hostName: string;
+  eventId: string;
+  eventTitle: string;
+  registrantName: string;
+  registrantEmail: string;
+  chargeLabel: string;
+  fullyPaid: boolean;
+}): Promise<void> {
+  const { to, hostName, eventId, eventTitle, registrantName, registrantEmail, chargeLabel, fullyPaid } = input;
+  const heading = `Payment received: ${eventTitle}`;
+  const status = fullyPaid ? 'Fully paid' : 'Instalments remaining';
+
+  const rows = [
+    { label: 'Who', value: escapeHtml(registrantName) },
+    { label: 'Email', value: escapeHtml(registrantEmail) },
+    { label: 'Event', value: escapeHtml(eventTitle) },
+    { label: 'Payment', value: escapeHtml(chargeLabel) },
+    { label: 'Status', value: escapeHtml(status) },
+  ];
+
+  const body =
+    p(
+      `Hi ${escapeHtml(hostName)}, ${escapeHtml(registrantName)} has paid ${escapeHtml(chargeLabel)} for ${escapeHtml(eventTitle)}.`,
+    ) +
+    details(rows) +
+    button('See the full roster', `${SITE}/facilitator/events/${eventId}`);
+
+  await send(
+    to,
+    heading,
+    renderText(heading, [
+      `Hi ${hostName},`,
+      '',
+      `${registrantName} (${registrantEmail}) has paid ${chargeLabel} for ${eventTitle}.`,
+      `Status: ${status}`,
+      '',
+      `See the full roster: ${SITE}/facilitator/events/${eventId}`,
     ]),
     renderEmail({ heading, body }),
   );

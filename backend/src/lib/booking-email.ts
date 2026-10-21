@@ -1489,3 +1489,98 @@ export async function sendClassJoined(input: {
 
   await send(to, `You're in: ${className}`, text, html);
 }
+
+/**
+ * Tells admin and the class's facilitator that a seat was just confirmed.
+ *
+ * `sendClassJoined` only ever reached the person who joined, so a paid seat was
+ * invisible to the team inbox and to the facilitator until they opened a
+ * dashboard. One call sends both; the facilitator copy omits money (their cut
+ * is a payout question) and the meeting link (it is on their own dashboard).
+ * `facilitatorEmail` null skips that copy.
+ */
+export async function sendClassSeatAlerts(input: {
+  facilitatorEmail: string | null;
+  facilitatorName: string;
+  className: string;
+  clientName: string | null;
+  clientEmail: string;
+  startsAt: string;
+  timezone: string;
+  pricePaidCentavos: number;
+  currency: string;
+  registrationId: string;
+}): Promise<void> {
+  const {
+    facilitatorEmail,
+    facilitatorName,
+    className,
+    clientName,
+    clientEmail,
+    startsAt,
+    timezone,
+    pricePaidCentavos,
+    currency,
+    registrationId,
+  } = input;
+
+  const who = clientName || clientEmail;
+  const when = formatWhen(startsAt, timezone || 'Asia/Manila');
+  const paid = pricePaidCentavos > 0 ? peso(pricePaidCentavos, currency) : 'Free';
+
+  const adminHeading = `Class seat ${pricePaidCentavos > 0 ? 'paid' : 'joined'}: ${className}`;
+  const adminRows = [
+    { label: 'Client', value: escapeHtml(who) },
+    { label: 'Email', value: escapeHtml(clientEmail) },
+    { label: 'Class', value: escapeHtml(className) },
+    { label: 'Facilitator', value: escapeHtml(facilitatorName) },
+    { label: 'When', value: escapeHtml(when) },
+    { label: 'Paid', value: escapeHtml(paid) },
+  ];
+  await send(
+    ADMIN_ALERT_EMAIL,
+    adminHeading,
+    renderText(adminHeading, [
+      `${who} (${clientEmail}) took a seat in ${className} with ${facilitatorName}.`,
+      `When: ${when}`,
+      `Paid: ${paid}`,
+      `(registration ${registrationId})`,
+    ]),
+    renderEmail({
+      heading: adminHeading,
+      body:
+        p(`${escapeHtml(who)} took a seat in <strong>${escapeHtml(className)}</strong>.`) +
+        details(adminRows) +
+        button('Review in admin', 'https://www.hilomcollective.com/admin/classes'),
+    }),
+  );
+
+  if (!facilitatorEmail) return;
+
+  const hostHeading = `New seat: ${className}`;
+  const hostRows = [
+    { label: 'Who', value: escapeHtml(who) },
+    { label: 'Email', value: escapeHtml(clientEmail) },
+    { label: 'Class', value: escapeHtml(className) },
+    { label: 'When', value: escapeHtml(when) },
+  ];
+  await send(
+    facilitatorEmail,
+    hostHeading,
+    renderText(hostHeading, [
+      `Hi ${facilitatorName},`,
+      '',
+      `${who} (${clientEmail}) has a confirmed seat in ${className}.`,
+      `When: ${when}`,
+      '',
+      'https://www.hilomcollective.com/facilitator/classes',
+    ]),
+    renderEmail({
+      heading: hostHeading,
+      body:
+        p(`Hi ${escapeHtml(facilitatorName)}, ${escapeHtml(who)} has a confirmed seat in <strong>${escapeHtml(className)}</strong>.`) +
+        details(hostRows) +
+        button('Open your classes', 'https://www.hilomcollective.com/facilitator/classes'),
+    }),
+  );
+}

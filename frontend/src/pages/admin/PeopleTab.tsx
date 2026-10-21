@@ -33,6 +33,7 @@ import {
   type PersonDetail,
   type PersonSource,
   type PersonCharge,
+  type PersonActivityItem,
   type PeopleSort,
 } from '../../lib/cms';
 
@@ -442,6 +443,8 @@ function PersonHistory({ detail }: { detail: PersonDetail }) {
 
       {nothing && <p className="small muted" style={{ margin: 0 }}>No records to show.</p>}
 
+      <ActivityTimeline items={detail.activity ?? []} />
+
       <Section title="Course orders" count={orders.length}>
         {orders.map((o) => (
           <Line
@@ -621,6 +624,87 @@ function ChargeLine({ charge }: { charge: PersonCharge }) {
             ? charge.void_reason ?? 'superseded'
             : `due ${manilaDate(charge.due_at)}`}
       </span>
+    </div>
+  );
+}
+
+const TONE_COLOR: Record<string, string> = {
+  ok: 'var(--ok, #2e7d32)',
+  warn: 'var(--warn, #b26a00)',
+  bad: 'var(--bad, #c62828)',
+  info: 'var(--muted)',
+};
+
+const manilaDateTime = (iso: string) =>
+  new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(iso));
+
+/**
+ * Everything that has happened to this person, oldest first.
+ *
+ * Collapsed past the first few lines would hide the very thing support opens
+ * this for (the latest event), so it shows the full history in a scroll box
+ * and starts it scrolled to the newest entry.
+ */
+function ActivityTimeline({ items }: { items: PersonActivityItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <p className="small" style={{ fontWeight: 700, margin: '0 0 6px' }}>
+        Activity from the beginning ({items.length}) — times in Manila
+      </p>
+      <ol
+        style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          maxHeight: 360,
+          overflowY: 'auto',
+          borderLeft: '2px solid var(--line)',
+        }}
+        ref={(el) => {
+          if (el) el.scrollTop = el.scrollHeight;
+        }}
+      >
+        {items.map((a, i) => (
+          <li key={`${a.at}-${i}`} style={{ padding: '6px 0 6px 12px', position: 'relative' }}>
+            <span
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: -6,
+                top: 12,
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background: TONE_COLOR[a.tone] ?? TONE_COLOR.info,
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span style={{ minWidth: 0 }}>
+                <span className="small muted" style={{ display: 'block' }}>
+                  {manilaDateTime(a.at)}
+                </span>
+                <span style={{ display: 'block' }}>{a.title}</span>
+                {a.detail && (
+                  <span className="small muted" style={{ display: 'block', wordBreak: 'break-word' }}>
+                    {a.detail}
+                  </span>
+                )}
+              </span>
+              {a.amount_centavos != null && a.amount_centavos > 0 && (
+                <span style={{ whiteSpace: 'nowrap' }}>{money(a.amount_centavos, a.currency)}</span>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

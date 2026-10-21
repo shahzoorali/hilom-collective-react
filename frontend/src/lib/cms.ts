@@ -1299,8 +1299,21 @@ export interface PersonCharge {
   void_reason: string | null;
 }
 
+/** One dated event in a person's history, oldest first. Built server-side. */
+export interface PersonActivityItem {
+  at: string;
+  kind: 'order' | 'event' | 'payment' | 'reminder' | 'class' | 'booking' | 'enquiry';
+  title: string;
+  detail?: string;
+  amount_centavos?: number | null;
+  currency?: string;
+  tone: 'ok' | 'warn' | 'bad' | 'info';
+}
+
 export interface PersonDetail {
   person: Person;
+  /** Everything that happened to this person, oldest first. */
+  activity: PersonActivityItem[];
   /** Totals across every record below, computed server-side. */
   money: {
     registrations_paid_centavos: number;

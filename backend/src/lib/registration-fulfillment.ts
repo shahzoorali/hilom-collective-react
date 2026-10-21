@@ -23,6 +23,8 @@ import {
   sendFullySettled,
   sendRegistrationPaidAdminAlert,
   sendRegistrationHostAlert,
+  sendInstalmentPaidAdminAlert,
+  sendInstalmentHostAlert,
 } from './registration-email.js';
 
 /** Where the "someone paid" ping goes — same inbox as every other admin alert. */
@@ -443,10 +445,82 @@ async function notify(
     await notifyHost(supabase, registration, event);
   } else {
     await sendPaymentReceipt({ ...context, charge, receiptNo });
+
+    // A later instalment on a place that was already confirmed. The deposit
+    // path above pings admin and the host once per registration; this is the
+    // same signal for each further payment, so neither side has to open the
+    // finance screens to learn that money arrived.
+    const balanceCentavos = schedule
+      .filter((c) => isOutstanding(c.status))
+      .reduce((sum, c) => sum + c.amount_centavos, 0);
+    try {
+      await sendInstalmentPaidAdminAlert({
+        to: ADMIN_ALERT_EMAIL,
+        registrationId: registration.id,
+        registrantName: registration.registrant_name,
+        buyerEmail: registration.buyer_email,
+        eventTitle: event.title,
+        planName: registration.plan_name,
+        chargeLabel: charge.label,
+        amountCentavos: charge.amount_centavos,
+        balanceCentavos,
+        currency: charge.currency,
+        receiptNo,
+      });
+    } catch (err) {
+      console.warn('[registration-fulfillment] instalment admin alert failed', {
+        registrationId: registration.id,
+        err,
+      });
+    }
+    await notifyHostInstalment(supabase, registration, event, charge.label, settled);
   }
 
   if (settled && registration.plan_kind === 'installment') {
     await sendFullySettled(context);
+  }
+}
+
+/**
+ * Tells the event's host that a registrant paid a further instalment.
+ *
+ * Same no-op cases and the same never-throws contract as `notifyHost`, without
+ * the roster count: the place was already counted when the deposit cleared.
+ */
+async function notifyHostInstalment(
+  supabase: SupabaseClient,
+  registration: RegistrationRow,
+  event: { title: string; facilitator_id: string | null },
+  chargeLabel: string,
+  fullyPaid: boolean,
+): Promise<void> {
+  if (!event.facilitator_id) return;
+
+  try {
+    const { data: host } = await supabase
+      .from('facilitators')
+      .select('email, display_name, short_name')
+      .eq('id', event.facilitator_id)
+      .maybeSingle<{ email: string | null; display_name: string; short_name: string | null }>();
+
+    if (!host?.email) return;
+
+    await sendInstalmentHostAlert({
+      to: host.email,
+      hostName: host.short_name || host.display_name,
+      eventId: registration.event_id,
+      eventTitle: event.title,
+      registrantName: registration.registrant_name,
+      registrantEmail: registration.registrant_email,
+      chargeLabel,
+      fullyPaid,
+    });
+  } catch (err) {
+    console.warn('[registration-fulfillment] instalment host alert failed', {
+      registrationId: registration.id,
+      eventId: registration.event_id,
+      err,
+    });
   }
 }
 

@@ -19,7 +19,7 @@
  * for. Confirming twice must not email twice.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { sendClassJoined } from './booking-email.js';
+import { sendClassJoined, sendClassSeatAlerts } from './booking-email.js';
 
 export interface ClassConfirmResult {
   status: 'confirmed' | 'already_confirmed';
@@ -74,7 +74,7 @@ async function notifyJoined(supabase: SupabaseClient, registrationId: string): P
         'client_email, client_name, price_centavos, currency, ' +
           'facilitator_class_sessions!inner(starts_at, meeting_url, ' +
           'facilitator_classes!inner(title, description, delivery_mode, location, duration_minutes), ' +
-          'facilitators!inner(display_name, short_name, timezone))',
+          'facilitators!inner(email, display_name, short_name, timezone))',
       )
       .eq('id', registrationId)
       .maybeSingle<Record<string, any>>();
@@ -85,6 +85,29 @@ async function notifyJoined(supabase: SupabaseClient, registrationId: string): P
     const cls = session?.facilitator_classes;
     const facilitator = session?.facilitators;
     if (!session || !cls) return;
+
+    const clientName: string | null = data.client_name ?? null;
+    const timezone = facilitator?.timezone || 'Asia/Manila';
+
+    // Admin and the facilitator hear about the seat too, not only the joiner.
+    // Sent first and in its own try/catch so that neither a failure here nor in
+    // the joiner's email can suppress the other.
+    try {
+      await sendClassSeatAlerts({
+        facilitatorEmail: facilitator?.email ?? null,
+        facilitatorName: facilitator?.short_name || facilitator?.display_name || 'your facilitator',
+        className: cls.title,
+        clientName,
+        clientEmail: data.client_email,
+        startsAt: session.starts_at,
+        timezone,
+        pricePaidCentavos: Number(data.price_centavos ?? 0),
+        currency: String(data.currency ?? 'PHP'),
+        registrationId,
+      });
+    } catch (err) {
+      console.error('[class-fulfillment] seat alerts failed', { registrationId, err });
+    }
 
     await sendClassJoined({
       to: data.client_email,
