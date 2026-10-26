@@ -812,9 +812,10 @@ async function review(
         client_label: reviewerLabel(booking.client_name),
         status: 'pending',
       },
-      // The unique constraint from 0013. Without naming it, a revision would
-      // insert a second review for the same session.
-      { onConflict: 'booking_id' },
+      // 0074: the real unique index backing the upsert — 0050 replaced
+      // 0013's plain `unique` on booking_id with a partial index, which
+      // PostgREST's upsert can never target as an ON CONFLICT arbiter.
+      { onConflict: 'subject_id' },
     )
     .select('id, rating, comment, status, created_at')
     .maybeSingle();

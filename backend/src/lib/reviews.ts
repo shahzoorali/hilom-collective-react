@@ -141,13 +141,16 @@ export function isAttendanceReviewable(
 }
 
 /**
- * The `onConflict` column for a subject.
+ * The `onConflict` column for a subject upsert.
  *
  * 0050 replaced the unique *constraint* on booking_id with three partial
- * unique *indexes*, and PostgREST needs to be told which one an upsert is
- * targeting. Derived from the subject rather than passed alongside it, so the
- * two cannot drift apart.
+ * unique *indexes* (one per subject column), but PostgREST's upsert only ever
+ * emits `ON CONFLICT (<column>)` — it cannot restate a partial index's WHERE
+ * predicate, so none of the three could ever be picked as the arbiter and
+ * every event/class review save failed. 0074 added `subject_id`, a generated
+ * column backed by one real (non-partial) unique index, which is what every
+ * subject now targets regardless of which of the three columns it set.
  */
-export function reviewConflictTarget(subject: ReviewSubject): string {
-  return Object.keys(subject)[0]!;
+export function reviewConflictTarget(_subject: ReviewSubject): string {
+  return 'subject_id';
 }

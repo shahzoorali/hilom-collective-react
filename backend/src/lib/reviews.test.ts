@@ -191,13 +191,13 @@ describe('isAttendanceReviewable', () => {
 });
 
 describe('reviewConflictTarget', () => {
-  // 0050 replaced the unique constraint on booking_id with three partial
-  // unique indexes. PostgREST has to be told which one an upsert targets, and
-  // naming the wrong one would insert a second review instead of revising the
-  // first.
-  it('names the column for each subject', () => {
-    assert.equal(reviewConflictTarget({ booking_id: 'b1' }), 'booking_id');
-    assert.equal(reviewConflictTarget({ event_registration_id: 'e1' }), 'event_registration_id');
-    assert.equal(reviewConflictTarget({ class_registration_id: 'c1' }), 'class_registration_id');
+  // 0050's three partial unique indexes can never back a PostgREST upsert
+  // (no WHERE predicate on the ON CONFLICT clause means Postgres won't pick
+  // a partial index as the arbiter). 0074 added `subject_id`, one real
+  // unique index every subject targets, regardless of which column it set.
+  it('always targets subject_id', () => {
+    assert.equal(reviewConflictTarget({ booking_id: 'b1' }), 'subject_id');
+    assert.equal(reviewConflictTarget({ event_registration_id: 'e1' }), 'subject_id');
+    assert.equal(reviewConflictTarget({ class_registration_id: 'c1' }), 'subject_id');
   });
 });
