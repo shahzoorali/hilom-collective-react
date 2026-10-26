@@ -266,12 +266,13 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
                 type="button"
                 className={c.id === conversationId ? 'is-active' : ''}
                 onClick={() => void openConversation(c.id)}
-                title={`${c.title}\n${c.actor_label} · ${new Date(c.updated_at).toLocaleString()}`}
+                title={`${c.title}\nID: ${c.id}\n${c.actor_label} · ${new Date(c.updated_at).toLocaleString()}`}
               >
                 <span className="assistant-side__title">{c.title}</span>
                 <span className="muted small">
                   {c.actor_label} · {new Date(c.updated_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                 </span>
+                <span className="muted small assistant-side__id">{c.id}</span>
               </button>
               <button
                 type="button"
@@ -299,6 +300,18 @@ export default function AssistantTab({ adminKey }: { adminKey: string }) {
             +
           </button>
         </div>
+        {conversationId && (
+          <div className="assistant-convid">
+            <span className="muted small">Conversation ID: {conversationId}</span>
+            <button
+              type="button"
+              className="btn btn-ghost small"
+              onClick={() => void navigator.clipboard.writeText(conversationId)}
+            >
+              Copy
+            </button>
+          </div>
+        )}
         <div className="assistant-thread">
           {runs.length === 0 ? (
             <div className="assistant-empty">

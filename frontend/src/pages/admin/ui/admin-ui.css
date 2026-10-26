@@ -487,6 +487,9 @@ button.stat:hover { border-color: var(--forest); }
 @media (hover: none) { .assistant-side__list .assistant-side__delete { opacity: 1; } }
 .assistant-side__list button.is-active { background: var(--admin-sel); }
 .assistant-side__title { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.assistant-side__id { display: block; font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.7; }
+.assistant-convid { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 1.5rem; border-bottom: 1px solid var(--line); flex: none; }
+.assistant-convid .btn { min-height: 0; padding: 0.15rem 0.5rem; }
 .assistant-main { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .assistant-thread { flex: 1; overflow-y: auto; padding: 1.25rem 1.5rem; display: flex; flex-direction: column; gap: 1.5rem; }
 .assistant-empty { max-width: 680px; margin: 2rem auto; text-align: center; }
