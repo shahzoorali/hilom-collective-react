@@ -41,6 +41,39 @@ function splitName(email: string, name?: string | null): { firstname: string; la
   return { firstname: first ?? trimmed, lastname: rest.join(' ') };
 }
 
+/** Minimal slice of the Supabase client the claim needs — lets tests pass a fake. */
+export interface OrdersClaimClient {
+  from(table: 'orders'): {
+    update(patch: Record<string, unknown>): {
+      eq(col: 'id', v: string): {
+        neq(col: 'status', v: 'fulfilled'): {
+          select(cols: 'id'): PromiseLike<{ data: { id: string }[] | null; error: unknown }>;
+        };
+      };
+    };
+  };
+}
+
+/**
+ * Atomically move an order to `fulfilled`. Returns true only for the caller
+ * whose UPDATE actually changed the row; a concurrent or later caller gets
+ * false and must not send notifications.
+ */
+export async function markFulfilledOnce(
+  supabase: OrdersClaimClient,
+  orderId: string,
+  fields: { cognito_user_sub: string; moodle_user_id: number },
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'fulfilled', ...fields, error_detail: null })
+    .eq('id', orderId)
+    .neq('status', 'fulfilled')
+    .select('id');
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
 export async function fulfillOrder(orderId: string, billingName?: string | null): Promise<FulfillResult> {
   const supabase = await getSupabase();
 
@@ -133,16 +166,20 @@ export async function fulfillOrder(orderId: string, billingName?: string | null)
     // are missing instead of failing on the ones that already landed.
     await moodle.enrolUser(moodleUser.id, courseIds);
 
-    const { error: updateError } = await supabase
-      .from('orders')
-      .update({
-        status: 'fulfilled',
-        cognito_user_sub: cognitoUserSub,
-        moodle_user_id: moodleUser.id,
-        error_detail: null,
-      })
-      .eq('id', orderId);
-    if (updateError) throw updateError;
+    // Claim the transition. Two PayMongo events for one payment can both get
+    // this far (the `fulfilled` check at the top runs before either has
+    // finished enrolling). Everything above is safe to repeat; the emails are
+    // not. The `neq('status', 'fulfilled')` filter makes this UPDATE the one
+    // decision point: Postgres serialises the two writes on the row lock and
+    // re-checks the filter after the first commits, so exactly one caller
+    // gets a row back. Only that caller sends the emails.
+    const won = await markFulfilledOnce(supabase as unknown as OrdersClaimClient, orderId, {
+      cognito_user_sub: cognitoUserSub,
+      moodle_user_id: moodleUser.id,
+    });
+    if (!won) {
+      return { orderId, status: 'already_fulfilled', moodleUserId: moodleUser.id, cognitoUserSub, courseIds };
+    }
 
     // Best-effort, and deliberately after the order is already durably marked
     // `fulfilled`: the buyer's course access is real either way, and an SES

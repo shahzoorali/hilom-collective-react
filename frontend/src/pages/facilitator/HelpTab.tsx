@@ -159,7 +159,7 @@ function ArticleList({ items }: { items: { key: string; title: string; summary: 
 }
 
 function ContactLink() {
-  return <a href="mailto:hello@hilomcollective.com">email hello@hilomcollective.com</a>;
+  return <a href="mailto:kumusta@hilomcollective.com">email kumusta@hilomcollective.com</a>;
 }
 
 /**

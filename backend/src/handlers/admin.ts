@@ -134,6 +134,13 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
       }),
     );
 
+    // Titles as they were before this sync, so a Moodle rename can be carried
+    // over to products that were never given a name of their own.
+    const { data: before, error: beforeErr } = await supabase
+      .from('courses')
+      .select('moodle_course_id, fullname');
+    if (beforeErr) throw beforeErr;
+
     const { error } = await supabase
       .from('courses')
       .upsert(rows, { onConflict: 'moodle_course_id' });
@@ -141,16 +148,67 @@ export async function syncCourses(event: APIGatewayProxyEventV2): Promise<APIGat
     if (error) throw error;
 
     const drafted = await draftMissingProducts(supabase, courses);
+    const renamed = await carryOverCourseRenames(
+      supabase,
+      new Map((before ?? []).map((r) => [r.moodle_course_id as number, r.fullname as string])),
+      courses,
+    );
 
     return ok({
       synced: rows.length,
       drafted,
+      renamed,
       last_synced_at: rows[0]?.last_synced_at ?? null,
       courses: rows.map((r) => ({ id: r.moodle_course_id, shortname: r.shortname })),
     });
   } catch (err) {
     return serverError('admin.syncCourses', err);
   }
+}
+
+/**
+ * When a course is renamed in Moodle, rename the product that sells it, but
+ * only if that product sells exactly this one course and is still called by
+ * the course's previous Moodle title. A product an admin renamed on purpose,
+ * or a bundle, is left alone. Before this, products kept their first name
+ * forever (Canny: "Remove 'Module' on Course Title").
+ */
+export function pickProductRenames(
+  products: { id: string; name: string; courseIds: number[] }[],
+  previousTitles: Map<number, string>,
+  currentTitles: Map<number, string>,
+): { id: string; from: string; to: string }[] {
+  const out: { id: string; from: string; to: string }[] = [];
+  for (const p of products) {
+    if (p.courseIds.length !== 1) continue;
+    const id = p.courseIds[0]!;
+    const prev = previousTitles.get(id)?.trim();
+    const next = currentTitles.get(id)?.trim();
+    if (!prev || !next || prev === next) continue;
+    if (p.name.trim() !== prev) continue;
+    out.push({ id: p.id, from: p.name, to: next });
+  }
+  return out;
+}
+
+async function carryOverCourseRenames(
+  supabase: Awaited<ReturnType<typeof getSupabase>>,
+  previousTitles: Map<number, string>,
+  courses: { id: number; fullname: string }[],
+): Promise<{ id: string; from: string; to: string }[]> {
+  const { data, error } = await supabase.from('products').select('id, name, product_courses(moodle_course_id)');
+  if (error) throw error;
+  const products = (data ?? []).map((p) => ({
+    id: p.id as string,
+    name: p.name as string,
+    courseIds: ((p.product_courses as { moodle_course_id: number }[] | null) ?? []).map((r) => r.moodle_course_id),
+  }));
+  const renames = pickProductRenames(products, previousTitles, new Map(courses.map((c) => [c.id, c.fullname])));
+  for (const r of renames) {
+    const { error: upErr } = await supabase.from('products').update({ name: r.to }).eq('id', r.id);
+    if (upErr) throw upErr;
+  }
+  return renames;
 }
 
 /**

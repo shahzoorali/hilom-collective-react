@@ -42,6 +42,15 @@ import type { AdminRegistration, RosterMoney, WaitlistEntry } from '../../lib/cm
 import WaitlistPanel from '../../components/WaitlistPanel';
 import { ActionBar, PageHeader, Section, StatusPill, type Tone } from './ui';
 
+/** UTC ISO → 'YYYY-MM-DDTHH:mm' in the browser's own zone, for datetime-local. */
+function isoToLocalInput(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Review states in which the whole proposal is still the facilitator's to change. */
 const EDITABLE = new Set<EventReviewStatus>(['draft', 'rejected']);
 
@@ -751,10 +760,12 @@ function EventProposalForm({
   onDone: (saved: MyHostedEvent, message?: string) => void;
   onCancel: () => void;
 }) {
-  // `datetime-local` wants 'YYYY-MM-DDTHH:mm' with no zone, and the stored
-  // value is UTC ISO. Sliced rather than reformatted: every event on this site
-  // is in Asia/Manila and the admin editor makes the same trade.
-  const local = (iso: string | null) => (iso ? iso.slice(0, 16) : '');
+  // `datetime-local` wants 'YYYY-MM-DDTHH:mm' wall-clock time in the browser's
+  // zone; save() reads it back with `new Date(value)`, also in the browser's
+  // zone. Slicing the stored UTC ISO instead showed 10:00 Manila as 02:00 and
+  // shifted the event 8 hours earlier on every unchanged save (Canny: rejected
+  // event change still showing).
+  const local = isoToLocalInput;
 
   const [draft, setDraft] = useState({
     title: existing?.title ?? '',
@@ -1130,7 +1141,7 @@ function SeriesProposalForm({
   onDone: (saved: MyEventSeries, message?: string) => void;
   onCancel: () => void;
 }) {
-  const local = (iso: string | null) => (iso ? iso.slice(0, 16) : '');
+  const local = isoToLocalInput;
   const existingDates = existing?.dates ?? [];
 
   const [draft, setDraft] = useState({

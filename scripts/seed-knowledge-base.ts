@@ -1402,7 +1402,7 @@ You will see the agreement when you next open your dashboard, whether your appli
 
 ## Something to change?
 
-A signed agreement cannot be edited or withdrawn from your dashboard. If your address or contact details change, or you spot a mistake in what you typed, email [hello@hilomcollective.com](mailto:hello@hilomcollective.com) and we will put it right.
+A signed agreement cannot be edited or withdrawn from your dashboard. If your address or contact details change, or you spot a mistake in what you typed, email [kumusta@hilomcollective.com](mailto:kumusta@hilomcollective.com) and we will put it right.
 
 ## Did not get the email?
 

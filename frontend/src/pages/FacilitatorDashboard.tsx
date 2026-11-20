@@ -371,7 +371,7 @@ export default function FacilitatorDashboard() {
         {profile.status === 'suspended' && (
           <div className="alert alert-warning">
             <strong>Your listing is paused.</strong> Your profile is hidden and you can't take new
-            bookings. Email <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>{' '}
+            bookings. Email <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a>{' '}
             to restore it.
           </div>
         )}
@@ -496,7 +496,7 @@ function NoAccessGate({
           Existing sessions aren't affected.
         </p>
         <p className="small muted" style={{ marginBottom: 0 }}>
-          Get in touch at <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>{' '}
+          Get in touch at <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a>{' '}
           and we'll sort it out.
         </p>
       </Gate>
@@ -514,7 +514,7 @@ function NoAccessGate({
         </p>
         <p className="small muted" style={{ marginBottom: 0 }}>
           If you'd like to know more, email{' '}
-          <a href="mailto:hello@hilomcollective.com">hello@hilomcollective.com</a>. You can also{' '}
+          <a href="mailto:kumusta@hilomcollective.com">kumusta@hilomcollective.com</a>. You can also{' '}
           <Link to="/facilitators">see who's already on Hilom</Link>.
         </p>
       </Gate>
