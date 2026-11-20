@@ -543,6 +543,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/events/{eventId}/cancel', [POST]],
       ['/admin/audit-log', [GET]],
       ['/admin/registrations', [GET]],
+      ['/admin/registrations.csv', [GET]],
       ['/admin/registrations/{registrationId}/cancel', [POST]],
       ['/admin/registrations/{registrationId}/cancellation-decision', [POST]],
       ['/admin/registrations/{registrationId}/refund-assessment', [GET]],

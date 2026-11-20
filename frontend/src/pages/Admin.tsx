@@ -22,6 +22,7 @@ import FormsTab from './admin/FormsTab';
 import EventsTab from './admin/EventsTab';
 import RegistrationsTab from './admin/RegistrationsTab';
 import PeopleTab from './admin/PeopleTab';
+import CommunityTab from './admin/CommunityTab';
 import CognitoUsersTab from './admin/CognitoUsersTab';
 import { MOODLE_URL } from '../config';
 import PostsTab from './admin/PostsTab';
@@ -87,6 +88,7 @@ const NAV_GROUPS = [
       { label: 'Facilitators', path: 'facilitators', icon: 'leaf' },
       { label: 'Agreement', path: 'facilitator-agreement', icon: 'scroll' },
       { label: 'Forms', path: 'forms', icon: 'clipboard' },
+      { label: 'Community', path: 'community', icon: 'users' },
     ],
   },
   {
@@ -503,6 +505,7 @@ export default function Admin() {
           <Route path="bookings" element={<BookingsTab adminKey={adminKey} />} />
           <Route path="registrations" element={<RegistrationsTab adminKey={adminKey} />} />
           <Route path="people" element={<PeopleTab adminKey={adminKey} />} />
+          <Route path="community" element={<CommunityTab adminKey={adminKey} />} />
           <Route path="accounts" element={<CognitoUsersTab adminKey={adminKey} />} />
           <Route path="reviews" element={<ReviewsTab adminKey={adminKey} />} />
           <Route path="payouts" element={<PayoutsTab adminKey={adminKey} />} />

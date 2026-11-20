@@ -23,6 +23,8 @@ const INTERESTS = [
 export default function CommunityForm() {
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', message: '' });
   const [interests, setInterests] = useState<string[]>([]);
+  // Optional, unticked by default: explicit opt-in to promotional emails.
+  const [marketingConsent, setMarketingConsent] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export default function CommunityForm() {
     setError(null);
     try {
       const captchaToken = await getRecaptchaToken('community_submit');
-      await submitCommunityForm({ ...form, interests, captchaToken });
+      await submitCommunityForm({ ...form, interests, marketingConsent, captchaToken });
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
@@ -113,10 +115,22 @@ export default function CommunityForm() {
         />
       </div>
 
-      <p className="small muted">
-        By signing up, you agree to receive occasional updates from Hilom Collective. You
-        may unsubscribe at any time.
-      </p>
+      <div className="field">
+        <label
+          className="small"
+          style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontWeight: 400 }}
+        >
+          <input
+            type="checkbox" style={{ width: 'auto', marginTop: '0.2rem' }}
+            checked={marketingConsent}
+            onChange={(e) => setMarketingConsent(e.target.checked)}
+          />
+          <span>
+            Yes, send me emails about Hilom's workshops, classes, retreats and campaigns.
+            (Optional. You can unsubscribe at any time.)
+          </span>
+        </label>
+      </div>
 
       {error && (
         <div className="alert alert-error" style={{ marginBottom: '1rem' }}>

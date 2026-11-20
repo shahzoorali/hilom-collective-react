@@ -206,6 +206,17 @@ export default function RegistrationsTab({ adminKey }: { adminKey: string }) {
             Export roster (CSV)
           </a>
         )}
+        {!eventId && (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ padding: '6px 12px' }}
+            title="Every registration across all events, with event name and date"
+            onClick={() => void downloadCsv(adminKey, null).catch((err: Error) => setError(err.message))}
+          >
+            Download all registrations (CSV)
+          </button>
+        )}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -278,11 +289,13 @@ const attentionCount = (rows: AdminRegistration[] | null) =>
   ).length;
 
 /** Fetches the CSV with the admin header, then hands the browser a blob. */
-async function downloadCsv(adminKey: string, eventId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/admin/events/${eventId}/roster.csv`, {
+async function downloadCsv(adminKey: string, eventId: string | null): Promise<void> {
+  // No event selected → every registration across every event.
+  const path = eventId ? `/admin/events/${eventId}/roster.csv` : '/admin/registrations.csv';
+  const res = await fetch(`${API_BASE}${path}`, {
     headers: { 'x-admin-key': adminKey, ...(adminActor() ? { 'x-admin-actor': adminActor() } : {}) },
   });
-  if (!res.ok) throw new Error('Could not export the roster.');
+  if (!res.ok) throw new Error(eventId ? 'Could not export the roster.' : 'Could not export registrations.');
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

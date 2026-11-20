@@ -342,6 +342,7 @@ export class HilomCoreStack extends cdk.Stack {
       'handler',
     );
     const communitySubmit = makeFn('CommunitySubmitFn', 'handlers/community.ts', 'submit');
+    const adminCommunity = makeFn('AdminCommunityFn', 'handlers/admin-community.ts', 'handler');
 
     // The CMS form endpoint has the same SES need and is granted the same
     // statement in the CMS stack — see the note there.
@@ -431,7 +432,7 @@ export class HilomCoreStack extends cdk.Stack {
     );
 
     // Least privilege: only the functions that read a given secret can read it.
-    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate, meOwnedCourses, adminPromoCodes, checkoutPreviewPromo]) {
+    for (const fn of [productsList, productsDetail, coursesList, syncCourses, retryEnrollment, checkoutSession, orderStatus, orderStatusByIntent, orderStatusBySession, adminOrders, adminOrderPayment, revokeAccess, adminProductsList, adminProductsUpdate, meOwnedCourses, adminPromoCodes, checkoutPreviewPromo, communitySubmit, adminCommunity]) {
       supabaseSecret.grantRead(fn);
     }
     moodleSecret.grantRead(syncCourses);
@@ -452,6 +453,7 @@ export class HilomCoreStack extends cdk.Stack {
     adminKeySecret.grantRead(syncCourses);
     adminKeySecret.grantRead(retryEnrollment);
     adminKeySecret.grantRead(adminOrders);
+    adminKeySecret.grantRead(adminCommunity);
     // Reads the transaction behind an order straight from PayMongo, so it needs
     // both the admin key (to authorize the caller) and the PayMongo secret key.
     adminKeySecret.grantRead(adminOrderPayment);
@@ -577,6 +579,10 @@ export class HilomCoreStack extends cdk.Stack {
     route('/admin/promo-codes/{promoCodeId}', apigw.HttpMethod.DELETE, adminPromoCodes, 'AdminPromoCodesDeleteInt');
     route('/checkout/preview-promo', apigw.HttpMethod.POST, checkoutPreviewPromo, 'CheckoutPreviewPromoInt');
     route('/community/submit', apigw.HttpMethod.POST, communitySubmit, 'CommunitySubmitInt');
+    // Community sign-ups (0075) — list, CSV, withdraw consent.
+    route('/admin/community', apigw.HttpMethod.GET, adminCommunity, 'AdminCommunityListInt');
+    route('/admin/community.csv', apigw.HttpMethod.GET, adminCommunity, 'AdminCommunityCsvInt');
+    route('/admin/community/{id}/withdraw-consent', apigw.HttpMethod.POST, adminCommunity, 'AdminCommunityWithdrawInt');
 
     // ---------------------------------------------------------------------
     // Outputs

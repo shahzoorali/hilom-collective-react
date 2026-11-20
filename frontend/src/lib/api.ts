@@ -223,6 +223,7 @@ export const submitCommunityForm = (body: {
   email: string;
   interests: string[];
   message: string;
+  marketingConsent: boolean;
   captchaToken: string;
 }) =>
   apiFetch<{ sent: boolean }>('/community/submit', {

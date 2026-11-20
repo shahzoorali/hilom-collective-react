@@ -5,6 +5,7 @@
  *   GET  /admin/events/{eventId}/roster.csv
  *   POST /admin/events/{eventId}/send-join-details
  *   GET  /admin/registrations                     ?flagged=1 ?eventId= ?status=
+ *   GET  /admin/registrations.csv                 ?from= ?to= ?all=1   (every event)
  *   GET  /admin/registrations/{registrationId}
  *   POST /admin/registrations/{registrationId}/cancel
  *   POST /admin/registrations/{registrationId}/cancellation-decision
@@ -120,6 +121,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     }
     if (eventId && method === 'GET' && path.endsWith('/roster')) {
       return await roster(eventId);
+    }
+    if (method === 'GET' && path.endsWith('/admin/registrations.csv')) {
+      return await allRegistrationsCsv(event.queryStringParameters ?? {}, actor);
     }
     if (method === 'GET' && path.endsWith('/admin/audit-log')) {
       return await auditLog(event.queryStringParameters ?? {});
@@ -360,6 +364,89 @@ async function registrationDetail(registrationId: string): Promise<APIGatewayPro
     registration: decorate(data, byRegistration.get(registrationId) ?? [], now),
     audit: audit ?? [],
   });
+}
+
+/**
+ * Every registration across every event in one CSV (Canny: "Registration Bulk
+ * Download"). One row per registration with the event's title and date, so it
+ * can be sorted or pivoted in a spreadsheet. Live registrations only unless
+ * ?all=1, which adds cancelled/expired ones with their status. ?from/?to
+ * (YYYY-MM-DD) filter by the event's start date.
+ *
+ * Personal-detail columns are the union across events; a column an event did
+ * not ask for is blank. Audited like the per-event roster.
+ */
+async function allRegistrationsCsv(
+  q: Record<string, string | undefined>,
+  actor: AuditActor,
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const now = new Date();
+  const PAGE = 1000;
+  type Row = RegistrationRow & {
+    events: { title: string; starts_at: string | null } | null;
+    created_at: string;
+  };
+  const rows: Row[] = [];
+  for (let from = 0; ; from += PAGE) {
+    let b = supabase
+      .from('event_registrations')
+      .select(`${REGISTRATION_COLUMNS}, events!inner(title, starts_at)`)
+      .order('created_at', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (q.all !== '1') b = b.in('status', LIVE);
+    if (q.from) b = b.gte('events.starts_at', `${q.from}T00:00:00+08:00`);
+    if (q.to) b = b.lte('events.starts_at', `${q.to}T23:59:59+08:00`);
+    const { data, error } = await b.returns<Row[]>();
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < PAGE) break;
+  }
+
+  // Charges in chunks: a single IN of hundreds of UUIDs overflows the URL.
+  const byRegistration = new Map<string, Awaited<ReturnType<typeof chargesFor>> extends Map<string, infer V> ? V : never>();
+  for (let i = 0; i < rows.length; i += 150) {
+    const part = await chargesFor(supabase, rows.slice(i, i + 150).map((r) => r.id));
+    for (const [k, v] of part) byRegistration.set(k, v);
+  }
+
+  const detailKeys = [
+    ...new Set(rows.flatMap((r) => Object.keys((r.registrant_details ?? {}) as Record<string, string>))),
+  ].sort();
+  const manila = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : '';
+
+  const header = [
+    'Event', 'Event date', 'Registered', 'Seat', 'Name', 'Email', 'Phone', 'Status', 'Plan', 'Paid', 'Outstanding',
+    ...detailKeys.map((k) => k.replace(/_/g, ' ')),
+  ];
+  const lines = rows.map((r) => {
+    const charges = byRegistration.get(r.id) ?? [];
+    const details = (r.registrant_details ?? {}) as Record<string, string>;
+    return [
+      r.events?.title ?? '',
+      manila(r.events?.starts_at),
+      manila(r.created_at),
+      r.seat_no,
+      r.registrant_name,
+      r.registrant_email,
+      r.registrant_phone ?? '',
+      r.status,
+      r.plan_name,
+      (paidCentavos(charges) / 100).toFixed(2),
+      (outstandingCentavos(charges) / 100).toFixed(2),
+      ...detailKeys.map((k) => details[k] ?? ''),
+    ];
+  });
+
+  await recordAudit(actor, {
+    action: 'registrations.exported',
+    targetTable: 'event_registrations',
+    note: `${rows.length} registration${rows.length === 1 ? '' : 's'} across all events${q.all === '1' ? ' (incl. cancelled)' : ''}`,
+  });
+
+  const stamp = now.toISOString().slice(0, 10);
+  return csvResponse(`hilom-registrations-${stamp}.csv`, header, lines);
 }
 
 /**

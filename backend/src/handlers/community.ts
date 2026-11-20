@@ -1,9 +1,11 @@
 /**
  * POST /community/submit
  *
- * The "Join Our Community" form has no mailing-list/CRM behind it yet — this
- * just relays the submission to kumusta@hilomcollective.com via SES so the
- * team sees it immediately, rather than it going nowhere.
+ * The "Join Our Community" form. Each submission is saved to
+ * `community_signups` (0075: one row per email, interests merged, optional
+ * marketing consent with its date) and relayed to kumusta@hilomcollective.com
+ * via SES so the team still sees it immediately. The save comes first: once it
+ * succeeds, an SES failure no longer loses the sign-up.
  *
  * SES sends from ap-south-1 (Mumbai), not this stack's usual ap-southeast-1:
  * hilomcollective.com is already a verified, DKIM-signed domain identity
@@ -13,6 +15,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { ok, badRequest, serverError } from '../lib/http.js';
+import { getSupabase } from '../lib/supabase.js';
 import { verifyRecaptcha } from '../lib/recaptcha.js';
 import { renderEmail, renderText, escapeHtml, p, note, details, link } from '../lib/email-layout.js';
 
@@ -31,6 +34,8 @@ interface SubmitBody {
   email?: string;
   interests?: string[];
   message?: string;
+  /** The optional "send me news about workshops, classes, retreats…" box. */
+  marketingConsent?: boolean;
   captchaToken?: string;
 }
 
@@ -56,6 +61,25 @@ export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayP
     return badRequest('Captcha check failed — please try again.');
   }
 
+  const marketingConsent = body.marketingConsent === true;
+
+  try {
+    const supabase = await getSupabase();
+    const { error } = await supabase.rpc('community_signup_upsert', {
+      p_email: email,
+      p_first_name: firstName,
+      p_last_name: lastName,
+      p_interests: interests,
+      p_message: message,
+      p_consent: marketingConsent,
+      p_source: 'form',
+      p_at: new Date().toISOString(),
+    });
+    if (error) throw error;
+  } catch (err) {
+    return serverError('community.submit (save)', err);
+  }
+
   const fullName = `${firstName} ${lastName}`;
   const interestsText = interests.length > 0 ? interests.join(', ') : 'None selected';
 
@@ -63,6 +87,7 @@ export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayP
     `Name: ${fullName}`,
     `Email: ${email}`,
     `Interested in: ${interestsText}`,
+    `Promotional emails: ${marketingConsent ? 'Yes, agreed' : 'No'}`,
     '',
     'Message:',
     message || '(none)',
@@ -82,6 +107,7 @@ export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayP
         { label: 'Name', value: escapeHtml(fullName) },
         { label: 'Email', value: link(email, `mailto:${email}`) },
         { label: 'Interested in', value: escapeHtml(interestsText) },
+        { label: 'Promotional emails', value: marketingConsent ? 'Yes, agreed' : 'No' },
       ]) +
       p(`<strong>Message</strong><br>${escapeHtml(message || '(none)').replace(/\n/g, '<br>')}`) +
       note('Reply to this email to reach them directly.'),
@@ -108,6 +134,8 @@ export async function submit(event: APIGatewayProxyEventV2): Promise<APIGatewayP
 
     return ok({ sent: true });
   } catch (err) {
-    return serverError('community.submit', err);
+    // Already saved above, so the sign-up is not lost: log and still succeed.
+    console.error('[community.submit] notification email failed (sign-up was saved):', err);
+    return ok({ sent: false });
   }
 }
