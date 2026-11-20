@@ -48,6 +48,9 @@ import {
   listMyFacilitatorBookings,
   cancelMyFacilitatorBooking,
   createBookingForClient,
+  createPackageBookingForClient,
+  listMyFacilitatorPackages,
+  type FacilitatorPackage,
   listMyServices,
   markNoShow,
   previewMySlots,
@@ -896,14 +899,24 @@ function BookAClient({
 }) {
   const [services, setServices] = useState<FacilitatorService[] | null>(null);
   const [serviceId, setServiceId] = useState('');
+  // Set when adding sessions to a package that already exists.
+  const [existing, setExisting] = useState<FacilitatorPackage | null>(null);
+  const [openPackages, setOpenPackages] = useState<FacilitatorPackage[]>([]);
   const [slots, setSlots] = useState<SlotOption[] | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  // One entry for a single session; up to N for a package.
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [scheduleLater, setScheduleLater] = useState(false);
   const [clientEmail, setClientEmail] = useState('');
   const [clientName, setClientName] = useState('');
   const [paidPesos, setPaidPesos] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const loadPackages = () =>
+    listMyFacilitatorPackages()
+      .then((r) => setOpenPackages(r.packages.filter((p) => p.remaining > 0)))
+      .catch(() => setOpenPackages([]));
 
   useEffect(() => {
     listMyServices()
@@ -912,42 +925,99 @@ function BookAClient({
         if (list.length > 0) setServiceId((current) => current || list[0].id);
       })
       .catch((err: Error) => setError(err.message));
+    void loadPackages();
   }, []);
 
+  const effectiveServiceId = existing?.service_id ?? serviceId;
+  const service = (services ?? []).find((s) => s.id === effectiveServiceId) ?? null;
+  const isPackage = service?.kind === 'package';
+  // How many dates this form needs: every session of a new package, or what
+  // is left on an existing one.
+  const needed = existing ? existing.remaining : isPackage ? Math.max(service?.sessions_count ?? 1, 1) : 1;
+
   useEffect(() => {
-    if (!serviceId) return;
+    if (!effectiveServiceId) return;
     let live = true;
     setSlots(null);
-    setChosen(null);
+    setChosen([]);
+    setScheduleLater(false);
     const from = new Date();
-    const to = new Date(from.getTime() + 28 * 86_400_000);
-    previewMySlots(serviceId, from, to)
-      .then((r) => live && setSlots(r.slots))
+    // Packages run for weeks, so look further ahead: two windows, because the
+    // preview endpoint caps a request at 60 days.
+    const span = isPackage ? 2 : 1;
+    const windows = Array.from({ length: span }, (_, i) => {
+      const a = new Date(from.getTime() + i * 56 * 86_400_000);
+      const b = new Date(from.getTime() + (i === 0 && !isPackage ? 28 : (i + 1) * 56) * 86_400_000);
+      return previewMySlots(effectiveServiceId, a, b);
+    });
+    Promise.all(windows)
+      .then((rs) => {
+        if (!live) return;
+        const seen = new Set<string>();
+        setSlots(rs.flatMap((r) => r.slots).filter((s) => (seen.has(s.startsAt) ? false : (seen.add(s.startsAt), true))));
+      })
       .catch((err: Error) => live && setError(err.message));
     return () => {
       live = false;
     };
-  }, [serviceId]);
+  }, [effectiveServiceId, isPackage]);
+
+  function pick(startsAt: string) {
+    if (!isPackage) {
+      setChosen([startsAt]);
+      return;
+    }
+    setChosen((list) => {
+      if (list.includes(startsAt)) return list.filter((s) => s !== startsAt);
+      if (list.length >= needed) return list; // full: remove one first
+      return [...list, startsAt].sort();
+    });
+  }
+
+  const complete = chosen.length === needed;
+  const canSubmit =
+    !busy &&
+    (existing ? true : Boolean(clientEmail)) &&
+    (isPackage ? complete || (scheduleLater && (chosen.length > 0 || !existing)) : chosen.length === 1);
 
   async function submit() {
-    if (!chosen || !clientEmail) return;
+    if (!canSubmit) return;
     setBusy(true);
     setError(null);
     try {
-      await createBookingForClient({
-        serviceId,
-        clientEmail,
-        clientName: clientName || undefined,
-        startsAt: chosen,
-        offPlatformPesos: paidPesos || undefined,
-        note: note || undefined,
-      });
-      onBooked(`Booked — we've emailed ${clientEmail} the details.`);
+      if (isPackage) {
+        const res = await createPackageBookingForClient({
+          ...(existing ? { packageId: existing.id } : { serviceId, clientEmail, clientName: clientName || undefined }),
+          startsAtList: chosen,
+          scheduleLater: !complete,
+          offPlatformPesos: existing ? undefined : paidPesos || undefined,
+          note: note || undefined,
+        });
+        const who = existing?.client_email ?? clientEmail;
+        onBooked(
+          `Booked ${res.scheduled} session${res.scheduled === 1 ? '' : 's'}` +
+            (res.remaining > 0 ? `, ${res.remaining} still to schedule` : '') +
+            ` — we've emailed ${who} the details.`,
+        );
+      } else {
+        await createBookingForClient({
+          serviceId,
+          clientEmail,
+          clientName: clientName || undefined,
+          startsAt: chosen[0]!,
+          offPlatformPesos: paidPesos || undefined,
+          note: note || undefined,
+        });
+        onBooked(`Booked — we've emailed ${clientEmail} the details.`);
+      }
       setClientEmail('');
       setClientName('');
       setPaidPesos('');
       setNote('');
-      setChosen(null);
+      setChosen([]);
+      setScheduleLater(false);
+      setExisting(null);
+      void loadPackages();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not book that');
     } finally {
@@ -960,6 +1030,7 @@ function BookAClient({
     const day = formatInZone(slot.startsAt, timezone, { dateStyle: 'full', timeStyle: undefined });
     byDay.set(day, [...(byDay.get(day) ?? []), slot]);
   }
+  const fmt = (iso: string) => formatInZone(iso, timezone, { dateStyle: 'medium', timeStyle: 'short' });
 
   if (services !== null && services.length === 0) {
     return (
@@ -974,46 +1045,101 @@ function BookAClient({
 
   return (
     <div className="panel">
-      <div className="two-col">
-        <label className="field">
-          <span>Which session</span>
-          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
-            {(services ?? []).map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Their email</span>
-          <input
-            type="email"
-            value={clientEmail}
-            onChange={(e) => setClientEmail(e.target.value)}
-            placeholder="them@example.com"
-          />
-          <small className="muted">
-            They do not need a Hilom account. If they make one later with this address, the session
-            is already there.
-          </small>
-        </label>
-      </div>
+      {openPackages.length > 0 && !existing && (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          <strong className="small">Packages with sessions still to schedule</strong>
+          {openPackages.map((p) => (
+            <div key={p.id} className="row" style={{ gap: '0.5rem', alignItems: 'center', marginTop: '0.35rem', flexWrap: 'wrap' }}>
+              <span className="small">
+                {p.client_name || p.client_email} · {p.facilitator_services?.title ?? 'Package'} ·{' '}
+                {p.used} of {p.sessions_total} scheduled
+              </span>
+              <button type="button" className="btn btn-ghost small" onClick={() => setExisting(p)}>
+                Schedule {p.remaining === 1 ? 'the last session' : `remaining ${p.remaining}`}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
-      <label className="field">
-        <span>Their name (optional)</span>
-        <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
-      </label>
+      {existing ? (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          Scheduling for <strong>{existing.client_name || existing.client_email}</strong> ·{' '}
+          {existing.facilitator_services?.title ?? 'Package'} · {existing.remaining} of {existing.sessions_total} left.{' '}
+          <button type="button" className="btn btn-ghost small" onClick={() => setExisting(null)}>
+            Book someone else instead
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="two-col">
+            <label className="field">
+              <span>Which session or package</span>
+              <select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
+                {(services ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title}
+                    {s.kind === 'package' ? ` (${s.sessions_count} sessions)` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>Their email</span>
+              <input
+                type="email"
+                value={clientEmail}
+                onChange={(e) => setClientEmail(e.target.value)}
+                placeholder="them@example.com"
+              />
+              <small className="muted">
+                They do not need a Hilom account. If they make one later with this address, the session
+                is already there.
+              </small>
+            </label>
+          </div>
+
+          <label className="field">
+            <span>Their name (optional)</span>
+            <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
+          </label>
+        </>
+      )}
 
       {error && <div className="alert alert-error">{error}</div>}
 
+      {isPackage && (
+        <div style={{ marginBottom: '0.6rem' }}>
+          <p className="small" style={{ marginBottom: '0.3rem' }}>
+            <strong>
+              {chosen.length} of {needed} session{needed === 1 ? '' : 's'} picked
+            </strong>{' '}
+            <span className="muted">— tap a time to add it, tap it again to remove it.</span>
+          </p>
+          {chosen.length > 0 && (
+            <ol className="small" style={{ margin: '0 0 0.4rem 1.2rem', padding: 0 }}>
+              {chosen.map((iso, i) => (
+                <li key={iso}>
+                  Session {(existing ? existing.used : 0) + i + 1}: {fmt(iso)}{' '}
+                  <button type="button" className="btn btn-ghost small" onClick={() => pick(iso)} aria-label={`Remove ${fmt(iso)}`}>
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
+
       <p className="small muted" style={{ marginBottom: '0.3rem' }}>
-        Pick a time — these are your genuinely free slots, in your own zone.
+        {isPackage
+          ? 'Your free times over the next 16 weeks, in your own zone.'
+          : 'Pick a time — these are your genuinely free slots, in your own zone.'}
       </p>
       {slots === null && <div className="spinner" aria-label="Loading" />}
       {slots !== null && slots.length === 0 && (
         <p className="muted small">
-          No free times in the next four weeks. Open some hours under Availability first.
+          No free times coming up. Open some hours under Availability first.
         </p>
       )}
       {[...byDay.entries()].map(([day, daySlots]) => (
@@ -1024,8 +1150,9 @@ function BookAClient({
               <button
                 key={slot.startsAt}
                 type="button"
-                className={chosen === slot.startsAt ? 'btn btn-accent small' : 'btn btn-ghost small'}
-                onClick={() => setChosen(slot.startsAt)}
+                className={chosen.includes(slot.startsAt) ? 'btn btn-accent small' : 'btn btn-ghost small'}
+                disabled={isPackage && !chosen.includes(slot.startsAt) && chosen.length >= needed}
+                onClick={() => pick(slot.startsAt)}
               >
                 {formatInZone(slot.startsAt, timezone, { dateStyle: undefined, timeStyle: 'short' })}
               </button>
@@ -1034,44 +1161,63 @@ function BookAClient({
         </div>
       ))}
 
-      {chosen && (
+      {(chosen.length > 0 || (isPackage && !existing)) && (
         <>
-          <div className="two-col">
-            <label className="field">
-              <span>What they paid you (₱, optional)</span>
+          {isPackage && !complete && (
+            <label className="small" style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', margin: '0.6rem 0' }}>
               <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={paidPesos}
-                onChange={(e) => setPaidPesos(e.target.value)}
-                placeholder="Leave blank for pro bono"
+                type="checkbox"
+                style={{ width: 'auto', marginTop: '0.2rem' }}
+                checked={scheduleLater}
+                onChange={(e) => setScheduleLater(e.target.checked)}
               />
+              <span>
+                Schedule remaining sessions later. The package is created now with {needed - chosen.length} session
+                {needed - chosen.length === 1 ? '' : 's'} left; you (or your client, from their account) can book
+                them any time, and they stay listed here until they are.
+              </span>
             </label>
-            <label className="field">
-              <span>Note to yourself (optional)</span>
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Paid by bank transfer, 12 Sept"
-              />
-            </label>
-          </div>
+          )}
+
+          {!existing && (
+            <div className="two-col">
+              <label className="field">
+                <span>What they paid you (₱, optional)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={paidPesos}
+                  onChange={(e) => setPaidPesos(e.target.value)}
+                  placeholder="Leave blank for pro bono"
+                />
+              </label>
+              <label className="field">
+                <span>Note to yourself (optional)</span>
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Paid by bank transfer, 12 Sept"
+                />
+              </label>
+            </div>
+          )}
 
           {/* The one thing that must not be misunderstood. */}
           <div className="alert alert-info">
-            No payment is taken and nothing is owed to you by Hilom for this session — you have
-            already been paid, or chosen not to be. What you type above is a note for your own
-            records; it stays out of your Hilom earnings and payouts.
+            No payment is taken and nothing is owed to you by Hilom for {isPackage ? 'these sessions' : 'this session'} —
+            you have already been paid, or chosen not to be. What you type above is a note for your own records; it
+            stays out of your Hilom earnings and payouts.
           </div>
 
-          <button
-            type="button"
-            className="btn btn-accent"
-            disabled={busy || !clientEmail}
-            onClick={() => void submit()}
-          >
-            {busy ? 'Booking…' : 'Book this session'}
+          <button type="button" className="btn btn-accent" disabled={!canSubmit} onClick={() => void submit()}>
+            {busy
+              ? 'Booking…'
+              : isPackage
+                ? chosen.length === 0
+                  ? 'Create package, schedule later'
+                  : `Book ${chosen.length} session${chosen.length === 1 ? '' : 's'}`
+                : 'Book this session'}
           </button>
         </>
       )}

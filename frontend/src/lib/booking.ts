@@ -754,6 +754,38 @@ export const createBookingForClient = (input: {
     body: JSON.stringify(input),
   });
 
+/** Book a client into a multi-session package by hand (new, or more sessions on an existing one). */
+export const createPackageBookingForClient = (input: {
+  serviceId?: string;
+  packageId?: string;
+  clientEmail?: string;
+  clientName?: string;
+  startsAtList: string[];
+  scheduleLater: boolean;
+  offPlatformPesos?: string;
+  note?: string;
+}) =>
+  apiFetch<{ packageId: string; bookingIds: string[]; scheduled: number; remaining: number }>(
+    '/facilitator/bookings',
+    { method: 'POST', headers: jsonAuthHeaders(), body: JSON.stringify(input) },
+  );
+
+export interface FacilitatorPackage {
+  id: string;
+  service_id: string;
+  client_email: string;
+  client_name: string | null;
+  sessions_total: number;
+  remaining: number;
+  used: number;
+  booked_by: 'client' | 'facilitator';
+  created_at: string;
+  facilitator_services: { title: string } | null;
+}
+
+export const listMyFacilitatorPackages = () =>
+  apiFetch<{ packages: FacilitatorPackage[] }>('/facilitator/packages', { headers: jsonAuthHeaders() });
+
 export const listMyFacilitatorBookings = () =>
   apiFetch<{ bookings: Booking[]; timezone: string }>('/facilitator/bookings', {
     headers: authHeaders(),

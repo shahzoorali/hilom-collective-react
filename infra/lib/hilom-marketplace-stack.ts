@@ -414,6 +414,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/facilitator/blackouts', [GET, POST]],
       ['/facilitator/blackouts/{blackoutId}', [DELETE]],
       ['/facilitator/bookings', [GET, POST]],
+      ['/facilitator/packages', [GET]],
       ['/facilitator/bookings/{bookingId}/notes', [PUT]],
       ['/facilitator/messages', [GET]],
       ['/facilitator/bookings/{bookingId}/messages', [GET, POST]],

@@ -10,6 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  planManualPackageDates,
   splitFee,
   refundForCancellation,
   canReschedule,
@@ -310,5 +311,31 @@ describe('packageCreditsRemaining', () => {
 
   it('never goes negative, whatever the rows say', () => {
     assert.equal(packageCreditsRemaining(2, ['confirmed', 'confirmed', 'confirmed']), 0);
+  });
+});
+
+describe('planManualPackageDates', () => {
+  const now = new Date('2026-11-20T00:00:00Z');
+  const d = (day: number) => new Date(`2026-12-${String(day).padStart(2, '0')}T01:00:00Z`);
+  it('accepts a full set of dates and sorts them', () => {
+    const r = planManualPackageDates({ remaining: 3, starts: [d(10), d(3), d(17)], scheduleLater: false, now });
+    assert.ok(r.ok);
+    assert.deepEqual(r.ok && r.starts.map((x) => x.getUTCDate()), [3, 10, 17]);
+  });
+  it('refuses an incomplete set unless "schedule later" is chosen', () => {
+    assert.equal(planManualPackageDates({ remaining: 6, starts: [d(3)], scheduleLater: false, now }).ok, false);
+    assert.equal(planManualPackageDates({ remaining: 6, starts: [d(3)], scheduleLater: true, now }).ok, true);
+  });
+  it('allows creating the package with no dates when scheduling later', () => {
+    assert.equal(planManualPackageDates({ remaining: 12, starts: [], scheduleLater: true, now }).ok, true);
+    assert.equal(planManualPackageDates({ remaining: 12, starts: [], scheduleLater: false, now }).ok, false);
+  });
+  it('refuses more dates than sessions left, past dates and duplicates', () => {
+    assert.equal(planManualPackageDates({ remaining: 2, starts: [d(3), d(4), d(5)], scheduleLater: false, now }).ok, false);
+    assert.equal(planManualPackageDates({ remaining: 2, starts: [new Date('2026-11-01T00:00:00Z'), d(4)], scheduleLater: false, now }).ok, false);
+    assert.equal(planManualPackageDates({ remaining: 2, starts: [d(4), d(4)], scheduleLater: false, now }).ok, false);
+  });
+  it('refuses scheduling on a package with nothing left', () => {
+    assert.equal(planManualPackageDates({ remaining: 0, starts: [d(4)], scheduleLater: false, now }).ok, false);
   });
 });

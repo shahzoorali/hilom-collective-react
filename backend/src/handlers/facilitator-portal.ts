@@ -53,10 +53,12 @@ import {
   refundForCancellation,
   EXCLUSION_VIOLATION,
   UNIQUE_VIOLATION,
+  planManualPackageDates,
 } from '../lib/booking-domain.js';
 import { sendBookingCancelled, sendRescheduleProposed } from '../lib/booking-email.js';
 import { cancelClassSession as cancelClassSessionShared } from '../lib/class-cancellation.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
+import { packageState, PACKAGE_COLUMNS, type PackageRow } from '../lib/packages.js';
 import {
   listMessages,
   markThreadRead,
@@ -183,6 +185,11 @@ export async function handler(ev: APIGatewayProxyEventV2): Promise<APIGatewayPro
 
     if (path.includes('/facilitator/clients')) {
       return await clients(supabase, facilitator, ev, method);
+    }
+
+    if (path.endsWith('/facilitator/packages')) {
+      if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
+      return await listFacilitatorPackages(supabase, facilitator);
     }
 
     if (path.includes('/facilitator/bookings')) {
@@ -1105,6 +1112,12 @@ async function createForClient(
   const facilitatorNote =
     typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 1000) : null;
 
+  // A package (several dates, or scheduling against an existing package) has
+  // its own path; everything above is shared.
+  if (Array.isArray(body.startsAtList) || typeof body.packageId === 'string') {
+    return await createPackageForClient(supabase, facilitator, body, clientEmail, clientName, facilitatorNote);
+  }
+
   const serviceId = typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
   const startsAtRaw = typeof body.startsAt === 'string' ? body.startsAt : '';
   const startsAt = new Date(startsAtRaw);
@@ -1132,9 +1145,9 @@ async function createForClient(
     .maybeSingle<ServiceRow>();
   if (serviceError) throw serviceError;
   if (!service) return notFound('Service not found');
-  // Same guard as the public flow: a package charges for N sessions and
-  // delivers one, so it must not be bookable by any route.
-  if (service.kind === 'package') return badRequest('Multi-session packages are not bookable yet.');
+  // A package booked as a single session would leave its other credits with
+  // nowhere to live; the form sends packages through startsAtList instead.
+  if (service.kind === 'package') return badRequest('Choose a time for each session in the package.');
 
   const { data: scheduling, error: schedulingError } = await supabase
     .from('facilitators')
@@ -1217,6 +1230,237 @@ async function createForClient(
   await confirmBooking(booking.id);
 
   return ok({ bookingId: booking.id, status: 'confirmed', startsAt: slot.startsAt });
+}
+
+/**
+ * A facilitator books a client into a multi-session package by hand (0076).
+ *
+ * Two shapes, one path:
+ *   * new package: `serviceId` of a package service and `startsAtList` with a
+ *     date per session (or fewer, with `scheduleLater`). Creates the
+ *     booking_packages row, then one booking per date against it.
+ *   * existing package: `packageId` of one of this facilitator's active
+ *     packages and `startsAtList` for some or all of its remaining credits.
+ *
+ * Money follows 0031, the same as a single manual booking: zero on the
+ * package and on every session; what the client paid is kept as a note.
+ *
+ * All-or-nothing: every date is checked against availability before anything
+ * is written, and if an insert still collides the rows written so far are
+ * removed, so a facilitator never ends up with a half-booked package.
+ */
+async function createPackageForClient(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+  body: Record<string, unknown>,
+  clientEmail: string,
+  clientName: string | null,
+  facilitatorNote: string | null,
+): Promise<APIGatewayProxyResultV2> {
+  const now = new Date();
+  const scheduleLater = body.scheduleLater === true;
+  const rawStarts = Array.isArray(body.startsAtList) ? (body.startsAtList as unknown[]) : [];
+  if (rawStarts.length > 50 || rawStarts.some((v) => typeof v !== 'string')) {
+    return badRequest('startsAtList must be a list of ISO-8601 times');
+  }
+
+  let offPlatformCentavos: number | null = null;
+  if (body.offPlatformPesos !== undefined && body.offPlatformPesos !== null && body.offPlatformPesos !== '') {
+    const pesos = Number(body.offPlatformPesos);
+    if (!Number.isFinite(pesos) || pesos < 0) return badRequest('What they paid must be a number');
+    offPlatformCentavos = Math.round(pesos * 100);
+  }
+
+  interface ExistingPackage extends PackageRow {
+    service_id: string;
+    client_email: string;
+    client_name: string | null;
+  }
+  const existingId = typeof body.packageId === 'string' ? body.packageId.trim() : '';
+  let pkg: ExistingPackage | null = null;
+  let remaining = 0;
+  if (existingId) {
+    const { data, error } = await supabase
+      .from('booking_packages')
+      .select(PACKAGE_COLUMNS)
+      .eq('id', existingId)
+      .eq('facilitator_id', facilitator.id)
+      .maybeSingle<ExistingPackage>();
+    if (error) throw error;
+    if (!data) return notFound('Package not found');
+    if (data.status !== 'active') return badRequest('That package is not active');
+    pkg = data;
+    remaining = (await packageState(supabase, data)).remaining;
+  }
+
+  const serviceId = pkg ? pkg.service_id : typeof body.serviceId === 'string' ? body.serviceId.trim() : '';
+  if (!serviceId) return badRequest('serviceId is required');
+  const { data: service, error: serviceError } = await supabase
+    .from('facilitator_services')
+    .select(`${SERVICE_PUBLIC_COLUMNS}, meeting_url`)
+    .eq('id', serviceId)
+    .eq('facilitator_id', facilitator.id)
+    .maybeSingle<ServiceRow>();
+  if (serviceError) throw serviceError;
+  if (!service) return notFound('Service not found');
+  if (service.kind !== 'package') return badRequest('That service is not a package');
+  if (!pkg) {
+    if (!service.sessions_count || service.sessions_count < 2) {
+      return badRequest('That package has no session count set; check it under Services.');
+    }
+    remaining = service.sessions_count;
+  }
+
+  const plan = planManualPackageDates({
+    remaining,
+    starts: (rawStarts as string[]).map((v) => new Date(v)),
+    scheduleLater,
+    now,
+  });
+  if (!plan.ok) return badRequest(plan.error);
+
+  // On an existing package the client is the package's client.
+  const email = pkg ? pkg.client_email : clientEmail;
+  const name = pkg ? pkg.client_name : clientName;
+
+  const { data: scheduling, error: schedulingError } = await supabase
+    .from('facilitators')
+    .select('id, timezone, vacation_until, status')
+    .eq('id', facilitator.id)
+    .maybeSingle<FacilitatorSchedulingRow>();
+  if (schedulingError) throw schedulingError;
+  if (!scheduling) return notFound('Facilitator not found');
+  await releaseExpiredHolds(supabase, facilitator.id, now);
+
+  // Every date first. verifySlot only sees what is already booked; dates that
+  // overlap each other are caught by the exclusion constraint on insert.
+  const slots: { startsAt: string; blockEndsAt: string }[] = [];
+  for (const start of plan.starts) {
+    const slot = await verifySlot(supabase, { ...scheduling, vacation_until: null }, service, start, now);
+    if (!slot) {
+      const label = start.toLocaleString('en-PH', {
+        timeZone: scheduling.timezone || 'Asia/Manila',
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+      return json(409, { error: `${label} is not free; pick another time for that session` });
+    }
+    slots.push(slot);
+  }
+
+  let packageId = pkg?.id ?? null;
+  let createdPackage = false;
+  if (!packageId) {
+    const { data: created, error: pkgError } = await supabase
+      .from('booking_packages')
+      .insert({
+        facilitator_id: facilitator.id,
+        service_id: service.id,
+        client_email: email,
+        client_name: name,
+        sessions_total: remaining,
+        price_centavos: 0,
+        platform_fee_centavos: 0,
+        facilitator_net_centavos: 0,
+        currency: service.currency,
+        refund_full_hours: service.refund_full_hours ?? 24,
+        refund_half_hours: service.refund_half_hours ?? 12,
+        status: 'active',
+        booked_by: 'facilitator',
+        off_platform_centavos: offPlatformCentavos,
+        facilitator_note: facilitatorNote,
+      })
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (pkgError) throw pkgError;
+    if (!created) throw new Error('Package insert returned no row');
+    packageId = created.id;
+    createdPackage = true;
+  }
+
+  const inserted: string[] = [];
+  const undo = async () => {
+    if (inserted.length) await supabase.from('bookings').delete().in('id', inserted).eq('status', 'pending_payment');
+    if (createdPackage) await supabase.from('booking_packages').delete().eq('id', packageId!);
+  };
+
+  for (const slot of slots) {
+    const { data: booking, error: insertError } = await supabase
+      .from('bookings')
+      .insert({
+        facilitator_id: facilitator.id,
+        service_id: service.id,
+        service_kind: service.kind,
+        client_email: email,
+        client_name: name,
+        starts_at: slot.startsAt,
+        ends_at: slot.blockEndsAt,
+        // Pending until confirmBooking below, as in createForClient.
+        status: 'pending_payment',
+        hold_expires_at: null,
+        price_centavos: 0,
+        platform_fee_centavos: 0,
+        facilitator_net_centavos: 0,
+        currency: service.currency,
+        meeting_url: service.meeting_url ?? null,
+        refund_full_hours: service.refund_full_hours ?? 24,
+        refund_half_hours: service.refund_half_hours ?? 12,
+        booked_by: 'facilitator',
+        package_id: packageId,
+        facilitator_note: facilitatorNote,
+      })
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (insertError || !booking) {
+      await undo();
+      if (insertError?.code === EXCLUSION_VIOLATION) {
+        return json(409, {
+          error: 'Two of those sessions overlap, or one collides with another booking; pick different times',
+        });
+      }
+      throw insertError ?? new Error('Booking insert returned no row');
+    }
+    inserted.push(booking.id);
+  }
+
+  // Each session gets its own confirmation, meeting link and calendar invite.
+  for (const id of inserted) await confirmBooking(id);
+
+  return ok({
+    packageId,
+    bookingIds: inserted,
+    scheduled: inserted.length,
+    remaining: remaining - inserted.length,
+    status: 'confirmed',
+  });
+}
+
+/**
+ * The facilitator's active packages with sessions scheduled and left, so
+ * "schedule remaining sessions later" never loses track of anyone.
+ *
+ *   GET /facilitator/packages
+ */
+async function listFacilitatorPackages(
+  supabase: SupabaseClient,
+  facilitator: FacilitatorRow,
+): Promise<APIGatewayProxyResultV2> {
+  const { data, error } = await supabase
+    .from('booking_packages')
+    .select(`${PACKAGE_COLUMNS}, booked_by, off_platform_centavos, facilitator_note, facilitator_services(title)`)
+    .eq('facilitator_id', facilitator.id)
+    .eq('status', 'active')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as (PackageRow & Record<string, unknown>)[];
+  const packages = await Promise.all(
+    rows.map(async (p) => {
+      const state = await packageState(supabase, p);
+      return { ...p, remaining: state.remaining, used: state.used };
+    }),
+  );
+  return ok({ packages });
 }
 
 /**

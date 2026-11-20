@@ -401,3 +401,39 @@ export function packageCreditsRemaining(
   ).length;
   return Math.max(0, sessionsTotal - spent);
 }
+
+/**
+ * Validates the dates a facilitator entered when booking a client into a
+ * package by hand (Canny: manual booking for multi-session packages).
+ *
+ * `remaining` is the number of unscheduled credits: the full count for a new
+ * package, or what is left on an existing one. Without `scheduleLater`, every
+ * remaining session needs a date, so a package can't be left half-booked by
+ * accident. Returns the dates sorted, or an error message for the facilitator.
+ */
+export function planManualPackageDates(input: {
+  remaining: number;
+  starts: Date[];
+  scheduleLater: boolean;
+  now: Date;
+}): { ok: true; starts: Date[] } | { ok: false; error: string } {
+  const { remaining, scheduleLater, now } = input;
+  if (input.starts.some((d) => Number.isNaN(d.getTime()))) return { ok: false, error: 'Each session needs a valid date and time' };
+  const starts = [...input.starts].sort((a, b) => a.getTime() - b.getTime());
+  if (remaining <= 0) return { ok: false, error: 'This package has no sessions left to schedule' };
+  if (starts.length > remaining) {
+    return { ok: false, error: `This package has ${remaining} session${remaining === 1 ? '' : 's'} to schedule, but ${starts.length} dates were given` };
+  }
+  if (starts.some((d) => d <= now)) return { ok: false, error: 'Every session must be in the future' };
+  for (let i = 1; i < starts.length; i++) {
+    if (starts[i]!.getTime() === starts[i - 1]!.getTime()) return { ok: false, error: 'Two sessions are at the same time' };
+  }
+  if (starts.length < remaining && !scheduleLater) {
+    return {
+      ok: false,
+      error: `Pick a time for all ${remaining} sessions, or choose "Schedule remaining sessions later"`,
+    };
+  }
+  if (starts.length === 0 && !scheduleLater) return { ok: false, error: 'Pick at least one session time' };
+  return { ok: true, starts };
+}
