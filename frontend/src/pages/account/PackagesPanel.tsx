@@ -18,8 +18,10 @@ import {
   formatDuration,
   formatInZone,
   listMyPackages,
+  payPackageCharge,
   viewerTimezone,
   type BookingPackage,
+  type PackageCharge,
 } from '../../lib/booking';
 
 export default function PackagesPanel({ onBooked }: { onBooked: () => void }) {
@@ -35,6 +37,23 @@ export default function PackagesPanel({ onBooked }: { onBooked: () => void }) {
 
   useEffect(() => reload(), [reload]);
 
+  // Reminder emails link here with ?package=&pay=: open that checkout straight
+  // away. ?paid= is PayMongo sending them back after paying.
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const pkgId = q.get('package');
+    const pay = q.get('pay');
+    if (q.get('paid')) setNotice('Thank you, your payment is being confirmed. It can take a minute to show here.');
+    if (pkgId && pay) {
+      payPackageCharge(pkgId, pay)
+        .then((r) => {
+          window.location.href = r.checkoutUrl;
+        })
+        .catch((err: Error) => setError(err.message));
+    }
+  }, []);
+
   if (error) return <div className="alert alert-error">{error}</div>;
   // Silent when there are none: most clients have never bought one, and an
   // empty "your packages" heading is a section about nothing.
@@ -43,6 +62,7 @@ export default function PackagesPanel({ onBooked }: { onBooked: () => void }) {
   return (
     <>
       <h2>Your packages</h2>
+      {notice && <div className="alert alert-success">{notice}</div>}
       {packages.map((p) => (
         <PackageCard
           key={p.id}
@@ -122,6 +142,10 @@ function PackageCard({
         </span>
       </div>
 
+      {pkg.plan_kind === 'installment' && pkg.charges && pkg.charges.length > 0 && (
+        <PaymentSchedule packageId={pkg.id} charges={pkg.charges} zone={zone} />
+      )}
+
       {!spent && pkg.facilitators && (
         <div style={{ marginTop: '0.75rem' }}>
           <button type="button" className="btn btn-accent small" onClick={onToggle}>
@@ -175,6 +199,75 @@ function PackageCard({
               <Link to={`/facilitators/${pkg.facilitators.slug}`}>Buy another</Link>.
             </>
           )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const STATE_PILL: Record<PackageCharge['state'], string> = {
+  paid: 'pill pill-ok',
+  pending: 'pill pill-warn',
+  overdue: 'pill pill-bad',
+  waived: 'pill',
+  void: 'pill',
+};
+
+/** The instalment schedule: paid, pending and overdue, and a button for the next one. */
+function PaymentSchedule({ packageId, charges, zone }: { packageId: string; charges: PackageCharge[]; zone: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const money = (c: number, cur: string) =>
+    new Intl.NumberFormat('en-PH', { style: 'currency', currency: cur, minimumFractionDigits: 2 }).format(c / 100);
+  const next = charges.find((c) => c.state === 'pending' || c.state === 'overdue');
+  const outstanding = charges.filter((c) => c.state === 'pending' || c.state === 'overdue').reduce((s, c) => s + c.amount_centavos, 0);
+
+  async function pay(c: PackageCharge) {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await payPackageCharge(packageId, c.id);
+      window.location.href = r.checkoutUrl;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open the payment');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <strong className="small">Payments</strong>
+      <table className="small" style={{ width: '100%', marginTop: '0.3rem' }}>
+        <tbody>
+          {charges.map((c) => (
+            <tr key={c.id}>
+              <td>{c.label}</td>
+              <td>{money(c.amount_centavos, c.currency)}</td>
+              <td className="muted">
+                {c.state === 'paid' && c.paid_at
+                  ? `Paid ${formatInZone(c.paid_at, zone, { dateStyle: 'medium', timeStyle: undefined })}`
+                  : c.due_at
+                    ? `Due ${formatInZone(c.due_at, zone, { dateStyle: 'medium', timeStyle: 'short' })} (session ${c.due_session})`
+                    : c.seq === 1
+                      ? 'At checkout'
+                      : `Due before session ${c.due_session}, once it's booked`}
+              </td>
+              <td>
+                <span className={STATE_PILL[c.state]}>{c.state}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {error && <div className="alert alert-error">{error}</div>}
+      {next && (
+        <button type="button" className="btn btn-accent small" disabled={busy} onClick={() => void pay(next)} style={{ marginTop: '0.4rem' }}>
+          {busy ? 'Opening…' : `Pay ${next.label.toLowerCase()} (${money(next.amount_centavos, next.currency)})`}
+        </button>
+      )}
+      {outstanding > 0 && (
+        <p className="small muted" style={{ margin: '0.3rem 0 0' }}>
+          {money(outstanding, charges[0]!.currency)} still to pay. Your session reminders come separately and don't depend on payments.
         </p>
       )}
     </div>

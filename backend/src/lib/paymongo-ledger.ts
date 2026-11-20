@@ -18,6 +18,7 @@ import { feeVatCentavos, looksLikeTestPayment } from './finance-domain.js';
 
 export type LedgerSource =
   | 'orders'
+  | 'package_charges'
   | 'registration_charges'
   | 'class_registrations'
   | 'bookings'
@@ -26,6 +27,7 @@ export type LedgerSource =
 
 const SOURCE_TABLES: Exclude<LedgerSource, 'unknown'>[] = [
   'registration_charges',
+  'package_charges',
   'class_registrations',
   'bookings',
   'booking_packages',

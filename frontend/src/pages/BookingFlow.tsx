@@ -33,6 +33,8 @@ export default function BookingFlow() {
 
   const [facilitator, setFacilitator] = useState<Facilitator | null>(null);
   const [service, setService] = useState<FacilitatorService | null>(null);
+  // Package payment choice (0077): the whole price now, or the service's plan.
+  const [planChoice, setPlanChoice] = useState<'full' | 'installment'>('full');
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
@@ -107,7 +109,7 @@ export default function BookingFlow() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const result = await buyPackage({ facilitatorSlug: facilitator.slug, serviceId });
+      const result = await buyPackage({ facilitatorSlug: facilitator.slug, serviceId, plan: planChoice });
       // Same stash as a session checkout: PayMongo cannot template an id into
       // success_url, so the return screen reads it back.
       sessionStorage.setItem('hilom.pendingPackage', result.packageId);
@@ -175,6 +177,8 @@ export default function BookingFlow() {
   // A package is bought here and scheduled later, so this page shows a purchase
   // rather than a slot picker. See 0035.
   const isPackage = service.kind === 'package' && service.sessions_count > 1;
+  const plan = isPackage ? service.installment_plan ?? [] : [];
+  const payNow = planChoice === 'installment' && plan.length ? plan[0]!.amount_centavos : service.price_centavos;
 
   const summary = (
     <div className="panel" style={{ marginBottom: '1.5rem' }}>
@@ -251,6 +255,38 @@ export default function BookingFlow() {
               </span>
             </p>
 
+            {plan.length > 0 && (
+              <fieldset style={{ border: 0, padding: 0, margin: '0 0 1rem' }}>
+                <legend className="small" style={{ fontWeight: 600, marginBottom: '0.4rem' }}>How would you like to pay?</legend>
+                <label className="small" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
+                  <input type="radio" name="plan" style={{ width: 'auto' }} checked={planChoice === 'full'} onChange={() => setPlanChoice('full')} />
+                  Pay in full: {money(service.price_centavos, service.currency)} today
+                </label>
+                <label className="small" style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                  <input type="radio" name="plan" style={{ width: 'auto', marginTop: '0.2rem' }} checked={planChoice === 'installment'} onChange={() => setPlanChoice('installment')} />
+                  <span>
+                    Pay in {plan.length} instalments, {money(service.price_centavos, service.currency)} in total
+                    {planChoice === 'installment' && (
+                      <ol style={{ margin: '0.4rem 0 0 1.1rem', padding: 0 }}>
+                        {plan.map((p, i) => (
+                          <li key={i}>
+                            {money(p.amount_centavos, service.currency)}{' '}
+                            {i === 0 ? 'today' : `before session ${p.due_session}`}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                    {planChoice === 'installment' && (
+                      <span className="muted" style={{ display: 'block', marginTop: '0.3rem' }}>
+                        Each due date is the date of that session once you book it. We'll email a reminder with a
+                        payment link 7 days, 3 days and on the day before it's due.
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </fieldset>
+            )}
+
             {submitError && <div className="alert alert-error">{submitError}</div>}
 
             <button
@@ -259,7 +295,7 @@ export default function BookingFlow() {
               disabled={submitting}
               onClick={() => void purchasePackage()}
             >
-              {submitting ? 'Opening checkout…' : `Pay ${money(service.price_centavos, service.currency)}`}
+              {submitting ? 'Opening checkout…' : `Pay ${money(payNow, service.currency)}${planChoice === 'installment' && plan.length ? ' now' : ''}`}
             </button>
             <p className="small muted" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
               {describeRefundPolicy(service)}

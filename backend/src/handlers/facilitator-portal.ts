@@ -59,6 +59,7 @@ import { sendBookingCancelled, sendRescheduleProposed } from '../lib/booking-ema
 import { cancelClassSession as cancelClassSessionShared } from '../lib/class-cancellation.js';
 import { confirmBooking, syncBookingMeeting } from '../lib/booking-fulfillment.js';
 import { packageState, PACKAGE_COLUMNS, type PackageRow } from '../lib/packages.js';
+import { packageChargesWithDue } from '../lib/package-charges.js';
 import {
   listMessages,
   markThreadRead,
@@ -1456,8 +1457,8 @@ async function listFacilitatorPackages(
   const rows = (data ?? []) as unknown as (PackageRow & Record<string, unknown>)[];
   const packages = await Promise.all(
     rows.map(async (p) => {
-      const state = await packageState(supabase, p);
-      return { ...p, remaining: state.remaining, used: state.used };
+      const [state, charges] = await Promise.all([packageState(supabase, p), packageChargesWithDue(supabase, p.id)]);
+      return { ...p, remaining: state.remaining, used: state.used, charges };
     }),
   );
   return ok({ packages });

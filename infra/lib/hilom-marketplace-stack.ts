@@ -489,6 +489,7 @@ export class HilomMarketplaceStack extends cdk.Stack {
     attach(bookings, 'BookingsInt', [
       ['/bookings', [POST]],
       ['/packages', [POST]],
+      ['/packages/{packageId}/charges/{chargeId}/pay', [POST]],
       ['/me/packages', [GET]],
       ['/bookings/{bookingId}/status', [GET]],
       ['/bookings/{bookingId}/cancel', [POST]],

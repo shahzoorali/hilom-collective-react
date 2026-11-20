@@ -8,6 +8,7 @@
  * wired up in CDK). No custom backoff/retry-count logic needed here — SQS
  * already provides it.
  */
+import { applyPackageChargePayment } from '../lib/package-charges.js';
 import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { fulfillOrder } from '../lib/fulfillment.js';
 import { confirmBooking } from '../lib/booking-fulfillment.js';
@@ -56,6 +57,10 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
         // email twice (0049).
         const result = await confirmClassSeat(await getSupabase(), message.orderId);
         console.log(`[enrollment-retry-consumer] class seat ${message.orderId} -> ${result.status}`);
+      } else if (kind === 'package_charge') {
+        // `orderId` carries the package_charges id (0077).
+        const result = await applyPackageChargePayment(await getSupabase(), message.orderId, undefined);
+        console.log(`[enrollment-retry-consumer] package charge ${message.orderId} -> ${result.status}`);
       } else if (kind === 'registration_charge') {
         // `orderId` carries the charge id — the field keeps its original name
         // for in-flight compatibility, as retry-queue.ts explains. No payment

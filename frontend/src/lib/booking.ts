@@ -131,6 +131,8 @@ export interface FacilitatorService {
   price_centavos: number;
   currency: string;
   sessions_count: number;
+  /** Package instalments (0077): null = full payment only. */
+  installment_plan?: { amount_centavos: number; due_session: number }[] | null;
   delivery_mode: DeliveryMode;
   buffer_minutes: number;
   min_notice_minutes: number;
@@ -781,6 +783,8 @@ export interface FacilitatorPackage {
   booked_by: 'client' | 'facilitator';
   created_at: string;
   facilitator_services: { title: string } | null;
+  plan_kind?: 'full' | 'installment';
+  charges?: PackageCharge[];
 }
 
 export const listMyFacilitatorPackages = () =>
@@ -1629,9 +1633,33 @@ export interface BookingPackage {
     timezone: string;
   } | null;
   facilitator_services?: { title: string; duration_minutes: number } | null;
+  /** 0077: 'installment' packages carry a payment schedule. */
+  plan_kind?: 'full' | 'installment';
+  charges?: PackageCharge[];
 }
 
-export const buyPackage = (input: { facilitatorSlug: string; serviceId: string }) =>
+/** One instalment on a package (0077). `due_at` is null until that session is booked. */
+export interface PackageCharge {
+  id: string;
+  seq: number;
+  label: string;
+  amount_centavos: number;
+  currency: string;
+  due_session: number;
+  status: string;
+  paid_at: string | null;
+  due_at: string | null;
+  state: 'paid' | 'pending' | 'overdue' | 'waived' | 'void';
+}
+
+/** Opens a checkout for one instalment; payments go in order. */
+export const payPackageCharge = (packageId: string, chargeId: string) =>
+  apiFetch<{ checkoutUrl: string; amountCentavos: number; currency: string }>(
+    `/packages/${encodeURIComponent(packageId)}/charges/${encodeURIComponent(chargeId)}/pay`,
+    { method: 'POST', headers: jsonAuthHeaders() },
+  );
+
+export const buyPackage = (input: { facilitatorSlug: string; serviceId: string; plan?: 'full' | 'installment' }) =>
   apiFetch<{
     packageId: string;
     checkoutUrl: string;

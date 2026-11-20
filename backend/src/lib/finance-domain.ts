@@ -241,6 +241,7 @@ const REFUND_SOURCE_FOR: Record<string, string> = {
   class_registrations: 'class_registrations',
   bookings: 'bookings',
   booking_packages: 'booking_packages',
+  package_charges: 'booking_packages',
 };
 
 function refundKey(source: string, id: string): string {

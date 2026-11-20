@@ -1324,6 +1324,73 @@ function ProposeTime({
   );
 }
 
+/**
+ * The facilitator's active packages: sessions scheduled and, for instalment
+ * packages, which payments are paid, pending or overdue (0077).
+ */
+function PackagesOverview({ timezone }: { timezone: string }) {
+  const [packages, setPackages] = useState<FacilitatorPackage[] | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    listMyFacilitatorPackages()
+      .then((r) => setPackages(r.packages))
+      .catch(() => setPackages([]));
+  }, []);
+  if (!packages || packages.length === 0) return null;
+
+  const money = (c: number) =>
+    new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2 }).format(c / 100);
+  const overdue = packages.reduce((n, p) => n + (p.charges ?? []).filter((c) => c.state === 'overdue').length, 0);
+
+  return (
+    <div className="panel" style={{ marginBottom: '1rem' }}>
+      <button type="button" className="btn btn-ghost small" onClick={() => setOpen(!open)}>
+        {open ? '▲' : '▼'} Packages ({packages.length}){overdue > 0 ? ` · ${overdue} overdue payment${overdue === 1 ? '' : 's'}` : ''}
+      </button>
+      {open &&
+        packages.map((p) => {
+          const charges = p.charges ?? [];
+          const paid = charges.filter((c) => c.state === 'paid').reduce((s, c) => s + c.amount_centavos, 0);
+          const owed = charges.filter((c) => c.state === 'pending' || c.state === 'overdue').reduce((s, c) => s + c.amount_centavos, 0);
+          return (
+            <div key={p.id} style={{ borderTop: '1px solid var(--line)', padding: '0.6rem 0' }}>
+              <strong className="small">{p.client_name || p.client_email}</strong>
+              <span className="small muted">
+                {' '}
+                · {p.facilitator_services?.title ?? 'Package'} · {p.used} of {p.sessions_total} sessions scheduled
+                {p.booked_by === 'facilitator' ? ' · booked by you' : ''}
+              </span>
+              {charges.length > 0 && (
+                <ul className="small" style={{ margin: '0.3rem 0 0 1rem', padding: 0 }}>
+                  {charges.map((c) => (
+                    <li key={c.id}>
+                      {c.label}: {money(c.amount_centavos)} ·{' '}
+                      <span className={c.state === 'paid' ? 'pill pill-ok' : c.state === 'overdue' ? 'pill pill-bad' : 'pill pill-warn'}>
+                        {c.state}
+                      </span>{' '}
+                      <span className="muted">
+                        {c.state === 'paid' && c.paid_at
+                          ? formatInZone(c.paid_at, timezone, { dateStyle: 'medium', timeStyle: undefined })
+                          : c.due_at
+                            ? `due ${formatInZone(c.due_at, timezone, { dateStyle: 'medium', timeStyle: 'short' })}`
+                            : `due before session ${c.due_session} (not booked yet)`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {charges.length > 0 && (
+                <p className="small muted" style={{ margin: '0.2rem 0 0' }}>
+                  Paid {money(paid)}{owed > 0 ? ` · ${money(owed)} outstanding` : ' · fully paid'}
+                </p>
+              )}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
 function BookingsTab({ profile }: { profile: OwnProfile }) {
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1438,6 +1505,8 @@ function BookingsTab({ profile }: { profile: OwnProfile }) {
 
       {error && <div className="alert alert-error">{error}</div>}
       {notice && <div className="alert alert-success">{notice}</div>}
+
+      <PackagesOverview timezone={zone} />
 
       {/* For sessions arranged outside the public flow — paid offline, pro
           bono, a goodwill rebooking. The money is recorded as zero on purpose;

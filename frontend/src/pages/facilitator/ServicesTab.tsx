@@ -53,6 +53,8 @@ interface Draft {
   refund_full_hours: number;
   refund_half_hours: number;
   intake_questions: IntakeQuestion[];
+  /** Empty = full payment only. Amounts in pesos as typed. */
+  installments: { pesos: string; due_session: number }[];
   is_active: boolean;
   sort_order: number;
 }
@@ -75,9 +77,110 @@ const blankDraft = (): Draft => ({
   refund_full_hours: 24,
   refund_half_hours: 12,
   intake_questions: [],
+  installments: [],
   is_active: true,
   sort_order: 0,
 });
+
+/**
+ * Package instalments (0077). Off = full payment only. On = a list of
+ * payments, each due before a session; payment 1 is paid at checkout. Clients
+ * choose full payment or this plan when they buy.
+ */
+function InstallmentEditor({
+  pricePesos,
+  sessions,
+  value,
+  onChange,
+}: {
+  pricePesos: string;
+  sessions: number;
+  value: { pesos: string; due_session: number }[];
+  onChange: (v: { pesos: string; due_session: number }[]) => void;
+}) {
+  const price = Math.round(Number(pricePesos || 0) * 100);
+  const suggest = (n: number) => {
+    const count = Math.max(2, Math.min(n, 12, sessions));
+    const base = Math.floor(price / count / 100) * 100;
+    const first = price - base * (count - 1);
+    onChange(
+      Array.from({ length: count }, (_, i) => ({
+        pesos: String((i === 0 ? first : base) / 100),
+        due_session: 1 + Math.floor((i * sessions) / count),
+      })),
+    );
+  };
+  const total = value.reduce((s, p) => s + Math.round(Number(p.pesos || 0) * 100), 0);
+  const peso = (c: number) => `₱${(c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`;
+
+  return (
+    <div className="field">
+      <label className="small" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          style={{ width: 'auto' }}
+          checked={value.length > 0}
+          disabled={price <= 0 || sessions < 2}
+          onChange={(e) => (e.target.checked ? suggest(Math.min(3, sessions)) : onChange([]))}
+        />
+        Also offer instalments
+      </label>
+      <small className="muted">
+        Clients choose full payment or this plan. Payment 1 is paid at checkout; each later payment is due before the
+        session you pick, and reminders go out 7 days, 3 days and on the day.
+      </small>
+      {value.length > 0 && (
+        <div style={{ marginTop: '0.5rem' }}>
+          <label className="small" style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}>
+            Number of payments
+            <select value={value.length} onChange={(e) => suggest(Number(e.target.value))} style={{ width: 'auto' }}>
+              {Array.from({ length: Math.min(12, sessions) - 1 }, (_, i) => i + 2).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          {value.map((p, i) => (
+            <div key={i} className="row" style={{ gap: '0.5rem', alignItems: 'center', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+              <span className="small" style={{ minWidth: 80 }}>Payment {i + 1}</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={p.pesos}
+                aria-label={`Payment ${i + 1} amount in pesos`}
+                style={{ maxWidth: 140 }}
+                onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, pesos: e.target.value } : x)))}
+              />
+              {i === 0 ? (
+                <span className="small muted">at checkout</span>
+              ) : (
+                <label className="small" style={{ display: 'inline-flex', gap: '0.3rem', alignItems: 'center' }}>
+                  due before session
+                  <select
+                    value={p.due_session}
+                    style={{ width: 'auto' }}
+                    onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, due_session: Number(e.target.value) } : x)))}
+                  >
+                    {Array.from({ length: sessions }, (_, k) => k + 1).map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          ))}
+          <p className={`small ${total === price ? 'muted' : ''}`} style={{ marginTop: '0.4rem', color: total === price ? undefined : 'var(--danger, #b42318)' }}>
+            Total {peso(total)} {total === price ? '— matches the package price.' : `— must equal the package price, ${peso(price)}.`}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function toDraft(s: FacilitatorService): Draft {
   return {
@@ -98,6 +201,7 @@ function toDraft(s: FacilitatorService): Draft {
     refund_full_hours: s.refund_full_hours ?? 24,
     refund_half_hours: s.refund_half_hours ?? 12,
     intake_questions: s.intake_questions ?? [],
+    installments: (s.installment_plan ?? []).map((p) => ({ pesos: String(p.amount_centavos / 100), due_session: p.due_session })),
     is_active: s.is_active,
     sort_order: s.sort_order,
   };
@@ -127,6 +231,10 @@ function toInput(d: Draft): Record<string, unknown> {
     // the server rejects them, so they are dropped here rather than turning a
     // save into an error about something they had already given up on.
     intake_questions: d.intake_questions.filter((q) => q.label.trim()),
+    installment_plan:
+      d.kind === 'package' && d.installments.length
+        ? d.installments.map((p) => ({ amount_centavos: Math.round(Number(p.pesos || 0) * 100), due_session: p.due_session }))
+        : null,
     is_active: d.is_active,
     sort_order: d.sort_order,
   };
@@ -499,6 +607,15 @@ export default function ServicesTab() {
                     onChange={(e) => set('sessions_count', Number(e.target.value))}
                   />
                 </label>
+              )}
+
+              {draft.kind === 'package' && (
+                <InstallmentEditor
+                  pricePesos={draft.pricePesos}
+                  sessions={draft.sessions_count}
+                  value={draft.installments}
+                  onChange={(v) => set('installments', v)}
+                />
               )}
 
               <label className="field">

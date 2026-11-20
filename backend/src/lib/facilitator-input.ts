@@ -9,6 +9,7 @@
  * same allowlist the CMS blocks use. A facilitator bio is user-authored content
  * displayed to the public, which is exactly the shape of a stored-XSS vector.
  */
+import { validateInstallmentPlan, type PlanInstallment } from './package-installments.js';
 import { sanitizeRichText, stripTags } from './sanitize.js';
 import { validateIntakeQuestions, IntakeError, type IntakeQuestion } from './intake.js';
 
@@ -429,8 +430,18 @@ export interface ServiceInput {
   refund_full_hours: number;
   refund_half_hours: number;
   intake_questions: IntakeQuestion[];
+  /** Package instalments (0077): null = full payment only. */
+  installment_plan: PlanInstallment[] | null;
   is_active: boolean;
   sort_order: number;
+}
+
+/** A package's instalment plan, validated against its price and sessions (0077). */
+function installmentPlanFor(kind: string, raw: unknown, priceCentavos: number, sessions: number): PlanInstallment[] | null {
+  if (kind !== 'package') return null;
+  const result = validateInstallmentPlan(raw, priceCentavos, sessions);
+  if (!result.ok) throw new FacilitatorInputError(result.error);
+  return result.plan.length ? result.plan : null;
 }
 
 export function validateService(body: Record<string, unknown>): ServiceInput {
@@ -517,6 +528,7 @@ export function validateService(body: Record<string, unknown>): ServiceInput {
     // it into a 400 with the message, rather than a 500 the facilitator cannot
     // act on.
     intake_questions: intakeQuestions,
+    installment_plan: installmentPlanFor(kind, body.installment_plan, price, kind === 'package' ? int(body.sessions_count, 'Sessions', 2, 50, 2) : 1),
     is_active: body.is_active !== false,
     sort_order: int(body.sort_order, 'Order', 0, 999, 0),
   };

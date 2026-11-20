@@ -7,6 +7,7 @@
  * many credits are left" is asked from three places, and three answers is a
  * client scheduling a seventh session on a six-session package.
  */
+import { applyPackageChargePayment } from './package-charges.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   splitPackageSessions,
@@ -39,7 +40,7 @@ export interface PackageRow {
 export const PACKAGE_COLUMNS =
   'id, facilitator_id, service_id, client_email, client_name, client_timezone, sessions_total, ' +
   'price_centavos, platform_fee_centavos, facilitator_net_centavos, currency, status, ' +
-  'refund_full_hours, refund_half_hours, created_at';
+  'refund_full_hours, refund_half_hours, plan_kind, created_at';
 
 /**
  * How many sessions of this package are still schedulable, and which share the
@@ -83,6 +84,26 @@ export async function packageState(
 }
 
 /**
+ * On an instalment package (0077) the checkout that activates it pays
+ * payment 1. Recorded here, quietly: the package-purchased email covers it.
+ * Safe to repeat; applyPackageChargePayment only moves an unpaid row.
+ */
+async function settleFirstInstalment(
+  supabase: SupabaseClient,
+  pkg: { id: string; plan_kind?: string },
+  paymentId: string | undefined,
+): Promise<void> {
+  if (pkg.plan_kind !== 'installment') return;
+  const { data: first } = await supabase
+    .from('package_charges')
+    .select('id')
+    .eq('package_id', pkg.id)
+    .eq('seq', 1)
+    .maybeSingle<{ id: string }>();
+  if (first) await applyPackageChargePayment(supabase, first.id, paymentId, { notify: false });
+}
+
+/**
  * Marks a package paid and tells the buyer.
  *
  * Idempotent, like `confirmBooking` and for the same reason: PayMongo delivers
@@ -110,6 +131,7 @@ export async function confirmPackage(
   if (!pkg) throw new Error(`Package ${packageId} not found`);
 
   if (pkg.status === 'active') {
+    await settleFirstInstalment(supabase, pkg, paymentId);
     return { packageId, status: 'active', alreadyActive: true };
   }
   if (pkg.status !== 'pending_payment') {
@@ -129,6 +151,7 @@ export async function confirmPackage(
     .maybeSingle<{ id: string }>();
 
   if (updateError) throw updateError;
+  await settleFirstInstalment(supabase, pkg, paymentId);
   if (!activated) return { packageId, status: 'active', alreadyActive: true };
 
   await sendPackagePurchased({

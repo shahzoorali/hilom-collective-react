@@ -16,6 +16,7 @@
  * those. Returning non-2xx here would just make PayMongo re-deliver the same
  * event, which the dedupe already handles for free.
  */
+import { applyPackageChargePayment } from '../lib/package-charges.js';
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getPayMongoSecret } from '../lib/secrets.js';
 import { verifyWebhookSignature, parseWebhookEvent, SignatureVerificationError } from '../lib/paymongo.js';
@@ -161,6 +162,10 @@ async function dispatch(eventType: string, normalized: NormalizedPayment): Promi
 
   if (metadata.kind === 'package') {
     return await handlePackage(paymentId, metadata.package_id, eventType);
+  }
+
+  if (metadata.kind === 'package_charge') {
+    return await handlePackageCharge(paymentId, metadata.charge_id, eventType);
   }
 
   if (metadata.kind === 'event_registration') {
@@ -348,6 +353,27 @@ async function handlePackage(
     const message = err instanceof Error ? err.message : String(err);
     console.error('[paymongo-webhook] package activation failed, queuing retry', { packageId, message });
     await enqueueRetry(packageId, message, 'package');
+    return ok({ received: true, handled: true, status: 'queued_for_retry' });
+  }
+}
+
+/** A later instalment on a package (0077). Same contract as handlePackage. */
+async function handlePackageCharge(
+  paymentId: string | undefined,
+  chargeId: string | undefined,
+  eventType: string,
+): Promise<APIGatewayProxyResultV2> {
+  if (!chargeId) {
+    console.warn('[paymongo-webhook] package charge event without charge_id, skipping', { eventType, paymentId });
+    return ok({ received: true, handled: false, error: 'missing_charge_id' });
+  }
+  try {
+    const result = await applyPackageChargePayment(await getSupabase(), chargeId, paymentId);
+    return ok({ received: true, handled: true, status: result.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[paymongo-webhook] package charge failed, queuing retry', { chargeId, message });
+    await enqueueRetry(chargeId, message, 'package_charge');
     return ok({ received: true, handled: true, status: 'queued_for_retry' });
   }
 }

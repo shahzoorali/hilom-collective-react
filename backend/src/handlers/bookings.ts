@@ -21,6 +21,8 @@
  * payment can never arrive for a booking that does not exist, and an abandoned
  * checkout is a lapsed hold rather than a lost sale.
  */
+import { validateInstallmentPlan, chargesForPlan, type ChargeDraft } from '../lib/package-installments.js';
+import { packageChargesWithDue, openPackageChargeCheckout } from '../lib/package-charges.js';
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
 import { createHostedCheckout } from '../lib/paymongo-checkout.js';
@@ -91,6 +93,13 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     if (path.endsWith('/me/bookings')) return await listMine(user.email);
     if (path.endsWith('/me/packages')) return await listMyPackages(user.email);
+    {
+      const packageId = event.pathParameters?.packageId;
+      const chargeId = event.pathParameters?.chargeId;
+      if (packageId && chargeId && method === 'POST' && path.endsWith('/pay')) {
+        return await payPackageCharge(packageId, chargeId, user);
+      }
+    }
     if (path.endsWith('/packages')) {
       if (method === 'POST') return await buyPackage(event, user);
       return badRequest(`Unsupported method ${method}`);
@@ -453,6 +462,19 @@ async function buyPackage(
   }
 
   const fee = splitFee(service.price_centavos, facilitator.platform_fee_bps);
+
+  // Full payment, or the service's instalment plan (0077).
+  const wantsInstallments = body.plan === 'installment';
+  let charges: ChargeDraft[] = [];
+  if (wantsInstallments) {
+    const plan = validateInstallmentPlan(service.installment_plan ?? null, fee.priceCentavos, service.sessions_count);
+    if (!plan.ok || plan.plan.length === 0) {
+      return badRequest('This package is not offered in instalments.');
+    }
+    charges = chargesForPlan(plan.plan, fee.platformFeeCentavos);
+  }
+  const firstAmount = charges[0]?.amount_centavos ?? fee.priceCentavos;
+
   const name =
     [user.givenName, user.familyName].filter(Boolean).join(' ') ||
     (typeof body.name === 'string' ? body.name.trim() : '') ||
@@ -479,6 +501,7 @@ async function buyPackage(
       // A free package would be an unlimited supply of free sessions, so the
       // service editor forbids a zero-priced package; this is the second layer.
       status: 'pending_payment',
+      plan_kind: wantsInstallments ? 'installment' : 'full',
     })
     .select('id')
     .maybeSingle<{ id: string }>();
@@ -486,14 +509,26 @@ async function buyPackage(
   if (insertError) throw insertError;
   if (!pkg) throw new Error('Package insert returned no row');
 
+  if (charges.length) {
+    const { error: chargesError } = await supabase.from('package_charges').insert(
+      charges.map((c) => ({ ...c, package_id: pkg.id, currency: service.currency })),
+    );
+    if (chargesError) {
+      await supabase.from('booking_packages').delete().eq('id', pkg.id).eq('status', 'pending_payment');
+      throw chargesError;
+    }
+  }
+
   const origin = process.env.FRONTEND_URL ?? 'https://www.hilomcollective.com';
 
   let session;
   try {
     session = await createHostedCheckout({
       name: `${service.title} with ${facilitator.display_name}`,
-      description: `${service.sessions_count} sessions`,
-      amountCentavos: fee.priceCentavos,
+      description: charges.length
+        ? `${service.sessions_count} sessions · ${charges[0]!.label}`
+        : `${service.sessions_count} sessions`,
+      amountCentavos: firstAmount,
       currency: service.currency,
       billing: { email: user.email, name },
       metadata: {
@@ -525,11 +560,35 @@ async function buyPackage(
   return ok({
     packageId: pkg.id,
     checkoutUrl: session.checkoutUrl,
-    amountCentavos: fee.priceCentavos,
+    amountCentavos: firstAmount,
+    totalCentavos: fee.priceCentavos,
+    plan: wantsInstallments ? 'installment' : 'full',
     currency: service.currency,
     sessionsTotal: service.sessions_count,
     serviceTitle: service.title,
   });
+}
+
+/**
+ * POST /packages/{packageId}/charges/{chargeId}/pay
+ *
+ * Opens a checkout for the client's next instalment (0077). The reminder
+ * emails link to the bookings page, which calls this.
+ */
+async function payPackageCharge(
+  packageId: string,
+  chargeId: string,
+  user: { email: string; givenName?: string; familyName?: string },
+): Promise<APIGatewayProxyResultV2> {
+  const supabase = await getSupabase();
+  const name = [user.givenName, user.familyName].filter(Boolean).join(' ') || null;
+  try {
+    const r = await openPackageChargeCheckout(supabase, packageId, chargeId, { email: user.email, name });
+    if (!r.ok) return json(r.status, { error: r.error });
+    return ok({ chargeId, checkoutUrl: r.checkoutUrl, amountCentavos: r.amountCentavos, currency: r.currency });
+  } catch (err) {
+    return serverError('bookings.payPackageCharge', err);
+  }
 }
 
 /**
@@ -556,8 +615,11 @@ async function listMyPackages(email: string): Promise<APIGatewayProxyResultV2> {
 
   const packages = await Promise.all(
     ((data ?? []) as any[]).map(async (pkg) => {
-      const state = await packageState(supabase, pkg as PackageRow);
-      return { ...pkg, remaining: state.remaining, used: state.used };
+      const [state, charges] = await Promise.all([
+        packageState(supabase, pkg as PackageRow),
+        packageChargesWithDue(supabase, pkg.id),
+      ]);
+      return { ...pkg, remaining: state.remaining, used: state.used, charges };
     }),
   );
 

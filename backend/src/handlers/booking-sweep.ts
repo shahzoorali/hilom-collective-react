@@ -29,6 +29,7 @@
  * before the email goes out rather than recorded after it; see the note on
  * sendDueReminders for why that ordering is the one that matters.
  */
+import { sweepPackageCharges } from '../lib/package-charges.js';
 import { getSupabase } from '../lib/supabase.js';
 import { sendBookingReminder, sendReviewRequest } from '../lib/booking-email.js';
 
@@ -310,6 +311,17 @@ export async function handler(): Promise<void> {
       return { expired: 0, completed: 0 };
     }),
   ]);
+
+  // Package instalments (0077): payment reminders, overdue alerts, stale
+  // checkouts. Separate from session reminders above, on purpose.
+  try {
+    const r = await sweepPackageCharges(await getSupabase(), now);
+    if (r.reminded || r.flagged || r.reset) {
+      console.log(`[bookingSweep] package charges: reminded ${r.reminded}, flagged ${r.flagged} overdue, reset ${r.reset} checkout(s)`);
+    }
+  } catch (err) {
+    console.error('[bookingSweep] package charges failed', err);
+  }
 
   if (released > 0 || completed > 0 || reminded > 0 || classes.expired > 0 || classes.completed > 0) {
     console.log(
