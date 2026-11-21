@@ -59,6 +59,9 @@ export const refundOwed: QueueFilter = (q) => q.gt('refund_centavos', 0).is('ref
 /** An order where the money landed and the enrolment did not. */
 export const ordersNotFulfilled: QueueFilter = (q) => q.eq('status', 'paid_pending_enrollment');
 
+/** Paid after the hold lapsed and not honoured automatically (0079). */
+export const latePaymentsOpen: QueueFilter = (q) => q.eq('outcome', 'needs_action').is('resolved_at', null);
+
 /** An instalment past its due date and still unpaid. */
 export const chargesOverdue =
   (now: Date): QueueFilter =>
@@ -76,6 +79,7 @@ export interface QueueCounts {
   bookingRefundsOwed: number;
   overdueRegistrations: number;
   stuckOrders: number;
+  latePayments: number;
 }
 
 /** `select('id', { count: 'exact', head: true })` — a number, and no rows. */
@@ -126,6 +130,7 @@ export async function countQueues(supabase: SupabaseClient, now: Date): Promise<
     bookingRefundsOwed,
     overdueRegistrations,
     stuckOrders,
+    latePayments,
   ] = await Promise.all([
     countOf(supabase, 'facilitators', facilitatorsAwaitingReview),
     countOf(supabase, 'facilitator_reviews', reviewsAwaitingModeration),
@@ -134,6 +139,7 @@ export async function countQueues(supabase: SupabaseClient, now: Date): Promise<
     countOf(supabase, 'bookings', refundOwed),
     countOverdueRegistrations(supabase, now),
     countOf(supabase, 'orders', ordersNotFulfilled),
+    countOf(supabase, 'late_payments', latePaymentsOpen),
   ]);
 
   return {
@@ -144,6 +150,7 @@ export async function countQueues(supabase: SupabaseClient, now: Date): Promise<
     bookingRefundsOwed,
     overdueRegistrations,
     stuckOrders,
+    latePayments,
   };
 }
 

@@ -31,6 +31,7 @@
  */
 import { sweepPackageCharges } from '../lib/package-charges.js';
 import { getSupabase } from '../lib/supabase.js';
+import { expireCheckoutSessions } from '../lib/paymongo-checkout.js';
 import { sendBookingReminder, sendReviewRequest } from '../lib/booking-email.js';
 
 /**
@@ -49,9 +50,10 @@ async function releaseExpiredHolds(now: Date): Promise<number> {
     .delete()
     .eq('status', 'pending_payment')
     .lt('hold_expires_at', now.toISOString())
-    .select('id');
+    .select('id, paymongo_session_id');
 
   if (error) throw error;
+  await expireCheckoutSessions((data ?? []).map((r) => r.paymongo_session_id as string | null));
   return (data ?? []).length;
 }
 
@@ -253,6 +255,34 @@ async function sendDueReminders(now: Date): Promise<number> {
  *    window to be marked a no-show — attendance is not tracked per seat — so
  *    the session is complete once it has ended.
  */
+/**
+ * Lapsed event holds (0079). Until now these were expired only lazily, inside
+ * the next claim for the same event — so an event nobody else was buying left
+ * its abandoned checkouts payable indefinitely. Expired here too, and each
+ * hold's open PayMongo checkout is closed with it.
+ */
+async function sweepEventHolds(now: Date): Promise<number> {
+  const supabase = await getSupabase();
+  const { data: expired, error } = await supabase
+    .from('event_registrations')
+    .update({ status: 'expired' })
+    .eq('status', 'pending_payment')
+    .lt('hold_expires_at', now.toISOString())
+    .select('id');
+  if (error) throw error;
+  const ids = (expired ?? []).map((r) => r.id as string);
+  if (ids.length === 0) return 0;
+
+  const { data: charges, error: chargeError } = await supabase
+    .from('registration_charges')
+    .select('paymongo_session_id')
+    .in('registration_id', ids)
+    .not('paymongo_session_id', 'is', null);
+  if (chargeError) throw chargeError;
+  await expireCheckoutSessions((charges ?? []).map((c) => c.paymongo_session_id as string | null));
+  return ids.length;
+}
+
 async function sweepClasses(now: Date): Promise<{ expired: number; completed: number }> {
   const supabase = await getSupabase();
 
@@ -261,8 +291,9 @@ async function sweepClasses(now: Date): Promise<{ expired: number; completed: nu
     .update({ status: 'expired' })
     .eq('status', 'pending_payment')
     .lt('hold_expires_at', now.toISOString())
-    .select('id');
+    .select('id, paymongo_session_id');
   if (expireError) throw expireError;
+  await expireCheckoutSessions((expired ?? []).map((r) => r.paymongo_session_id as string | null));
 
   const { data: completed, error: completeError } = await supabase
     .from('facilitator_class_sessions')
@@ -311,6 +342,13 @@ export async function handler(): Promise<void> {
       return { expired: 0, completed: 0 };
     }),
   ]);
+
+  try {
+    const n = await sweepEventHolds(now);
+    if (n > 0) console.log(`[bookingSweep] expired ${n} event hold(s)`);
+  } catch (err) {
+    console.error('[bookingSweep] expiring event holds failed', err);
+  }
 
   // Package instalments (0077): payment reminders, overdue alerts, stale
   // checkouts. Separate from session reminders above, on purpose.

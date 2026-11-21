@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminGetOverview, type AdminOverview } from '../../lib/cms';
+import { adminGetOverview, adminListLatePayments, adminResolveLatePayment, type AdminOverview, type LatePayment } from '../../lib/cms';
 import { adminListOrders, type AdminOrder } from '../../lib/api';
 import { money } from '../../components/Layout';
 import { Skeleton } from '../../components/Skeleton';
@@ -112,6 +112,7 @@ export default function DashboardTab({ adminKey }: { adminKey: string }) {
         { label: 'Class refunds', count: q.classRefundsOwed, to: '/admin/payouts', hint: 'owed' },
         { label: 'Booking refunds', count: q.bookingRefundsOwed, to: '/admin/bookings', hint: 'owed' },
         { label: 'Registration instalments', count: q.overdueRegistrations, to: '/admin/registrations?filter=overdue', hint: 'overdue' },
+        { label: 'Late payments', count: q.latePayments ?? 0, to: '/admin#late-payments', hint: 'paid, not booked' },
         { label: 'Orders', count: q.stuckOrders, to: '/admin/orders?status=paid_pending_enrollment', hint: 'paid, not fulfilled' },
       ]
     : [];
@@ -176,6 +177,10 @@ export default function DashboardTab({ adminKey }: { adminKey: string }) {
           </>
         )}
       </div>
+
+      {(q?.latePayments ?? 0) > 0 && (
+        <LatePaymentsPanel adminKey={adminKey} onChange={() => setRefreshedAt(new Date())} />
+      )}
 
       {/* 2. KPIs */}
       <div className="stat-grid">
@@ -370,5 +375,94 @@ function RevenueChart({ days, currency }: { days: { day: string; value: number }
         {money(max, currency)}
       </text>
     </svg>
+  );
+}
+
+const KIND_LABEL: Record<LatePayment['kind'], string> = {
+  booking: 'Session booking',
+  class: 'Class seat',
+  event_registration: 'Event place',
+};
+
+/**
+ * Money that arrived after its hold lapsed and could not be honoured
+ * automatically (0079). Each one needs a refund or a manual booking; the note
+ * records which.
+ */
+function LatePaymentsPanel({ adminKey, onChange }: { adminKey: string; onChange: () => void }) {
+  const [rows, setRows] = useState<LatePayment[] | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    adminListLatePayments(adminKey)
+      .then(setRows)
+      .catch((e: Error) => setError(e.message));
+  }, [adminKey]);
+
+  const resolve = async (id: string) => {
+    const note = (notes[id] ?? '').trim();
+    if (!note) {
+      setError('Say what was done first, e.g. "Refunded via BPI, ref 123".');
+      return;
+    }
+    setBusy(id);
+    setError(null);
+    try {
+      await adminResolveLatePayment(adminKey, id, note);
+      setRows((prev) => (prev ?? []).filter((r) => r.id !== id));
+      onChange();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="panel" id="late-payments" style={{ marginTop: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Paid, not booked</h3>
+      <p className="small muted" style={{ marginTop: 0 }}>
+        These people paid after their hold had expired and there was no room to book them automatically.
+        Refund them or book them in by hand, then note what you did.
+      </p>
+      {error && <div className="alert alert-error">{error}</div>}
+      {rows == null ? (
+        <Skeleton width="100%" height={60} />
+      ) : rows.length === 0 ? (
+        <p className="small muted">Nothing open.</p>
+      ) : (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {rows.map((r) => (
+            <div key={r.id} style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius)', padding: 12, display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <strong>
+                  {r.amount_centavos != null ? money(r.amount_centavos, r.currency) : 'Unknown amount'} · {KIND_LABEL[r.kind]}
+                </strong>
+                <span className="small muted">{new Date(r.created_at).toLocaleString()}</span>
+              </div>
+              <div className="small">{r.client_email ?? 'Unknown client'}</div>
+              {r.detail && <div className="small muted">{r.detail}</div>}
+              <div className="small muted" style={{ wordBreak: 'break-all' }}>
+                PayMongo {r.paymongo_payment_id} · record {r.source_id}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  style={{ flex: '1 1 220px' }}
+                  placeholder="What was done (refunded, rebooked…)"
+                  value={notes[r.id] ?? ''}
+                  maxLength={1000}
+                  onChange={(e) => setNotes((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                />
+                <button type="button" className="btn btn-primary small" disabled={busy === r.id} onClick={() => resolve(r.id)}>
+                  {busy === r.id ? 'Saving…' : 'Mark resolved'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

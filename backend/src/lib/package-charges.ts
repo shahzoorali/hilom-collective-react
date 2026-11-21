@@ -4,6 +4,7 @@
  * The rules live in package-installments.ts; this file reads sessions, writes
  * charge rows, opens checkouts and sends the emails.
  */
+import { expireCheckoutSessions } from './paymongo-checkout.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createHostedCheckout } from './paymongo-checkout.js';
 import {
@@ -245,8 +246,11 @@ export async function sweepPackageCharges(
     .eq('status', 'awaiting_payment')
     .gt('seq', 1)
     .lt('checkout_expires_at', now.toISOString())
-    .select('id');
+    .select('id, paymongo_session_id');
   if (resetError) throw resetError;
+  // Close the abandoned checkout too, so it cannot be paid alongside the next
+  // one the client opens for the same instalment (0079).
+  await expireCheckoutSessions((reset ?? []).map((r) => r.paymongo_session_id as string | null));
 
   const { data: open, error } = await supabase
     .from('package_charges')

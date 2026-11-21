@@ -22,7 +22,8 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { getSupabase } from '../lib/supabase.js';
 import { ok, badRequest, unauthorized, serverError, isAuthorizedAdmin } from '../lib/http.js';
-import { countQueues, revenueSince } from '../lib/admin-queues.js';
+import { adminActorFromEvent, recordAudit } from '../lib/audit.js';
+import { countQueues, revenueSince, latePaymentsOpen } from '../lib/admin-queues.js';
 
 /** Bounded because it reaches a query; 90 days keeps the money read small. */
 const MAX_DAYS = 90;
@@ -32,6 +33,13 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   if (!(await isAuthorizedAdmin(event.headers))) return unauthorized();
 
   const method = event.requestContext.http.method;
+  const path = event.rawPath ?? '';
+
+  // Late payments (0079): GET lists the open ones, POST …/{id}/resolve closes one.
+  if (path.endsWith('/admin/late-payments') && method === 'GET') return await listLatePayments();
+  const resolveMatch = path.match(/\/admin\/late-payments\/([0-9a-f-]{36})\/resolve$/);
+  if (resolveMatch && method === 'POST') return await resolveLatePayment(resolveMatch[1]!, event);
+
   if (method !== 'GET') return badRequest(`Unsupported method ${method}`);
 
   const raw = event.queryStringParameters?.days;
@@ -67,5 +75,51 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     });
   } catch (err) {
     return serverError('adminOverview', err);
+  }
+}
+
+async function listLatePayments(): Promise<APIGatewayProxyResultV2> {
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await latePaymentsOpen(
+      supabase
+        .from('late_payments')
+        .select('id, kind, source_id, paymongo_payment_id, amount_centavos, currency, client_email, detail, created_at'),
+    )
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    return ok({ latePayments: data ?? [] });
+  } catch (err) {
+    return serverError('adminLatePayments.list', err);
+  }
+}
+
+/** Marks one resolved, with a note (e.g. "refunded via BPI, ref 123"). Audited. */
+async function resolveLatePayment(id: string, event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
+  let note = '';
+  try {
+    note = String((JSON.parse(event.body ?? '{}') as { note?: unknown }).note ?? '').trim();
+  } catch {
+    return badRequest('Body must be JSON');
+  }
+  if (!note) return badRequest('Say what was done (refunded, rebooked, ...)');
+  if (note.length > 1000) return badRequest('Note is too long');
+  try {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from('late_payments')
+      .update({ resolved_at: new Date().toISOString(), resolved_by: (await adminActorFromEvent(event)).label, resolution_note: note })
+      .eq('id', id)
+      .is('resolved_at', null)
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (error) throw error;
+    if (!data) return badRequest('Not found or already resolved');
+    const actor = await adminActorFromEvent(event);
+    await recordAudit(actor, { action: 'late_payment.resolve', targetTable: 'late_payments', targetId: id, note });
+    return ok({ resolved: true });
+  } catch (err) {
+    return serverError('adminLatePayments.resolve', err);
   }
 }

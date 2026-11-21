@@ -20,9 +20,10 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendClassJoined, sendClassSeatAlerts } from './booking-email.js';
+import { recordLatePayment, reviveFailureReason } from './late-payments.js';
 
 export interface ClassConfirmResult {
-  status: 'confirmed' | 'already_confirmed';
+  status: 'confirmed' | 'already_confirmed' | 'late_needs_action';
   registrationId: string;
 }
 
@@ -53,10 +54,72 @@ export async function confirmClassSeat(
     .maybeSingle<{ id: string }>();
   if (error) throw error;
 
-  if (!confirmed) return { status: 'already_confirmed', registrationId };
+  if (!confirmed) {
+    if (paymentId) return await handleLatePayment(supabase, registrationId, paymentId, patch);
+    return { status: 'already_confirmed', registrationId };
+  }
 
   await notifyJoined(supabase, registrationId);
   return { status: 'confirmed', registrationId };
+}
+
+/**
+ * The payment matched no held seat. Usually that is the second of PayMongo's
+ * two events for one payment. But if the seat's hold had lapsed (0079), this
+ * is real money attached to nothing: re-claim the seat if there is room and
+ * confirm as normal, otherwise put it in front of a human.
+ */
+async function handleLatePayment(
+  supabase: SupabaseClient,
+  registrationId: string,
+  paymentId: string,
+  patch: Record<string, unknown>,
+): Promise<ClassConfirmResult> {
+  const { data: row, error } = await supabase
+    .from('class_registrations')
+    .select('status, client_email, price_centavos, currency, paymongo_payment_id')
+    .eq('id', registrationId)
+    .maybeSingle<{ status: string; client_email: string; price_centavos: number; currency: string; paymongo_payment_id: string | null }>();
+  if (error) throw error;
+  if (!row || row.status !== 'expired') return { status: 'already_confirmed', registrationId };
+
+  const late = {
+    kind: 'class' as const,
+    sourceId: registrationId,
+    paymentId,
+    amountCentavos: row.price_centavos,
+    currency: row.currency,
+    clientEmail: row.client_email,
+  };
+
+  const { data: revived, error: reviveError } = await supabase.rpc('revive_class_registration', {
+    p_registration_id: registrationId,
+  });
+  if (reviveError) throw reviveError;
+
+  if (revived === 'revived') {
+    const { data: confirmed, error: confirmError } = await supabase
+      .from('class_registrations')
+      .update(patch)
+      .eq('id', registrationId)
+      .eq('status', 'pending_payment')
+      .select('id')
+      .maybeSingle<{ id: string }>();
+    if (confirmError) throw confirmError;
+    if (confirmed) {
+      await recordLatePayment(supabase, { ...late, outcome: 'revived', detail: 'Seat re-claimed and confirmed.' });
+      await notifyJoined(supabase, registrationId);
+      return { status: 'confirmed', registrationId };
+    }
+    return { status: 'already_confirmed', registrationId };
+  }
+
+  // Keep the money traceable to the row even though the seat is gone.
+  if (!row.paymongo_payment_id) {
+    await supabase.from('class_registrations').update({ paymongo_payment_id: paymentId }).eq('id', registrationId);
+  }
+  await recordLatePayment(supabase, { ...late, outcome: 'needs_action', detail: reviveFailureReason(String(revived)) });
+  return { status: 'late_needs_action', registrationId };
 }
 
 /**

@@ -1584,3 +1584,50 @@ export async function sendClassSeatAlerts(input: {
     }),
   );
 }
+
+/**
+ * Admin: a payment arrived for a hold that had already lapsed and could not be
+ * honoured automatically (0079). Someone has to refund or rebook by hand.
+ */
+export async function sendLatePaymentAlert(input: {
+  kind: string;
+  sourceId: string;
+  paymentId: string;
+  amountCentavos: number | null;
+  currency: string;
+  clientEmail: string | null;
+  detail: string;
+}): Promise<void> {
+  const { kind, sourceId, paymentId, amountCentavos, currency, clientEmail, detail } = input;
+  const label = kind === 'class' ? 'class seat' : kind === 'booking' ? 'session booking' : 'event place';
+  const amount = amountCentavos != null ? peso(amountCentavos, currency) : 'unknown amount';
+  const heading = `Paid but not booked: ${amount} for a ${label}`;
+  const url = 'https://www.hilomcollective.com/admin#late-payments';
+  const rows = [
+    { label: 'Client', value: escapeHtml(clientEmail ?? 'unknown') },
+    { label: 'Amount', value: escapeHtml(amount) },
+    { label: 'What', value: escapeHtml(label) },
+    { label: 'Why', value: escapeHtml(detail) },
+    { label: 'PayMongo payment', value: escapeHtml(paymentId) },
+    { label: 'Record', value: escapeHtml(sourceId) },
+  ];
+  await send(
+    ADMIN_ALERT_EMAIL,
+    heading,
+    renderText(heading, [
+      `${clientEmail ?? 'Someone'} paid ${amount} after their ${label} hold had expired, and it could not be confirmed automatically.`,
+      `Why: ${detail}`,
+      `PayMongo payment: ${paymentId}`,
+      `Record: ${sourceId}`,
+      'Refund them or book them in by hand, then mark it resolved:',
+      url,
+    ]),
+    renderEmail({
+      heading,
+      body:
+        p(`${escapeHtml(clientEmail ?? 'Someone')} paid after their ${label} hold had expired, and it could not be confirmed automatically. Refund them or book them in by hand.`) +
+        details(rows) +
+        button('Open late payments', url),
+    }),
+  );
+}

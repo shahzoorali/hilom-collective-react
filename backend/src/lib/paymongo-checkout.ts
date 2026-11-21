@@ -130,3 +130,42 @@ export async function createHostedCheckout(req: CheckoutRequest): Promise<Checko
     checkoutUrl: payload.data.attributes.checkout_url,
   };
 }
+
+/**
+ * Closes a hosted checkout so it can no longer take a payment.
+ *
+ * Called when a hold lapses. Without it the PayMongo page stays payable long
+ * after the seat or slot it was for has been released — which is how a ₱900
+ * class payment landed nine hours after its 20-minute hold (Nov 20).
+ *
+ * Best-effort and never throws: a session that was already paid, already
+ * expired or never existed answers 4xx, and none of those is a problem for the
+ * caller. The webhook's late-payment path is the safety net behind this.
+ */
+export async function expireCheckoutSession(sessionId: string): Promise<boolean> {
+  try {
+    const { secretKey } = await getPayMongoSecret();
+    const res = await fetch(`https://api.paymongo.com/v1/checkout_sessions/${encodeURIComponent(sessionId)}/expire`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${Buffer.from(`${secretKey}:`).toString('base64')}` },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`[paymongo-checkout] expire ${sessionId} answered ${res.status}`, body.slice(0, 300));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[paymongo-checkout] expire failed', { sessionId, err });
+    return false;
+  }
+}
+
+/** Expires several sessions one after another; returns how many closed. */
+export async function expireCheckoutSessions(sessionIds: (string | null | undefined)[]): Promise<number> {
+  let closed = 0;
+  for (const id of new Set(sessionIds.filter((s): s is string => !!s && s.startsWith('cs_')))) {
+    if (await expireCheckoutSession(id)) closed += 1;
+  }
+  return closed;
+}

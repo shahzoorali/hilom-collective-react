@@ -18,6 +18,7 @@ import { getSupabase } from './supabase.js';
 import { depositClearedLate, isOutstanding, type ChargeStatus } from './event-ticketing.js';
 import { loadEventSplitContext, splitForEventCharge } from './finance-splits.js';
 import { sendBuddyConfirmed } from './registration-email.js';
+import { recordLatePayment, reviveFailureReason } from './late-payments.js';
 import {
   sendRegistrationConfirmed,
   sendPaymentReceipt,
@@ -125,6 +126,15 @@ export async function applyChargePayment(
     });
     if (paymentId) {
       await supabase.from('registration_charges').update({ paymongo_payment_id: paymentId }).eq('id', chargeId);
+      await recordLatePayment(supabase, {
+        kind: 'event_registration',
+        sourceId: charge.registration_id,
+        paymentId,
+        amountCentavos: charge.amount_centavos,
+        currency: charge.currency,
+        outcome: 'needs_action',
+        detail: `Payment arrived for an instalment that was already ${charge.status}.`,
+      });
     }
     return { chargeId, status: charge.status, alreadyPaid: false, registrationConfirmed: false };
   }
@@ -220,11 +230,42 @@ export async function applyChargePayment(
   if (regError) throw regError;
   if (!registration) throw new Error(`Registration ${charge.registration_id} not found`);
 
+  // The deposit cleared after the hold lapsed (0079): take the place back if
+  // there is still room, so it confirms below like any on-time payment;
+  // otherwise the money is recorded on the charge and a human is told.
+  let current = registration;
+  if (charge.is_deposit && registration.status === 'expired') {
+    const late = {
+      kind: 'event_registration' as const,
+      sourceId: registration.id,
+      paymentId: paymentId ?? charge.paymongo_payment_id ?? offline?.reference ?? null,
+      amountCentavos: charge.amount_centavos,
+      currency: charge.currency,
+      clientEmail: registration.registrant_email,
+    };
+    const { data: revived, error: reviveError } = await supabase.rpc('revive_event_registration', {
+      p_registration_id: registration.id,
+    });
+    if (reviveError) throw reviveError;
+    if (revived === 'revived') {
+      const { data: reloaded, error: reloadError } = await supabase
+        .from('event_registrations')
+        .select(REGISTRATION_COLUMNS)
+        .eq('id', registration.id)
+        .maybeSingle<RegistrationRow>();
+      if (reloadError) throw reloadError;
+      if (reloaded) current = reloaded;
+      await recordLatePayment(supabase, { ...late, outcome: 'revived', detail: 'Place re-claimed and confirmed.' });
+    } else {
+      await recordLatePayment(supabase, { ...late, outcome: 'needs_action', detail: reviveFailureReason(String(revived)) });
+    }
+  }
+
   const confirmed = charge.is_deposit
-    ? await confirmRegistration(supabase, registration, charge)
+    ? await confirmRegistration(supabase, current, charge)
     : false;
 
-  await notify(supabase, registration, charge, receiptNo, confirmed);
+  await notify(supabase, current, charge, receiptNo, confirmed);
 
   return { chargeId, status: 'paid', alreadyPaid: false, registrationConfirmed: confirmed };
 }

@@ -285,7 +285,8 @@ export class HilomMarketplaceStack extends cdk.Stack {
     // together for the reason the paymongoSecretId prop documents: the grant
     // alone controls nothing at runtime, so a function with the grant but no
     // env var silently reads the *test* secret while holding a live grant.
-    for (const fn of [bookings, eventRegistrations, classes, adminFinance, financeSweep]) {
+    // bookingSweep: closes the PayMongo checkout of every hold it lapses (0079).
+    for (const fn of [bookings, eventRegistrations, classes, adminFinance, financeSweep, bookingSweep]) {
       paymongoSecret.grantRead(fn);
       fn.addEnvironment('PAYMONGO_SECRET_ID', paymongoSecretId);
     }
@@ -574,7 +575,11 @@ export class HilomMarketplaceStack extends cdk.Stack {
       ['/admin/cognito/users/{username}', [GET]],
     ]);
 
-    attach(adminOverview, 'AdminOverviewInt', [['/admin/overview', [GET]]]);
+    attach(adminOverview, 'AdminOverviewInt', [
+      ['/admin/overview', [GET]],
+      ['/admin/late-payments', [GET]],
+      ['/admin/late-payments/{id}/resolve', [POST]],
+    ]);
 
     // Sub-routes are matched inside the handler; see the header of admin-finance.ts.
     attach(adminFinance, 'AdminFinanceInt', [['/admin/finance/{proxy+}', [GET, POST, PUT, DELETE]]]);

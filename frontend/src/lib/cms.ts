@@ -1188,6 +1188,7 @@ export interface AdminOverview {
     bookingRefundsOwed: number;
     overdueRegistrations: number;
     stuckOrders: number;
+    latePayments?: number;
   };
   money: {
     days: number;
@@ -1201,6 +1202,25 @@ export interface AdminOverview {
 
 export const adminGetOverview = (adminKey: string, days = 7) =>
   apiFetch<AdminOverview>(`/admin/overview?days=${days}`, adminInit(adminKey));
+
+/** Paid after the hold lapsed and not honoured automatically (0079). */
+export interface LatePayment {
+  id: string;
+  kind: 'booking' | 'class' | 'event_registration';
+  source_id: string;
+  paymongo_payment_id: string;
+  amount_centavos: number | null;
+  currency: string;
+  client_email: string | null;
+  detail: string | null;
+  created_at: string;
+}
+
+export const adminListLatePayments = (adminKey: string) =>
+  apiFetch<{ latePayments: LatePayment[] }>('/admin/late-payments', adminInit(adminKey)).then((r) => r.latePayments);
+
+export const adminResolveLatePayment = (adminKey: string, id: string, note: string) =>
+  apiFetch<{ resolved: true }>(`/admin/late-payments/${id}/resolve`, adminInit(adminKey, 'POST', { note }));
 
 /** The CSV export is a download, so it bypasses apiFetch and its JSON parsing. */
 export const adminRosterCsvUrl = (eventId: string) => `/admin/events/${eventId}/roster.csv`;

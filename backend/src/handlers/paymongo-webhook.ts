@@ -29,6 +29,7 @@ import { applyChargePayment } from '../lib/registration-fulfillment.js';
 import { enqueueRetry } from '../lib/retry-queue.js';
 import { captureAndStorePayment } from '../lib/paymongo-ledger.js';
 import { ok, badRequest, serverError } from '../lib/http.js';
+import { recordLatePayment } from '../lib/late-payments.js';
 
 const FULFILLABLE_EVENT_TYPES = new Set(['payment.paid', 'checkout_session.payment.paid']);
 
@@ -157,7 +158,7 @@ async function dispatch(eventType: string, normalized: NormalizedPayment): Promi
   // what keeps course checkout working unchanged, including sessions already
   // in flight when this deployed.
   if (metadata.kind === 'booking') {
-    return await handleBooking(paymentId, metadata.booking_id, eventType);
+    return await handleBooking(paymentId, metadata.booking_id, eventType, normalized);
   }
 
   if (metadata.kind === 'package') {
@@ -261,6 +262,7 @@ async function handleBooking(
   paymentId: string | undefined,
   bookingId: string | undefined,
   eventType: string,
+  payment: NormalizedPayment,
 ): Promise<APIGatewayProxyResultV2> {
   if (!bookingId) {
     // Expected for the sibling `payment.paid` event: metadata lives on the
@@ -270,8 +272,46 @@ async function handleBooking(
     return ok({ received: true, handled: false, error: 'missing_booking_id' });
   }
 
+  // A lapsed booking hold is deleted by the sweep (its row blocks the slot),
+  // so a payment that lands afterwards finds nothing to confirm. Retrying
+  // cannot bring the row back: record it for a human instead (0079).
+  if (paymentId) {
+    const supabase = await getSupabase();
+    const { data: exists, error: existsError } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('id', bookingId)
+      .maybeSingle<{ id: string }>();
+    if (!existsError && !exists) {
+      await recordLatePayment(supabase, {
+        kind: 'booking',
+        sourceId: bookingId,
+        paymentId,
+        amountCentavos: payment.amountCentavos ?? null,
+        currency: payment.currency ?? 'PHP',
+        clientEmail: payment.billingEmail ?? null,
+        outcome: 'needs_action',
+        detail: 'The booking hold had expired and its slot was released before the payment arrived.',
+      });
+      return ok({ received: true, handled: true, status: 'late_needs_action' });
+    }
+  }
+
   try {
     const result = await confirmBooking(bookingId, paymentId);
+    // Paid for a booking that was cancelled (or otherwise not pending) first.
+    if (paymentId && result.status !== 'confirmed' && !result.alreadyConfirmed) {
+      await recordLatePayment(await getSupabase(), {
+        kind: 'booking',
+        sourceId: bookingId,
+        paymentId,
+        amountCentavos: payment.amountCentavos ?? null,
+        currency: payment.currency ?? 'PHP',
+        clientEmail: payment.billingEmail ?? null,
+        outcome: 'needs_action',
+        detail: `Payment arrived for a booking that was already ${result.status}.`,
+      });
+    }
     return ok({ received: true, handled: true, status: result.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
