@@ -143,6 +143,8 @@ export interface PaymentPlan {
   min_centavos?: number | null;
   /** Preset amounts offered as buttons. Prompts, not limits. */
   suggested_centavos?: number[] | null;
+  /** 2 = buddy rate: one checkout, two people (0078). */
+  seats?: number;
 }
 
 /** Raised when a pay-what-you-want amount is missing, unparseable or too low. */
@@ -724,6 +726,7 @@ export interface PlanInput {
   is_pay_what_you_want: boolean;
   min_centavos: number | null;
   suggested_centavos: number[];
+  seats: number;
 }
 
 /**
@@ -915,6 +918,7 @@ export function validatePlan(raw: unknown, index: number): PlanInput {
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
     sort_order: Number.isInteger(Number(body.sort_order)) ? Number(body.sort_order) : index,
     installments,
+    seats: buddySeats(body.seats, kind, pwyw, where, name),
   };
 }
 
@@ -937,4 +941,19 @@ export function validatePlans(raw: unknown): PlanInput[] {
   }
 
   return plans;
+}
+
+/**
+ * A buddy-rate plan (0078) sells two places for one price. Full payment only:
+ * an instalment schedule or a chosen amount for two people is not offered.
+ */
+function buddySeats(raw: unknown, kind: string, pwyw: boolean, where: string, name: string): number {
+  const seats = Number(raw ?? 1) === 2 ? 2 : 1;
+  if (seats === 2 && kind !== 'full') {
+    throw new TicketingValidationError(`${where} ("${name}") is a buddy rate, so it must be paid in full (no instalments).`);
+  }
+  if (seats === 2 && pwyw) {
+    throw new TicketingValidationError(`${where} ("${name}") is a buddy rate, so it cannot be pay-what-you-want.`);
+  }
+  return seats;
 }

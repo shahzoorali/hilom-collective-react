@@ -178,6 +178,7 @@ function draftToPlan(draft: PlanDraft): AdminPlan {
     is_active: draft.is_active,
     sort_order: draft.sort_order,
     is_pay_what_you_want: draft.is_pay_what_you_want ?? false,
+    seats: draft.kind === 'full' && !draft.is_pay_what_you_want && draft.seats === 2 ? 2 : 1,
     // Sent only when the toggle is on, so turning it off clears the floor
     // rather than leaving a stale one behind a false flag.
     min_centavos: draft.is_pay_what_you_want ? toCentavos(draft.minPesos) : null,
@@ -842,6 +843,23 @@ function PlanCard({
           allow half-working. */}
       {plan.kind === 'full' && (
         <div style={{ display: 'grid', gap: 8 }}>
+          <label className="field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="checkbox"
+              checked={plan.seats === 2}
+              disabled={locked || (plan.is_pay_what_you_want ?? false)}
+              onChange={(e) => onChange({ ...plan, seats: e.target.checked ? 2 : 1 })}
+              style={{ width: 'auto' }}
+            />
+            <span>
+              <strong>Buddy rate: one payment for 2 people</strong>
+              <br />
+              <span className="small muted">
+                The price above covers both. The buyer enters their buddy&rsquo;s details; each person gets their own
+                place, roster row and confirmation email. No promo codes on this plan.
+              </span>
+            </span>
+          </label>
           <label className="field" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <input
               type="checkbox"

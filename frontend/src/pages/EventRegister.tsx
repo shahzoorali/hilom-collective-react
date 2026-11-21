@@ -391,6 +391,9 @@ export default function EventRegister() {
   const [phone, setPhone] = useState('');
   const [extras, setExtras] = useState<Record<string, string>>({});
   const [onBehalf, setOnBehalf] = useState('');
+  // Buddy rate (0078): the second person.
+  const [buddy, setBuddy] = useState({ name: '', email: '', phone: '' });
+  const [buddyExtras, setBuddyExtras] = useState<Record<string, string>>({});
   const [agreed, setAgreed] = useState(false);
   const [medicalAck, setMedicalAck] = useState(false);
   const [consentAck, setConsentAck] = useState(false);
@@ -520,7 +523,12 @@ export default function EventRegister() {
 
   const chosenPlan = plans.find((p) => p.id === planId) ?? null;
   const pwyw = chosenPlan?.is_pay_what_you_want === true;
-  const promoEligible = !!chosenPlan && !pwyw && chosenPlan.kind === 'full';
+  const isBuddy = (chosenPlan?.seats ?? 1) === 2;
+  const promoEligible = !!chosenPlan && !pwyw && chosenPlan.kind === 'full' && !isBuddy;
+  const buddyValid =
+    !isBuddy ||
+    (buddy.name.trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buddy.email.trim()) &&
+      buddy.email.trim().toLowerCase() !== email.trim().toLowerCase());
 
   async function onApplyPromo() {
     if (!eventId || !planId) return;
@@ -569,6 +577,16 @@ export default function EventRegister() {
           // Kept in the payload so it flows through once the column lands.
           details: { ...extras, ...(onBehalf.trim() ? { on_behalf_of: onBehalf.trim() } : {}) },
         },
+        ...(isBuddy
+          ? {
+              partner: {
+                name: buddy.name.trim(),
+                email: buddy.email.trim(),
+                phone: buddy.phone.trim() || undefined,
+                details: buddyExtras,
+              },
+            }
+          : {}),
       });
       // Stash before redirecting: PayMongo cannot template the registration id
       // into its return URL, so the processing screen reads it back from here.
@@ -756,6 +774,47 @@ export default function EventRegister() {
                 </label>
               ))}
 
+              {isBuddy && (
+                <fieldset style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius)', padding: 14, margin: 0, display: 'grid', gap: 12 }}>
+                  <legend className="small" style={{ fontWeight: 600, padding: '0 6px' }}>Your buddy</legend>
+                  <p className="small muted" style={{ margin: 0 }}>
+                    One payment covers you both. Your buddy gets their own confirmation email with the event details;
+                    they don&rsquo;t need a Hilom account.
+                  </p>
+                  {placesRemaining < 2 && (
+                    <div className="alert alert-error" style={{ margin: 0 }}>Only one place is left, so the buddy rate isn&rsquo;t available.</div>
+                  )}
+                  <div className="row">
+                    <label className="field">
+                      <span>Their full name</span>
+                      <input value={buddy.name} onChange={(e) => setBuddy({ ...buddy, name: e.target.value })} required maxLength={200} />
+                    </label>
+                    <label className="field">
+                      <span>Their email address</span>
+                      <input type="email" value={buddy.email} onChange={(e) => setBuddy({ ...buddy, email: e.target.value })} required maxLength={320} />
+                    </label>
+                  </div>
+                  {buddy.email.trim() !== '' && buddy.email.trim().toLowerCase() === email.trim().toLowerCase() && (
+                    <small style={{ color: 'var(--danger-fg, #b3261e)' }}>Your buddy needs a different email address from yours.</small>
+                  )}
+                  <label className="field">
+                    <span>Their contact number</span>
+                    <input value={buddy.phone} onChange={(e) => setBuddy({ ...buddy, phone: e.target.value })} maxLength={40} />
+                  </label>
+                  {event.registrant_fields.map((field) => (
+                    <label className="field" key={`buddy-${field}`}>
+                      <span>Their {(REGISTRANT_FIELD_LABELS[field] ?? field).toLowerCase()}</span>
+                      <textarea
+                        rows={2}
+                        value={buddyExtras[field] ?? ''}
+                        maxLength={500}
+                        onChange={(e) => setBuddyExtras((prev) => ({ ...prev, [field]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+
               {event.medical_disclaimer_html && (
                 <div style={{ display: 'grid', gap: 8 }}>
                   <div className="card" style={{ padding: 12, maxHeight: 220, overflowY: 'auto' }}>
@@ -832,6 +891,8 @@ export default function EventRegister() {
                   submitting ||
                   !planId ||
                   !amountValid ||
+                  !buddyValid ||
+                  (isBuddy && placesRemaining < 2) ||
                   !agreed ||
                   (!!event.medical_disclaimer_html && !medicalAck) ||
                   (!!event.liability_consent_html && !consentAck)
@@ -930,6 +991,7 @@ function PlanOption({
         )}
         <span style={{ flex: 1 }}>
           <strong>{plan.name}</strong>
+          {(plan.seats ?? 1) === 2 && <span className="pill pill-ok" style={{ marginLeft: 6 }}>for 2 people</span>}
           {/* A pay-what-you-want plan has no price to show. Rendering
               total_centavos here is what made a donation-based class advertise
               itself as costing ₱1.00 — the column is a stored suggestion, not

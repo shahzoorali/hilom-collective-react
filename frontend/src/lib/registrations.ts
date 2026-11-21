@@ -68,6 +68,8 @@ export interface EventPlan {
    * decides whether it is acceptable.
    */
   is_pay_what_you_want?: boolean;
+  /** 2 = buddy rate: one payment for two people (0078). */
+  seats?: number;
   /** Floor in centavos. Always positive: free is not reachable here. */
   min_centavos?: number | null;
   /** Preset amounts offered as buttons. Prompts, not limits. */
@@ -126,6 +128,8 @@ export const getEventTicketing = (eventId: string) =>
   apiFetch<TicketingResponse>(`/events/${eventId}/ticketing`);
 
 export interface RegisterInput {
+  /** Buddy rate only: the second person. */
+  partner?: { name: string; email: string; phone?: string; details: Record<string, string> };
   planId: string;
   /**
    * Centavos, for a pay-what-you-want plan only.

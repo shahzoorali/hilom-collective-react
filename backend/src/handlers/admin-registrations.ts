@@ -417,7 +417,7 @@ async function allRegistrationsCsv(
     iso ? new Date(iso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }) : '';
 
   const header = [
-    'Event', 'Event date', 'Registered', 'Seat', 'Name', 'Email', 'Phone', 'Status', 'Plan', 'Paid', 'Outstanding',
+    'Event', 'Event date', 'Registered', 'Seat', 'Name', 'Email', 'Phone', 'Status', 'Plan', 'Buddy of', 'Paid', 'Outstanding',
     ...detailKeys.map((k) => k.replace(/_/g, ' ')),
   ];
   const lines = rows.map((r) => {
@@ -433,6 +433,7 @@ async function allRegistrationsCsv(
       r.registrant_phone ?? '',
       r.status,
       r.plan_name,
+      buddyOf(r, rows),
       (paidCentavos(charges) / 100).toFixed(2),
       (outstandingCentavos(charges) / 100).toFixed(2),
       ...detailKeys.map((k) => details[k] ?? ''),
@@ -459,6 +460,13 @@ async function allRegistrationsCsv(
  * and emergency contacts, and a record that it left the system is the only
  * trace that a PII export happened at all.
  */
+/** Buddy rate (0078): the buyer's name on a partner's row, so pairs stay visible. */
+function buddyOf(r: object, rows: { id: string; registrant_name: string }[]): string {
+  const leadId = (r as { covered_by_registration_id?: string | null }).covered_by_registration_id;
+  const lead = leadId ? rows.find((x) => x.id === leadId) : null;
+  return lead ? lead.registrant_name : '';
+}
+
 async function rosterCsv(eventId: string, actor: AuditActor): Promise<APIGatewayProxyResultV2> {
   const supabase = await getSupabase();
   const now = new Date();
@@ -487,7 +495,7 @@ async function rosterCsv(eventId: string, actor: AuditActor): Promise<APIGateway
   ].sort();
 
   const header = [
-    'Seat', 'Name', 'Email', 'Phone', 'Status', 'Plan', 'Paid', 'Outstanding',
+    'Seat', 'Name', 'Email', 'Phone', 'Status', 'Plan', 'Buddy of', 'Paid', 'Outstanding',
     ...detailKeys.map((k) => k.replace(/_/g, ' ')),
   ];
 
@@ -501,6 +509,7 @@ async function rosterCsv(eventId: string, actor: AuditActor): Promise<APIGateway
       r.registrant_phone ?? '',
       r.status,
       r.plan_name,
+      buddyOf(r, rows),
       (paidCentavos(charges) / 100).toFixed(2),
       (outstandingCentavos(charges) / 100).toFixed(2),
       ...detailKeys.map((k) => details[k] ?? ''),

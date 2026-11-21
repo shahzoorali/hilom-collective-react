@@ -17,6 +17,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabase } from './supabase.js';
 import { depositClearedLate, isOutstanding, type ChargeStatus } from './event-ticketing.js';
 import { loadEventSplitContext, splitForEventCharge } from './finance-splits.js';
+import { sendBuddyConfirmed } from './registration-email.js';
 import {
   sendRegistrationConfirmed,
   sendPaymentReceipt,
@@ -443,6 +444,7 @@ async function notify(
       receiptNo,
     });
     await notifyHost(supabase, registration, event);
+    await confirmBuddies(supabase, registration, event);
   } else {
     await sendPaymentReceipt({ ...context, charge, receiptNo });
 
@@ -478,6 +480,40 @@ async function notify(
 
   if (settled && registration.plan_kind === 'installment') {
     await sendFullySettled(context);
+  }
+}
+
+/**
+ * Buddy rate (0078): the partner's place is covered by this registration's
+ * payment. Confirmed here, once (the update only matches a pending row), and
+ * each partner gets their own confirmation; the host hears about each place.
+ */
+async function confirmBuddies(
+  supabase: SupabaseClient,
+  registration: RegistrationRow,
+  event: Parameters<typeof notifyHost>[2] & { join_url?: string | null; join_instructions?: string | null },
+): Promise<void> {
+  try {
+    const { data: partners, error } = await supabase
+      .from('event_registrations')
+      .update({ status: 'confirmed', hold_expires_at: null, confirmed_at: new Date().toISOString() })
+      .eq('covered_by_registration_id', registration.id)
+      .eq('status', 'pending_payment')
+      .select(REGISTRATION_COLUMNS)
+      .returns<RegistrationRow[]>();
+    if (error) throw error;
+    for (const partner of partners ?? []) {
+      await sendBuddyConfirmed({
+        to: partner.registrant_email,
+        registrationId: partner.id,
+        registrantName: partner.registrant_name,
+        bookedBy: registration.registrant_name,
+        event,
+      });
+      await notifyHost(supabase, partner, event);
+    }
+  } catch (err) {
+    console.error('[registration-fulfillment] confirming buddy places failed', { registrationId: registration.id, err });
   }
 }
 

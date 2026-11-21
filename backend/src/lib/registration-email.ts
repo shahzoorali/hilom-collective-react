@@ -1402,3 +1402,55 @@ export async function sendRegistrationHostAlert(input: {
     renderEmail({ heading, body }),
   );
 }
+
+/**
+ * Buddy rate (0078): sent to the partner when the buyer's payment clears.
+ * Goes to the partner's own address (every other template goes to the buyer),
+ * with the event details, how to join and a calendar invite. The partner
+ * needs no Hilom account.
+ */
+export async function sendBuddyConfirmed(input: {
+  to: string;
+  registrationId: string;
+  registrantName: string;
+  bookedBy: string;
+  event: EmailEvent;
+}): Promise<void> {
+  const { event } = input;
+  const heading = `You're going to ${event.title}`;
+  const rows = [
+    { label: 'Event', value: escapeHtml(event.title) },
+    { label: 'When', value: escapeHtml(whenEvent(event)) },
+    ...(event.location ? [{ label: 'Where', value: escapeHtml(event.location) }] : []),
+    { label: 'Booked by', value: escapeHtml(input.bookedBy) },
+  ];
+  let body =
+    p(
+      `Hello ${escapeHtml(input.registrantName)}, ${escapeHtml(input.bookedBy)} booked you a place at ` +
+        `${escapeHtml(event.title)} on the buddy rate, and it's paid for. You're confirmed.`,
+    ) + details(rows);
+  if (event.venue_details) body += p(escapeHtml(event.venue_details));
+  body += joinBlock(event);
+  body += note('Nothing to pay and no account needed. Reply to this email if anything changes.');
+
+  const text = renderText(heading, [
+    `${input.bookedBy} booked you a place at ${event.title} on the buddy rate. You're confirmed.`,
+    `When: ${whenEvent(event)}`,
+    ...(event.location ? [`Where: ${event.location}`] : []),
+    ...joinLines(event),
+  ]);
+  const invite = registrationInvite({
+    registrationId: input.registrationId,
+    event,
+    attendeeEmail: input.to,
+    attendeeName: input.registrantName,
+    sequence: 0,
+  });
+  await send(
+    input.to,
+    heading,
+    text,
+    renderEmail({ preheader: `Your place at ${event.title} is confirmed.`, heading, body }),
+    invite ? [invite] : undefined,
+  );
+}

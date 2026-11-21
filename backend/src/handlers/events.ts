@@ -129,7 +129,7 @@ export async function ticketing(event: APIGatewayProxyEventV2): Promise<APIGatew
       // page has to render, and a price is public by nature (0016's RLS note).
       .select(
         'id, name, description, kind, total_centavos, currency, available_from, available_until, ' +
-          'is_active, sort_order, is_pay_what_you_want, min_centavos, suggested_centavos',
+          'is_active, sort_order, is_pay_what_you_want, min_centavos, suggested_centavos, seats',
       )
       .eq('event_id', eventId)
       .returns<(PaymentPlan & { description: string | null })[]>();

@@ -508,6 +508,8 @@ export interface AdminInstallment {
 }
 
 export interface AdminPlan {
+  /** 2 = buddy rate: one payment for two people (0078). */
+  seats?: number;
   id?: string;
   name: string;
   description: string | null;

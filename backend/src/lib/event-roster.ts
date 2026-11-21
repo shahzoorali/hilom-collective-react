@@ -28,7 +28,7 @@ export const REGISTRATION_COLUMNS =
   'total_centavos, currency, price_override_centavos, price_override_reason, hold_expires_at, ' +
   'confirmed_at, flagged_at, flag_reason, cancellation_requested_at, cancellation_reason, ' +
   'cancellation_decided_at, cancellation_decision, cancelled_at, cancelled_by, refund_centavos, ' +
-  'refunded_at, refund_reference, admin_notes, created_at, updated_at';
+  'refunded_at, refund_reference, admin_notes, covered_by_registration_id, created_at, updated_at';
 
 export const CHARGE_COLUMNS =
   'id, registration_id, seq, label, is_deposit, amount_centavos, currency, due_at, status, paid_at, ' +

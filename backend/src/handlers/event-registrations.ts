@@ -70,6 +70,8 @@ const conflict = (message: string) => json(409, { error: message });
  * inside a migration.
  */
 const CLAIM_ERRORS: Record<string, { status: number; message: string }> = {
+  partner_required: { status: 400, message: 'The buddy rate needs your buddy\'s name and email.' },
+  partner_same_person: { status: 400, message: 'Your buddy needs a different email address from yours.' },
   sold_out: {
     status: 409,
     message: 'Those places have just been taken. Nothing has been charged.',
@@ -115,6 +117,7 @@ function eventPromoApplicable(plan: PaymentPlan): { ok: true } | { ok: false; re
     return { ok: false, reason: 'This option already lets you choose what to pay, so it takes no promo code.' };
   }
   if (plan.kind !== 'full') return { ok: false, reason: 'Promo codes only apply to paying in full.' };
+  if ((plan.seats ?? 1) > 1) return { ok: false, reason: 'The buddy rate is already a special price, so it takes no promo code.' };
   return { ok: true };
 }
 
@@ -330,7 +333,7 @@ async function register(
     .from('event_payment_plans')
     .select(
       'id, name, kind, total_centavos, currency, available_from, available_until, is_active, ' +
-        'sort_order, is_pay_what_you_want, min_centavos, suggested_centavos',
+        'sort_order, is_pay_what_you_want, min_centavos, suggested_centavos, seats',
     )
     .eq('event_id', eventId)
     .returns<PaymentPlan[]>();
@@ -338,6 +341,19 @@ async function register(
 
   const plan = activePlans(plans ?? [], now).find((candidate) => candidate.id === planId);
   if (!plan) return conflict('That payment option is no longer available. Please choose another.');
+
+  // Buddy rate (0078): a second person, validated against the same fields
+  // this event asks of everyone.
+  const isBuddy = (plan.seats ?? 1) === 2;
+  const partner = isBuddy
+    ? validateRegistrant({
+        requestedFields: eventRow.registrant_fields ?? [],
+        body: (body.partner ?? {}) as Record<string, unknown>,
+      })
+    : null;
+  if (partner && partner.email.toLowerCase() === registrant.email.toLowerCase()) {
+    return badRequest('Your buddy needs a different email address from yours.');
+  }
 
   // For a fixed-price plan this returns null and whatever the browser sent is
   // discarded: the only plan whose price the client may influence is the one
@@ -383,7 +399,28 @@ async function register(
     promoCodeId = resolved.promoCodeId;
   }
 
-  const { data: registrationId, error: claimError } = await supabase.rpc('claim_event_seat', {
+  const { data: registrationId, error: claimError } = partner
+    ? await supabase.rpc('claim_event_pair', {
+        p_event_id: eventId,
+        p_plan_id: plan.id,
+        p_buyer_email: buyer.email,
+        p_buyer_sub: buyer.sub,
+        p_registrant: {
+          name: registrant.name,
+          email: registrant.email,
+          phone: registrant.phone ?? null,
+          details: registrant.details,
+        },
+        p_partner: {
+          name: partner.name,
+          email: partner.email,
+          phone: partner.phone ?? null,
+          details: partner.details,
+        },
+        p_charges: charges,
+        p_hold_minutes: eventRow.hold_minutes ?? 60,
+      })
+    : await supabase.rpc('claim_event_seat', {
     p_event_id: eventId,
     p_plan_id: plan.id,
     p_buyer_email: buyer.email,
@@ -458,7 +495,7 @@ async function register(
     await supabase
       .from('event_registrations')
       .update({ status: 'expired', error_detail: 'checkout session could not be created' })
-      .eq('id', newRegistrationId)
+      .or(`id.eq.${newRegistrationId},covered_by_registration_id.eq.${newRegistrationId}`)
       .eq('status', 'pending_payment');
     return serverError('eventRegistrations.register', err);
   }

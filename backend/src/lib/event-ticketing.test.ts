@@ -766,3 +766,37 @@ describe('buildSchedule — pay what you want', () => {
     assert.equal(seeds[0]!.amount_centavos, earlyBirdFull.total_centavos);
   });
 });
+
+describe('buddy rate plans (0078)', () => {
+  const full = (extra: Record<string, unknown> = {}) => ({
+    name: 'Buddy rate',
+    kind: 'full',
+    total_centavos: 450_000,
+    installments: [{ seq: 1, label: 'Full payment', amount_centavos: 450_000, is_deposit: true }],
+    ...extra,
+  });
+  it('keeps seats = 2 on a full-payment plan, and defaults to 1', () => {
+    assert.equal(validatePlan(full({ seats: 2 }), 0).seats, 2);
+    assert.equal(validatePlan(full(), 0).seats, 1);
+  });
+  it('refuses a buddy rate on instalments or pay-what-you-want', () => {
+    assert.throws(
+      () =>
+        validatePlan(
+          {
+            name: 'Buddy split',
+            kind: 'installment',
+            total_centavos: 400_000,
+            seats: 2,
+            installments: [
+              { seq: 1, label: 'Deposit', amount_centavos: 200_000, is_deposit: true },
+              { seq: 2, label: 'Rest', amount_centavos: 200_000, due_date: '2027-01-31' },
+            ],
+          },
+          0,
+        ),
+      /buddy rate/,
+    );
+    assert.throws(() => validatePlan(full({ seats: 2, is_pay_what_you_want: true, min_centavos: 100 }), 0), /buddy rate/);
+  });
+});

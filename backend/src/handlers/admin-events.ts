@@ -52,7 +52,7 @@ const COLUMNS =
 
 const PLAN_COLUMNS =
   'id, event_id, name, description, kind, total_centavos, currency, available_from, available_until, ' +
-  'is_active, sort_order, created_at, updated_at';
+  'is_active, sort_order, created_at, updated_at, seats';
 
 const INSTALLMENT_COLUMNS = 'id, plan_id, seq, label, amount_centavos, due_at, due_offset_days, is_deposit';
 
